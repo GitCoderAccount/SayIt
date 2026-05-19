@@ -875,7 +875,29 @@ nav { flex:1; padding:4px 0; }
 .settings-about-logo img { width:48px; height:48px; border-radius:50%; border:2px solid var(--primary); }
 .settings-about-logo div strong { display:block; font-size:17px; font-weight:800; }
 .settings-about-logo div span { font-size:13px; color:var(--muted); }
-/* ── Profile page (full in-column view) ─────────────────────────────────── */
+/* ── Repost card ────────────────────────────────────────────────────────── */
+.repost-label {
+  font-size:13px; color:var(--muted); margin-bottom:6px; display:block;
+}
+.repost-card {
+  border:1px solid var(--border); border-radius:12px;
+  padding:10px 12px; margin:6px 0 10px;
+  cursor:pointer; transition:background 0.15s;
+  background:var(--bg-card);
+}
+.repost-card:hover { background:rgba(255,255,255,0.04); }
+.repost-card-missing { cursor:default; }
+.repost-card-missing:hover { background:var(--bg-card); }
+.repost-card-hdr {
+  display:flex; align-items:center; gap:6px; margin-bottom:4px;
+}
+.repost-card-avatar {
+  width:18px; height:18px; border-radius:50%; object-fit:cover;
+}
+.repost-card-name { font-size:13px; font-weight:700; }
+.repost-card-body { font-size:14px; color:var(--text); line-height:1.5; word-break:break-word; }
+
+/* Profile page (full in-column view) ─────────────────────────────────── */
 .prof-page { flex:1; overflow-y:auto; }
 
 /* Cover photo */
@@ -1635,7 +1657,7 @@ class PulseUnderground {
       channel: MAIN_CHANNEL, mode: 'main',
       profile: { username:'', picUrl:'image1.jpeg', bio:'' },
       signerAddr: null, expanded: new Set(),
-      replyTarget: null, threadPost: null, profCache: {},
+      replyTarget: null, repostTarget: null, threadPost: null, profCache: {},
       /* reactions & social */
       likes:      new Set(),   /* txHashes this user has liked */
       bookmarks:  new Set(),   /* txHashes this user has bookmarked */
@@ -3154,7 +3176,7 @@ class PulseUnderground {
 
   queryAddr() {
     const { mode, signerAddr, channel } = this.state;
-    return (mode === 'inbox' || mode === 'notifications' || mode === 'self')
+    return (mode === 'notifications' || mode === 'self')
       ? signerAddr : channel;
   }
 
@@ -3227,10 +3249,19 @@ class PulseUnderground {
       }
       const m        = raw.match(/^REPLY_TO:(0x[a-f0-9]{64})\n\n/i);
       const parentTx = m ? m[1].toLowerCase() : null;
-      const display  = m ? raw.slice(m[0].length).trim() : raw;
-      if (!display) return acc;
+      let   display  = m ? raw.slice(m[0].length).trim() : raw;
+
+      /* Handle REPOST: prefix — extract quoted txHash, build display */
+      let repostOf = null;
+      const repostM = raw.match(/^REPOST:(0x[a-f0-9]{64})(?:\n\n([\s\S]*))?$/i);
+      if (repostM) {
+        repostOf = repostM[1].toLowerCase();
+        display  = repostM[2]?.trim() || '';   /* comment (may be empty) */
+      }
+
+      if (!display && !repostOf) return acc;
       acc.push({
-        content: raw, display, parentTx, direction,
+        content: raw, display, parentTx, repostOf, direction,
         reporter: from, to: to ?? null,
         timestamp: tx.timeStamp
           ? new Date(Number(tx.timeStamp) * 1000).toISOString()
@@ -3306,7 +3337,6 @@ class PulseUnderground {
     const { mode, channel, signerAddr } = this.state;
     const posts = await this.cache.getPosts(p => {
       if (mode === 'notifications') return false;
-      if (mode === 'inbox') return p.mode === 'inbox' && p.channel === signerAddr;
       if (mode === 'self')  return p.mode === 'self'  && p.channel === signerAddr;
       if (mode === 'wave')  return p.mode === 'wave'  && p.channel === channel;
       return p.channel === channel && p.mode === mode;
@@ -3386,6 +3416,31 @@ class PulseUnderground {
     const { text: bodyHtml, images: imgHtml } = utils.linkify(textToRender);
     const needsMore = !inModal && !expanded && post.display.length > MAX_PREVIEW;
 
+    /* Repost quote card — look up the original post */
+    let repostCard = '';
+    if (post.repostOf) {
+      const orig = this._postMap.get(post.repostOf);
+      if (orig) {
+        const origC    = this.state.profCache[orig.reporter];
+        const origName = origC?.username ? utils.safe(origC.username) : this.trunc(orig.reporter);
+        const origPic  = origC?.picUrl || 'image1.jpeg';
+        const origBody = utils.safe(orig.display.slice(0, 200) + (orig.display.length > 200 ? '…' : ''));
+        repostCard = `
+          <div class="repost-card" onclick="event.stopPropagation();pulse.openThread(pulse._postMap.get('${utils.safe(post.repostOf)}'))">
+            <div class="repost-card-hdr">
+              <img src="${utils.safe(origPic)}" class="repost-card-avatar" onerror="this.src='image1.jpeg'">
+              <span class="repost-card-name">${origName}</span>
+              <span style="color:var(--muted);font-size:13px;margin-left:4px">· ${this.relTime(orig.timestamp)}</span>
+            </div>
+            <div class="repost-card-body">${origBody}</div>
+          </div>`;
+      } else {
+        repostCard = `<div class="repost-card repost-card-missing">
+          <span style="color:var(--muted);font-size:13px">🔁 Reposted post · <a href="https://otter.pulsechain.com/tx/${utils.safe(post.repostOf)}" target="_blank" class="post-link" onclick="event.stopPropagation()">View on OtterScan</a></span>
+        </div>`;
+      }
+    }
+
     const dirBadge = post.direction
       ? `<span class="dir-badge dir-${post.direction}">${post.direction === 'sent' ? '↑ sent' : '↓ received'}</span>`
       : '';
@@ -3422,8 +3477,10 @@ class PulseUnderground {
             ${dirBadge}
           </div>
           ${toLabel}${replyBadge}
+          ${post.repostOf ? `<div class="repost-label">🔁 <span class="post-name">${displayName}</span> reposted</div>` : ''}
           ${imgHtml ? `<div class="post-images">${imgHtml}</div>` : ''}
           <div class="post-body">${bodyHtml}</div>
+          ${repostCard}
           ${needsMore ? `<button class="read-more-btn" data-action="expand">Show more ↓</button>` : ''}
           <div class="post-actions">
             <button class="act-btn act-reply" data-action="reply" title="Reply">
@@ -3825,6 +3882,8 @@ class PulseUnderground {
     };
     setTimeout(() => document.addEventListener('click', close, true), 50);
   }
+
+  closeModal(id) {
     this.g(id).classList.remove('open');
     if (id === 'compose-modal') {
       const modalText = this.g('modal-compose-text').value;
