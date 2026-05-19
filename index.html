@@ -384,6 +384,11 @@ nav { flex:1; padding:4px 0; }
 .act-repost:hover .act-icon { background:rgba(0,186,124,0.1); }
 .act-like:hover             { color:#f91880; }
 .act-like:hover .act-icon   { background:rgba(249,24,128,0.1); }
+.act-like.liked             { color:#f91880; }
+.act-like.liked .act-icon   { background:rgba(249,24,128,0.08); }
+.act-bookmark:hover             { color:#1d9bf0; }
+.act-bookmark:hover .act-icon   { background:rgba(29,155,240,0.1); }
+.act-bookmark.bookmarked        { color:#1d9bf0; }
 .act-share:hover            { color:#1d9bf0; }
 .act-share:hover .act-icon  { background:rgba(29,155,240,0.1); }
 .otter-link {
@@ -1095,9 +1100,9 @@ nav { flex:1; padding:4px 0; }
         <textarea id="compose-text" placeholder="What's happening on Pulse?"></textarea>
         <div id="compose-toolbar">
           <div class="compose-icons">
-            <button class="cmp-icon" title="Image">🖼</button>
-            <button class="cmp-icon" title="GIF">GIF</button>
-            <button class="cmp-icon" title="Emoji">😊</button>
+            <button class="cmp-icon" id="cmp-image-btn" title="Attach image">🖼</button>
+            <button class="cmp-icon" id="cmp-gif-btn" title="Attach GIF">GIF</button>
+            <button class="cmp-icon" id="cmp-emoji-btn" title="Emoji">😊</button>
           </div>
           <div class="compose-right">
             <div class="char-ring ok" id="char-ring">
@@ -1339,6 +1344,48 @@ nav { flex:1; padding:4px 0; }
   </div>
 </div>
 
+<!-- Repost modal -->
+<div class="modal-bg" id="repost-modal">
+  <div class="modal">
+    <div class="modal-head">
+      <span class="modal-title">Repost</span>
+      <button class="modal-close" id="close-repost">✕</button>
+    </div>
+    <div id="repost-quote" class="reply-quote"></div>
+    <textarea class="auto-textarea" id="repost-input"
+      placeholder="Add a comment… (optional)"></textarea>
+    <div class="btn-row" style="margin-top:12px">
+      <button class="btn-pri" id="post-repost-btn">🔁 Repost</button>
+      <button class="btn-ghost" id="cancel-repost-btn">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Media attach modal -->
+<div class="modal-bg" id="media-modal">
+  <div class="modal">
+    <div class="modal-head">
+      <span class="modal-title" id="media-modal-title">Attach Image</span>
+      <button class="modal-close" id="close-media-modal">✕</button>
+    </div>
+    <p id="media-url-hint" style="font-size:13px;color:var(--muted);margin-bottom:12px">
+      Paste any image URL (https://, ipfs://, or arweave://)
+    </p>
+    <input type="text" class="form-input" id="media-url-input"
+      placeholder="https://… or ipfs://… or arweave://…"
+      autocomplete="off" autocorrect="off" spellcheck="false">
+    <div id="media-preview-area" style="margin-top:14px;display:none;min-height:60px"></div>
+    <p style="font-size:12px;color:var(--muted);margin-top:10px;line-height:1.5">
+      The URL is stored on-chain in your post. Right-click any image in the feed to copy its URL.
+      Broken images are automatically hidden.
+    </p>
+    <div class="btn-row" style="margin-top:16px">
+      <button class="btn-pri" id="media-attach-btn">Attach</button>
+      <button class="btn-ghost" id="media-cancel-btn">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <script>
 'use strict';
 const ethers = window.ethers;
@@ -1389,20 +1436,43 @@ const utils = {
     return d.innerHTML;
   },
   linkify(text) {
-    const re = /https?:\/\/[^\s<>"{}|\\^[\]`]+|#([a-zA-Z]\w{0,99})|@(0x[a-fA-F0-9]{40})/g;
-    const imgRe = /\.(jpg|jpeg|png|gif|webp|svg)(\?[^\s]*)?$/i;
+    const re    = /ipfs:\/\/\S+|ar:\/\/\S+|arweave:\/\/\S+|https?:\/\/[^\s<>"{}|\\^[\]`]+|#([a-zA-Z]\w{0,99})|@(0x[a-fA-F0-9]{40})/g;
+    const imgRe = /\.(jpg|jpeg|png|gif|webp|svg|mp4|webm)(\?[^\s]*)?$/i;
+    const resolveUrl = u => {
+      if (u.startsWith('ipfs://'))    return 'https://ipfs.io/ipfs/' + u.slice(7);
+      if (u.startsWith('ar://'))      return 'https://arweave.net/' + u.slice(5);
+      if (u.startsWith('arweave://')) return 'https://arweave.net/' + u.slice(10);
+      return u;
+    };
     let result = '', last = 0, imgHtml = '', imgCount = 0, m;
+
     while ((m = re.exec(text)) !== null) {
-      result += utils.safe(text.slice(last, m.index)).replace(/\n/g, '<br>');
+      const rawSegment = text.slice(last, m.index);
+      /* Only add the preceding text if it's not just whitespace before a media URL */
+      result += utils.safe(rawSegment).replace(/\n/g, '<br>');
       last = m.index + m[0].length;
-      if (m[0].startsWith('http')) {
-        const url = m[0];
-        const safeUrl = utils.safe(url);
-        if (imgRe.test(url) && imgCount < 2) {
-          imgHtml += `<img src="${safeUrl}" class="post-img-thumb" alt="image" loading="lazy" onerror="this.style.display='none'" data-href="${safeUrl}">`;
+
+      if (m[0].startsWith('http') || m[0].startsWith('ipfs://') ||
+          m[0].startsWith('ar://') || m[0].startsWith('arweave://')) {
+        const raw      = m[0];
+        const resolved = resolveUrl(raw);
+        const safeResolved = utils.safe(resolved);
+        const isImg = imgRe.test(resolved);
+
+        if (isImg && imgCount < 4) {
+          imgHtml += `<img src="${safeResolved}" class="post-img-thumb" alt="media"
+            loading="lazy"
+            onerror="this.closest('.post-img-thumb-wrap')?.remove(); this.style.display='none'"
+            data-href="${safeResolved}"
+            title="Right-click to copy URL" data-raw-url="${utils.safe(raw)}">`;
           imgCount++;
+          /* Suppress the raw URL text in body — image replaces it */
+        } else {
+          /* Non-image URL: show as link, but shorten display text */
+          const display = raw.length > 50 ? raw.slice(0,47) + '…' : raw;
+          result += `<a href="${safeResolved}" target="_blank" rel="noopener noreferrer"
+            class="post-link" onclick="event.stopPropagation()">${utils.safe(display)}</a>`;
         }
-        result += `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="post-link" onclick="event.stopPropagation()">${safeUrl}</a>`;
       } else if (m[1]) {
         const tag = m[1];
         result += `<span class="post-tag" data-tag="${utils.safe(tag)}">#${utils.safe(tag)}</span>`;
@@ -1729,13 +1799,13 @@ class PulseUnderground {
       if (e.key === '/') { e.preventDefault(); g('search-input').focus(); }
       if (e.key === 'e' || e.key === 'E') { e.preventDefault(); this.openComposeModal(); }
       if (e.key === 'Escape') {
-        ['compose-modal','profile-modal','reply-modal','thread-modal'].forEach(id => {
+        ['compose-modal','profile-modal','reply-modal','thread-modal','repost-modal','media-modal'].forEach(id => {
           if (g(id).classList.contains('open')) this.closeModal(id);
         });
       }
     });
 
-    ['compose-modal','profile-modal','reply-modal','thread-modal'].forEach(id => {
+    ['compose-modal','profile-modal','reply-modal','thread-modal','repost-modal','media-modal'].forEach(id => {
       g(id).addEventListener('click', e => { if (e.target === g(id)) this.closeModal(id); });
     });
 
@@ -1773,6 +1843,25 @@ class PulseUnderground {
       utils.autoGrow(g('reply-input'));
       utils.updateCharCount(g('reply-input'), g('reply-count'));
     };
+
+    /* Repost modal */
+    g('close-repost').onclick      = () => this.closeModal('repost-modal');
+    g('cancel-repost-btn').onclick = () => this.closeModal('repost-modal');
+    g('post-repost-btn').onclick   = () => this.postRepost();
+    g('repost-input').oninput = () => {
+      utils.autoGrow(g('repost-input'));
+    };
+
+    /* Compose toolbar — Image / GIF / Emoji */
+    g('cmp-image-btn').onclick = () => this.openMediaModal('image');
+    g('cmp-gif-btn').onclick   = () => this.openMediaModal('gif');
+    g('cmp-emoji-btn').onclick = () => this.toggleEmojiPicker();
+
+    /* Media attach modal */
+    g('close-media-modal').onclick  = () => this.closeModal('media-modal');
+    g('media-url-input').oninput    = () => this._previewMedia();
+    g('media-attach-btn').onclick   = () => this._attachMedia();
+    g('media-cancel-btn').onclick   = () => this.closeModal('media-modal');
 
     g('close-thread').onclick          = () => this.closeModal('thread-modal');
     g('post-thread-reply-btn').onclick = () => this.postThreadReply();
@@ -1817,6 +1906,15 @@ class PulseUnderground {
     } else if (action === 'reply') {
       e.stopPropagation();
       this.openReplyModal(post);
+    } else if (action === 'like') {
+      e.stopPropagation();
+      this.toggleLike(post, item);
+    } else if (action === 'repost') {
+      e.stopPropagation();
+      this.openRepostModal(post);
+    } else if (action === 'bookmark') {
+      e.stopPropagation();
+      this.toggleBookmark(post, item);
     } else if (action === 'share') {
       e.stopPropagation();
       utils.copyToClipboard(`https://otter.pulsechain.com/tx/${post.txHash}`, 'Link copied!');
@@ -3304,6 +3402,8 @@ class PulseUnderground {
     const rcLabel = rc > 0 ? String(rc) : '';
     const fullDate = new Date(post.timestamp).toLocaleString();
     const relT     = this.relTime(post.timestamp);
+    const isLiked     = this.state.likes.has(post.txHash);
+    const isBookmarked = this.state.bookmarks.has(post.txHash);
 
     return `
       <div class="post-hdr">
@@ -3329,11 +3429,14 @@ class PulseUnderground {
             <button class="act-btn act-reply" data-action="reply" title="Reply">
               <span class="act-icon">💬</span><span class="act-count">${rcLabel}</span>
             </button>
-            <button class="act-btn act-repost" title="Repost">
+            <button class="act-btn act-repost" data-action="repost" title="Repost">
               <span class="act-icon">🔁</span>
             </button>
-            <button class="act-btn act-like" title="Like">
-              <span class="act-icon">🤍</span>
+            <button class="act-btn act-like ${isLiked ? 'liked' : ''}" data-action="like" title="${isLiked ? 'Unlike' : 'Like'}">
+              <span class="act-icon">${isLiked ? '❤️' : '🤍'}</span>
+            </button>
+            <button class="act-btn act-bookmark ${isBookmarked ? 'bookmarked' : ''}" data-action="bookmark" title="${isBookmarked ? 'Remove bookmark' : 'Bookmark'}">
+              <span class="act-icon">${isBookmarked ? '🔖' : '🏷️'}</span>
             </button>
             <button class="act-btn act-share" data-action="share" title="Copy link">
               <span class="act-icon">🔗</span>
@@ -3408,6 +3511,97 @@ class PulseUnderground {
     this.g('reply-count').textContent  = '';
     this.g('reply-modal').classList.add('open');
     this.g('reply-input').focus();
+  }
+
+  /* ── Like ───────────────────────────────────────────────────────────── */
+  async toggleLike(post, itemEl) {
+    if (!this.signer) { utils.toast('Connect wallet to like posts'); return; }
+    const hash = post.txHash;
+    const btn  = itemEl.querySelector('[data-action="like"]');
+    const icon = btn?.querySelector('.act-icon');
+
+    if (this.state.likes.has(hash)) {
+      /* Optimistic unlike — local only (blockchain likes are write-only) */
+      this.state.likes.delete(hash);
+      if (btn)  btn.classList.remove('liked');
+      if (icon) icon.textContent = '🤍';
+      utils.toast('Like removed');
+    } else {
+      /* Optimistic add */
+      this.state.likes.add(hash);
+      if (btn)  btn.classList.add('liked');
+      if (icon) icon.textContent = '❤️';
+      /* Write to chain — self-send */
+      const ok = await this.publish(LIKE_PREFIX + hash, null, this.state.signerAddr);
+      if (!ok) {
+        /* Rollback on failure */
+        this.state.likes.delete(hash);
+        if (btn)  btn.classList.remove('liked');
+        if (icon) icon.textContent = '🤍';
+      } else {
+        utils.toast('❤️ Liked on-chain');
+      }
+    }
+  }
+
+  /* ── Bookmark ───────────────────────────────────────────────────────── */
+  async toggleBookmark(post, itemEl) {
+    if (!this.signer) { utils.toast('Connect wallet to bookmark posts'); return; }
+    const hash = post.txHash;
+    const btn  = itemEl.querySelector('[data-action="bookmark"]');
+    const icon = btn?.querySelector('.act-icon');
+
+    if (this.state.bookmarks.has(hash)) {
+      this.state.bookmarks.delete(hash);
+      if (btn)  btn.classList.remove('bookmarked');
+      if (icon) icon.textContent = '🏷️';
+      utils.toast('Bookmark removed');
+    } else {
+      this.state.bookmarks.add(hash);
+      if (btn)  btn.classList.add('bookmarked');
+      if (icon) icon.textContent = '🔖';
+      const ok = await this.publish(BOOKMARK_PREFIX + hash, null, this.state.signerAddr);
+      if (!ok) {
+        this.state.bookmarks.delete(hash);
+        if (btn)  btn.classList.remove('bookmarked');
+        if (icon) icon.textContent = '🏷️';
+      } else {
+        utils.toast('🔖 Bookmarked on-chain');
+      }
+    }
+  }
+
+  /* ── Repost ─────────────────────────────────────────────────────────── */
+  openRepostModal(post) {
+    if (!this.signer) { utils.toast('Connect wallet to repost'); return; }
+    this.state.repostTarget = post;
+    const preview = post.display.length > 140 ? post.display.slice(0, 140) + '…' : post.display;
+    this.g('repost-quote').innerHTML = `
+      <div class="reply-quote-meta">
+        <strong>${this.trunc(post.reporter)}</strong>
+        <span style="color:var(--muted);font-size:12px;margin-left:6px">${this.relTime(post.timestamp)}</span>
+      </div>
+      <div style="margin-top:4px">${utils.safe(preview)}</div>`;
+    this.g('repost-input').value        = '';
+    this.g('repost-input').style.height = '';
+    this.g('repost-modal').classList.add('open');
+    this.g('repost-input').focus();
+  }
+
+  async postRepost() {
+    if (!this.state.repostTarget) return;
+    const comment = this.g('repost-input').value.trim();
+    const hash    = this.state.repostTarget.txHash;
+    /* Format: REPOST:{hash}\n\n{optional comment} */
+    const content = comment
+      ? `REPOST:${hash}\n\n${comment}`
+      : `REPOST:${hash}`;
+    const ok = await this.publish(content);
+    if (ok) {
+      this.closeModal('repost-modal');
+      this.g('repost-input').value = '';
+      utils.toast('🔁 Reposted on-chain');
+    }
   }
 
   async postReply() {
@@ -3510,7 +3704,127 @@ class PulseUnderground {
     }
   }
 
-  closeModal(id) {
+  /* ── Media attach ───────────────────────────────────────────────────── */
+  openMediaModal(type) {
+    this._mediaType = type;
+    const title   = this.g('media-modal-title');
+    const hint    = this.g('media-url-hint');
+    const preview = this.g('media-preview-area');
+    title.textContent = type === 'gif' ? 'Attach GIF' : 'Attach Image';
+    hint.textContent  = type === 'gif'
+      ? 'Paste any GIF URL (https:// or ipfs://)'
+      : 'Paste any image URL (https://, ipfs://, or arweave://)';
+    this.g('media-url-input').value = '';
+    preview.innerHTML = '';
+    preview.style.display = 'none';
+    this.g('media-modal').classList.add('open');
+    setTimeout(() => this.g('media-url-input').focus(), 80);
+  }
+
+  _resolveMediaUrl(raw) {
+    if (!raw) return '';
+    if (raw.startsWith('ipfs://'))     return 'https://ipfs.io/ipfs/' + raw.slice(7);
+    if (raw.startsWith('ar://'))       return 'https://arweave.net/' + raw.slice(5);
+    if (raw.startsWith('arweave://'))  return 'https://arweave.net/' + raw.slice(10);
+    return raw;
+  }
+
+  _previewMedia() {
+    const raw     = this.g('media-url-input').value.trim();
+    const preview = this.g('media-preview-area');
+    if (!raw) { preview.innerHTML = ''; preview.style.display = 'none'; return; }
+    const resolved = this._resolveMediaUrl(raw);
+    preview.style.display = 'block';
+    preview.innerHTML = `
+      <img src="${utils.safe(resolved)}" alt="preview" style="
+        max-width:100%; max-height:220px; border-radius:12px;
+        object-fit:contain; display:block; margin:0 auto;
+        border:1px solid var(--border);"
+        onerror="this.replaceWith(Object.assign(document.createElement('p'),{
+          textContent:'⚠ Could not load image — check the URL',
+          style:'color:#f4212e;font-size:13px;text-align:center;padding:12px'
+        }))">`;
+  }
+
+  _attachMedia() {
+    const raw = this.g('media-url-input').value.trim();
+    if (!raw) { utils.toast('Enter a URL first'); return; }
+    /* Append the ORIGINAL URL (ipfs:// etc.) to compose text on a new line.
+       linkify() resolves it for display. On-chain the raw URL is preserved. */
+    const compose = this.g('compose-text');
+    const existing = compose.value;
+    compose.value = existing
+      ? existing.trimEnd() + '\n' + raw
+      : raw;
+    utils.autoGrow(compose);
+    utils.updateCharCount(compose, null);
+    this._saveDraft();
+    this.closeModal('media-modal');
+    utils.toast('Media attached ✓');
+  }
+
+  /* ── Emoji picker ───────────────────────────────────────────────────── */
+  toggleEmojiPicker() {
+    const existing = document.getElementById('emoji-picker-pop');
+    if (existing) { existing.remove(); return; }
+
+    const emojis = [
+      '😀','😂','😍','🥰','😎','🤔','😮','😢','😡','🤯',
+      '🔥','💯','✨','🎉','👍','👎','❤️','💜','🚀','🌙',
+      '💎','🦁','🐉','⚡','🌊','🎵','🏆','💰','🔮','🌍',
+      '📻','⛓','🔗','📡','🛡','⚔️','🗝','💡','🔭','🌐',
+      '🦊','🐺','🦋','🐬','🦅','🌸','🍀','🌺','🍁','🎭',
+    ];
+
+    const picker = document.createElement('div');
+    picker.id = 'emoji-picker-pop';
+    picker.style.cssText = `
+      position:absolute; z-index:400;
+      background:var(--bg-mid); border:1px solid var(--border);
+      border-radius:16px; padding:10px; display:grid;
+      grid-template-columns:repeat(10,32px); gap:2px;
+      box-shadow:0 8px 32px rgba(0,0,0,0.5);
+      animation:popIn 0.15s ease;`;
+
+    emojis.forEach(em => {
+      const btn = document.createElement('button');
+      btn.textContent = em;
+      btn.style.cssText = `
+        width:32px;height:32px;border:none;background:transparent;
+        border-radius:8px;font-size:18px;cursor:pointer;
+        transition:background 0.1s;line-height:1;`;
+      btn.onmouseenter = () => btn.style.background = 'rgba(255,255,255,0.1)';
+      btn.onmouseleave = () => btn.style.background = 'transparent';
+      btn.onclick = () => {
+        const compose = this.g('compose-text');
+        const pos = compose.selectionStart ?? compose.value.length;
+        compose.value = compose.value.slice(0,pos) + em + compose.value.slice(pos);
+        compose.selectionStart = compose.selectionEnd = pos + em.length;
+        compose.focus();
+        utils.autoGrow(compose);
+        utils.updateCharCount(compose, null);
+        this._saveDraft();
+        picker.remove();
+      };
+      picker.appendChild(btn);
+    });
+
+    /* Position below emoji button */
+    const emojiBtn = this.g('cmp-emoji-btn');
+    const rect = emojiBtn.getBoundingClientRect();
+    picker.style.top  = (rect.bottom + window.scrollY + 6) + 'px';
+    picker.style.left = Math.max(8, rect.left - 180) + 'px';
+    document.body.appendChild(picker);
+
+    /* Close on outside click */
+    const close = e => {
+      if (!picker.contains(e.target) && e.target !== emojiBtn) {
+        picker.remove();
+        document.removeEventListener('click', close, true);
+      }
+    };
+    setTimeout(() => document.addEventListener('click', close, true), 50);
+  }
     this.g(id).classList.remove('open');
     if (id === 'compose-modal') {
       const modalText = this.g('modal-compose-text').value;
