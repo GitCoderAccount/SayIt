@@ -1473,8 +1473,42 @@ const utils = {
     /* fullText = complete post text for image extraction (ignores MAX_PREVIEW truncation)
        text     = possibly truncated text for body rendering */
     const re    = /ipfs:\/\/\S+|ar:\/\/\S+|arweave:\/\/\S+|https?:\/\/[^\s<>"{}|\\^[\]`]+|#([a-zA-Z]\w{0,99})|@(0x[a-fA-F0-9]{40})/g;
-    const imgRe  = /\.(jpg|jpeg|png|gif|webp|svg)(\?[^\s]*)?$/i;
-    const vidRe  = /\.(mp4|webm|ogg|mov)(\?[^\s]*)?$/i;
+    const imgRe  = /\.(jpg|jpeg|png|gif|webp|svg|avif|tiff|bmp)(\?[^\s]*)?$/i;
+    const vidRe  = /\.(mp4|webm|ogg|mov|m4v)(\?[^\s]*)?$/i;
+    /* Domains that always serve images/video even without a file extension */
+    const imgDomains = /\/(ipfs|ipns)\//i;          /* IPFS gateways: .../ipfs/Qm... */
+    /* Known image-only CDN hostnames — any URL from these is treated as an image */
+    const imgHosts = new Set([
+      'pbs.twimg.com',           /* Twitter/X image CDN */
+      'ton.twimg.com',           /* Twitter card images */
+      'i.imgur.com',             /* Imgur */
+      'imgur.com',
+      'cdn.discordapp.com',      /* Discord attachments */
+      'media.discordapp.net',
+      'media.tenor.com',         /* Tenor GIFs */
+      'c.tenor.com',
+      'media.giphy.com',         /* Giphy */
+      'i.giphy.com',
+      'media1.giphy.com',
+      'media2.giphy.com',
+      'media3.giphy.com',
+      'media4.giphy.com',
+      'nftstorage.link',         /* NFT.Storage IPFS gateway */
+      'gateway.pinata.cloud',    /* Pinata IPFS gateway */
+      'cloudflare-ipfs.com',     /* Cloudflare IPFS */
+      'dweb.link',               /* Protocol Labs IPFS */
+    ]);
+    const isMediaUrl = url => {
+      if (imgRe.test(url)) return 'img';
+      if (vidRe.test(url)) return 'vid';
+      if (imgDomains.test(url)) return 'img';    /* IPFS gateway path */
+      if (url.includes('arweave.net/')) return 'img';
+      try {
+        const host = new URL(url).hostname;
+        if (imgHosts.has(host)) return 'img';
+      } catch { /* invalid URL — skip */ }
+      return null;
+    };
     const resolveUrl = u => {
       if (u.startsWith('ipfs://'))    return 'https://ipfs.io/ipfs/' + u.slice(7);
       if (u.startsWith('ar://'))      return 'https://arweave.net/' + u.slice(5);
@@ -1494,7 +1528,8 @@ const utils = {
           !raw.startsWith('ar://') && !raw.startsWith('arweave://')) continue;
       const resolved = resolveUrl(raw);
       if (mediaUrls.has(resolved)) continue;
-      if (imgRe.test(resolved)) {
+      const mtype = isMediaUrl(resolved);
+      if (mtype === 'img') {
         mediaUrls.add(resolved);
         const safeR = utils.safe(resolved);
         const safeRaw = utils.safe(raw);
@@ -1503,7 +1538,7 @@ const utils = {
           data-href="${safeR}" title="Right-click to copy URL"
           data-raw-url="${safeRaw}">`;
         mediaCount++;
-      } else if (vidRe.test(resolved)) {
+      } else if (mtype === 'vid') {
         mediaUrls.add(resolved);
         const safeR = utils.safe(resolved);
         imgHtml += `<video src="${safeR}" class="post-vid-thumb"
