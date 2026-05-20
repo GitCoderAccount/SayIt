@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Pulse Underground</title>
+<title>DeFiX</title>
 <link rel="icon" type="image/jpeg" href="image1.jpeg">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"></script>
 <style>
@@ -345,13 +345,25 @@ nav { flex:1; padding:4px 0; }
 .post-mention:hover { text-decoration:underline; }
 
 .post-images {
-  display:flex; flex-wrap:wrap; gap:2px;
-  margin-bottom:10px; border-radius:16px; overflow:hidden;
-  border:1px solid var(--border);
+  display:grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap:2px; margin-top:10px; margin-bottom:4px;
+  border-radius:16px; overflow:hidden;
+  border:1px solid var(--border); max-height:512px;
+}
+.post-images:has(> :only-child) {
+  grid-template-columns: 1fr; /* single image: full width */
 }
 .post-img-thumb {
-  max-width:100%; max-height:290px; object-fit:cover;
-  cursor:zoom-in; display:block; flex:1;
+  width:100%; height:100%; max-height:512px; object-fit:cover;
+  cursor:zoom-in; display:block;
+  transition:opacity 0.15s;
+}
+.post-img-thumb:hover { opacity:0.9; }
+.post-vid-thumb {
+  width:100%; max-height:420px; display:block;
+  background:#000; outline:none; cursor:pointer;
+  border-radius:0;
 }
 .read-more-btn {
   background:none; border:none; color:var(--primary-lt);
@@ -1025,9 +1037,9 @@ nav { flex:1; padding:4px 0; }
   <div id="sidebar-left">
     <div class="logo-wrap" onclick="pulse.goHome()">
       <div class="logo-img-wrap">
-        <img src="image1.jpeg" alt="Pulse Underground">
+        <img src="image1.jpeg" alt="DeFiX">
       </div>
-      <span class="site-name">Pulse<br>Underground</span>
+      <span class="site-name">DeFiX</span>
     </div>
 
     <nav>
@@ -1094,7 +1106,7 @@ nav { flex:1; padding:4px 0; }
     <button id="new-banner">✦ New posts — click to load</button>
 
     <div id="feed-header">
-      <span id="feed-title">Pulse Underground</span>
+      <span id="feed-title">DeFiX</span>
       <button id="refresh-btn" title="Refresh">↺</button>
     </div>
 
@@ -1161,7 +1173,7 @@ nav { flex:1; padding:4px 0; }
       <div class="sb-card-row">
         <div style="flex:1">
           <span class="trend-label">Trending on PulseChain</span>
-          <span class="trend-name">#PulseUnderground</span>
+          <span class="trend-name">#DeFiX</span>
           <span class="trend-count">On-chain posts</span>
         </div>
       </div>
@@ -1212,7 +1224,7 @@ nav { flex:1; padding:4px 0; }
 
     <div class="sb-footer">
       <a href="#">About</a><a href="#">PulseChain</a><a href="#">Wave</a>
-      <br>© 2025 Pulse Underground
+      <br>© 2025 DeFiX
     </div>
   </div>
 </div>
@@ -1422,16 +1434,16 @@ const POSTS_TARGET   = 20;
 const MAX_PAGES      = 40;
 const POLL_FIRST_MS  = 30_000;
 const POLL_MS        = 120_000;
-const DRAFT_KEY      = 'pulseDraft';
-const PRUNE_KEY      = 'pulseLastPrune';
-const LAST_CHECK_KEY = 'pulseLastCheck';
+const DRAFT_KEY      = 'defixDraft';
+const PRUNE_KEY      = 'defixLastPrune';
+const LAST_CHECK_KEY = 'defixLastCheck';
 const WAVE_ADDRESS   = '0x0000000000000000000000000000000000000000';
 const LIKE_PREFIX     = 'LIKE:';
 const BOOKMARK_PREFIX = 'BOOKMARK:';
 const FOLLOW_PREFIX   = 'FOLLOW:';
 const UNFOLLOW_PREFIX = 'UNFOLLOW:';
-const SETTINGS_KEY    = 'pulseSettings';
-const CHANNELS_KEY    = 'pulseChannelsScan';
+const SETTINGS_KEY    = 'defixSettings';
+const CHANNELS_KEY    = 'defixChannelsScan';
 
 const ERC721_ABI = [
   'function tokenURI(uint256 tokenId) view returns (string)',
@@ -1457,50 +1469,74 @@ const utils = {
     d.textContent = String(str ?? '');
     return d.innerHTML;
   },
-  linkify(text) {
+  linkify(text, fullText) {
+    /* fullText = complete post text for image extraction (ignores MAX_PREVIEW truncation)
+       text     = possibly truncated text for body rendering */
     const re    = /ipfs:\/\/\S+|ar:\/\/\S+|arweave:\/\/\S+|https?:\/\/[^\s<>"{}|\\^[\]`]+|#([a-zA-Z]\w{0,99})|@(0x[a-fA-F0-9]{40})/g;
-    const imgRe = /\.(jpg|jpeg|png|gif|webp|svg|mp4|webm)(\?[^\s]*)?$/i;
+    const imgRe  = /\.(jpg|jpeg|png|gif|webp|svg)(\?[^\s]*)?$/i;
+    const vidRe  = /\.(mp4|webm|ogg|mov)(\?[^\s]*)?$/i;
     const resolveUrl = u => {
       if (u.startsWith('ipfs://'))    return 'https://ipfs.io/ipfs/' + u.slice(7);
       if (u.startsWith('ar://'))      return 'https://arweave.net/' + u.slice(5);
       if (u.startsWith('arweave://')) return 'https://arweave.net/' + u.slice(10);
       return u;
     };
-    let result = '', last = 0, imgHtml = '', imgCount = 0, m;
 
-    while ((m = re.exec(text)) !== null) {
-      const rawSegment = text.slice(last, m.index);
-      /* Only add the preceding text if it's not just whitespace before a media URL */
-      result += utils.safe(rawSegment).replace(/\n/g, '<br>');
-      last = m.index + m[0].length;
+    /* ── Pass 1: extract ALL media from fullText (never truncated) ── */
+    const scanText = fullText || text;
+    let imgHtml = '', mediaCount = 0;
+    const mediaUrls = new Set(); /* dedup */
+    let mScan;
+    re.lastIndex = 0;
+    while ((mScan = re.exec(scanText)) !== null && mediaCount < 4) {
+      const raw = mScan[0];
+      if (!raw.startsWith('http') && !raw.startsWith('ipfs://') &&
+          !raw.startsWith('ar://') && !raw.startsWith('arweave://')) continue;
+      const resolved = resolveUrl(raw);
+      if (mediaUrls.has(resolved)) continue;
+      if (imgRe.test(resolved)) {
+        mediaUrls.add(resolved);
+        const safeR = utils.safe(resolved);
+        const safeRaw = utils.safe(raw);
+        imgHtml += `<img src="${safeR}" class="post-img-thumb" alt="image"
+          loading="lazy" onerror="this.style.display='none'"
+          data-href="${safeR}" title="Right-click to copy URL"
+          data-raw-url="${safeRaw}">`;
+        mediaCount++;
+      } else if (vidRe.test(resolved)) {
+        mediaUrls.add(resolved);
+        const safeR = utils.safe(resolved);
+        imgHtml += `<video src="${safeR}" class="post-vid-thumb"
+          controls preload="metadata" playsinline
+          onerror="this.style.display='none'"></video>`;
+        mediaCount++;
+      }
+    }
 
-      if (m[0].startsWith('http') || m[0].startsWith('ipfs://') ||
-          m[0].startsWith('ar://') || m[0].startsWith('arweave://')) {
-        const raw      = m[0];
+    /* ── Pass 2: render body text (may be truncated), suppressing media URLs ── */
+    let result = '', last = 0;
+    re.lastIndex = 0;
+    while ((mScan = re.exec(text)) !== null) {
+      result += utils.safe(text.slice(last, mScan.index)).replace(/\n/g, '<br>');
+      last = mScan.index + mScan[0].length;
+      const raw = mScan[0];
+      if (mScan[1]) {
+        /* hashtag */
+        result += `<span class="post-tag" data-tag="${utils.safe(mScan[1])}">#${utils.safe(mScan[1])}</span>`;
+      } else if (mScan[2]) {
+        /* @address mention */
+        const addr = mScan[2].toLowerCase();
+        result += `<span class="post-mention" data-addr="${utils.safe(addr)}">@${utils.safe(addr.slice(0,6)+'…'+addr.slice(-4))}</span>`;
+      } else {
+        /* URL — suppress if it's a media URL we're already rendering as image/video */
         const resolved = resolveUrl(raw);
-        const safeResolved = utils.safe(resolved);
-        const isImg = imgRe.test(resolved);
-
-        if (isImg && imgCount < 4) {
-          imgHtml += `<img src="${safeResolved}" class="post-img-thumb" alt="media"
-            loading="lazy"
-            onerror="this.closest('.post-img-thumb-wrap')?.remove(); this.style.display='none'"
-            data-href="${safeResolved}"
-            title="Right-click to copy URL" data-raw-url="${utils.safe(raw)}">`;
-          imgCount++;
-          /* Suppress the raw URL text in body — image replaces it */
+        if (mediaUrls.has(resolved)) {
+          /* Suppressed — shown as inline media instead */
         } else {
-          /* Non-image URL: show as link, but shorten display text */
-          const display = raw.length > 50 ? raw.slice(0,47) + '…' : raw;
-          result += `<a href="${safeResolved}" target="_blank" rel="noopener noreferrer"
+          const display = raw.length > 50 ? raw.slice(0, 47) + '…' : raw;
+          result += `<a href="${utils.safe(resolved)}" target="_blank" rel="noopener noreferrer"
             class="post-link" onclick="event.stopPropagation()">${utils.safe(display)}</a>`;
         }
-      } else if (m[1]) {
-        const tag = m[1];
-        result += `<span class="post-tag" data-tag="${utils.safe(tag)}">#${utils.safe(tag)}</span>`;
-      } else if (m[2]) {
-        const addr = m[2].toLowerCase();
-        result += `<span class="post-mention" data-addr="${utils.safe(addr)}">@${utils.safe(addr.slice(0,6)+'…'+addr.slice(-4))}</span>`;
       }
     }
     result += utils.safe(text.slice(last)).replace(/\n/g, '<br>');
@@ -1546,7 +1582,7 @@ class Cache {
   constructor() {
     this._db    = null;
     this._ready = new Promise((res, rej) => {
-      const req = indexedDB.open('PulseUnderground', 7);
+      const req = indexedDB.open('DeFiX', 1);
       req.onupgradeneeded = e => {
         const db = e.target.result;
         if (!db.objectStoreNames.contains('posts'))
@@ -1648,8 +1684,8 @@ class Cache {
   }
 }
 
-/* ── PulseUnderground ─────────────────────────────────────────────────── */
-class PulseUnderground {
+/* ── DeFiX ─────────────────────────────────────────────────── */
+class DeFiX {
   constructor() {
     this.state = {
       posts: [], pending: [], searchTerm: '', activeTag: null,
@@ -1992,7 +2028,7 @@ class PulseUnderground {
     this.setNav('nav-home','home');
     this.state.mode    = 'main';
     this.state.channel = MAIN_CHANNEL;
-    this.g('feed-title').textContent       = 'Pulse Underground';
+    this.g('feed-title').textContent       = 'DeFiX';
     this.g('compose-area').style.display   = 'flex';
     this.g('channel-banner').style.display = 'none';
     this.g('feed-tabs').style.display      = 'flex';
@@ -2389,10 +2425,10 @@ class PulseUnderground {
       <div class="settings-section">
         <div class="settings-section-title">About</div>
         <div class="settings-about-logo">
-          <img src="image1.jpeg" alt="Pulse Underground">
+          <img src="image1.jpeg" alt="DeFiX">
           <div>
-            <strong>Pulse Underground</strong>
-            <span>On-chain social on PulseChain</span>
+            <strong>DeFiX</strong>
+            <span>Decentralized X — on-chain social on PulseChain</span>
           </div>
         </div>
         <div style="font-size:14px;color:var(--muted);line-height:1.8">
@@ -2402,7 +2438,7 @@ class PulseUnderground {
           No server, no backend, no ads.
         </div>
         <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
-          <a href="https://github.com/HyperLightCoder/Pulse-Underground" target="_blank"
+          <a href="https://github.com/HyperLightCoder/DeFiX" target="_blank"
             class="settings-btn" style="text-decoration:none;display:inline-block">GitHub ↗</a>
           <a href="https://pulsechain.com" target="_blank"
             class="settings-btn" style="text-decoration:none;display:inline-block">PulseChain ↗</a>
@@ -2568,7 +2604,7 @@ class PulseUnderground {
     try {
       const prov = new ethers.providers.Web3Provider(window.ethereum);
       const accs = await prov.listAccounts();
-      if (accs.length && localStorage.getItem('pulseConnected') === '1') {
+      if (accs.length && localStorage.getItem('defixConnected') === '1') {
         this.signer = prov.getSigner();
         this.state.signerAddr = (await this.signer.getAddress()).toLowerCase();
         this._registerWalletListeners();
@@ -2589,7 +2625,7 @@ class PulseUnderground {
       await prov.send('eth_requestAccounts', []);
       this.signer = prov.getSigner();
       this.state.signerAddr = (await this.signer.getAddress()).toLowerCase();
-      localStorage.setItem('pulseConnected', '1');
+      localStorage.setItem('defixConnected', '1');
       this._registerWalletListeners();
       await this.afterConnect();
       utils.toast('Wallet connected ✓');
@@ -2665,7 +2701,7 @@ class PulseUnderground {
     this.g('ap-name').textContent    = 'My Wallet';
     this.g('ap-addr').textContent    = '';
     this.clearNotifBadge();
-    localStorage.removeItem('pulseConnected');
+    localStorage.removeItem('defixConnected');
     this.renderFeed();
     utils.toast('Wallet disconnected');
   }
@@ -3413,7 +3449,9 @@ class PulseUnderground {
       ? post.display.slice(0, MAX_PREVIEW) + '…'
       : post.display;
 
-    const { text: bodyHtml, images: imgHtml } = utils.linkify(textToRender);
+    /* Always extract images from full text — never truncated —
+       so media below the 500-char preview still renders in feed */
+    const { text: bodyHtml, images: imgHtml } = utils.linkify(textToRender, post.display);
     const needsMore = !inModal && !expanded && post.display.length > MAX_PREVIEW;
 
     /* Repost quote card — look up the original post */
@@ -3478,10 +3516,10 @@ class PulseUnderground {
           </div>
           ${toLabel}${replyBadge}
           ${post.repostOf ? `<div class="repost-label">🔁 <span class="post-name">${displayName}</span> reposted</div>` : ''}
-          ${imgHtml ? `<div class="post-images">${imgHtml}</div>` : ''}
           <div class="post-body">${bodyHtml}</div>
           ${repostCard}
           ${needsMore ? `<button class="read-more-btn" data-action="expand">Show more ↓</button>` : ''}
+          ${imgHtml ? `<div class="post-images">${imgHtml}</div>` : ''}
           <div class="post-actions">
             <button class="act-btn act-reply" data-action="reply" title="Reply">
               <span class="act-icon">💬</span><span class="act-count">${rcLabel}</span>
@@ -3915,7 +3953,7 @@ class PulseUnderground {
   };
 }
 
-const pulse = new PulseUnderground();
+const pulse = new DeFiX();
 pulse.init().catch(err => {
   console.error('Init error:', err);
   utils.toast('Startup failed — see console');
