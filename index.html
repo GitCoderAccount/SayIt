@@ -887,6 +887,39 @@ nav { flex:1; padding:4px 0; }
 .settings-about-logo img { width:48px; height:48px; border-radius:50%; border:2px solid var(--primary); }
 .settings-about-logo div strong { display:block; font-size:17px; font-weight:800; }
 .settings-about-logo div span { font-size:13px; color:var(--muted); }
+/* ── Notification list ──────────────────────────────────────────────────── */
+.notif-list { display:flex; flex-direction:column; }
+.notif-item {
+  display:flex; align-items:flex-start; gap:12px;
+  padding:14px 16px; border-bottom:1px solid var(--border);
+  cursor:pointer; transition:background 0.15s;
+}
+.notif-item:hover { background:rgba(255,255,255,0.03); }
+.notif-icon-wrap { font-size:20px; flex-shrink:0; width:24px; text-align:center; }
+.notif-avatar {
+  width:36px; height:36px; border-radius:50%;
+  object-fit:cover; flex-shrink:0; background:var(--bg-mid);
+}
+.notif-body { flex:1; min-width:0; font-size:15px; line-height:1.5; }
+.notif-name { font-weight:700; }
+.notif-label { color:var(--text); }
+.notif-preview {
+  color:var(--muted); font-size:14px; margin-top:2px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.notif-time { font-size:13px; color:var(--muted); flex-shrink:0; white-space:nowrap; }
+
+/* ── Thread page ────────────────────────────────────────────────────────── */
+.thread-page { display:flex; flex-direction:column; }
+.thread-orig-item { border-bottom:1px solid var(--border); }
+.thread-reply-item { border-bottom:1px solid var(--border); }
+.thread-compose {
+  display:flex; gap:12px; padding:12px 16px;
+  border-top:1px solid var(--border);
+  position:sticky; bottom:0;
+  background:rgba(0,0,0,0.92); backdrop-filter:blur(12px);
+}
+
 /* ── Repost card ────────────────────────────────────────────────────────── */
 .repost-label {
   font-size:13px; color:var(--muted); margin-bottom:6px; display:block;
@@ -1356,28 +1389,6 @@ nav { flex:1; padding:4px 0; }
 </div>
 
 <!-- Thread modal -->
-<div class="modal-bg" id="thread-modal">
-  <div class="modal wide">
-    <div class="modal-head">
-      <span class="modal-title">Thread</span>
-      <button class="modal-close" id="close-thread">✕</button>
-    </div>
-    <div id="thread-orig"></div>
-    <div style="padding:10px 0;font-size:12px;font-weight:700;color:var(--muted);
-      letter-spacing:1px;text-transform:uppercase;border-bottom:1px solid var(--border);
-      margin-bottom:12px">Replies</div>
-    <div id="thread-replies"></div>
-    <div id="thread-loading">⟳ Fetching replies from chain…</div>
-    <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
-      <textarea class="auto-textarea" id="thread-reply-input" placeholder="Reply…"></textarea>
-      <div style="text-align:right;font-size:13px;color:var(--muted);margin-top:4px" id="thread-count"></div>
-      <div class="btn-row" style="margin-top:12px">
-        <button class="btn-pri" id="post-thread-reply-btn">Reply</button>
-      </div>
-    </div>
-  </div>
-</div>
-
 <!-- Repost modal -->
 <div class="modal-bg" id="repost-modal">
   <div class="modal">
@@ -1854,9 +1865,7 @@ class DeFiX {
       this.onFeedClick(e, inModal);
     };
 
-    g('feed').addEventListener('click',           e => handlePostClick(e, false));
-    g('thread-orig').addEventListener('click',    e => handlePostClick(e, true));
-    g('thread-replies').addEventListener('click', e => handlePostClick(e, true));
+    g('feed').addEventListener('click', e => handlePostClick(e, false));
 
     g('cb-address').onclick = () => {
       const addr = g('cb-address').textContent;
@@ -1892,13 +1901,13 @@ class DeFiX {
       if (e.key === '/') { e.preventDefault(); g('search-input').focus(); }
       if (e.key === 'e' || e.key === 'E') { e.preventDefault(); this.openComposeModal(); }
       if (e.key === 'Escape') {
-        ['compose-modal','profile-modal','reply-modal','thread-modal','repost-modal','media-modal'].forEach(id => {
+        ['compose-modal','profile-modal','reply-modal','repost-modal','media-modal'].forEach(id => {
           if (g(id).classList.contains('open')) this.closeModal(id);
         });
       }
     });
 
-    ['compose-modal','profile-modal','reply-modal','thread-modal','repost-modal','media-modal'].forEach(id => {
+    ['compose-modal','profile-modal','reply-modal','repost-modal','media-modal'].forEach(id => {
       g(id).addEventListener('click', e => { if (e.target === g(id)) this.closeModal(id); });
     });
 
@@ -1955,13 +1964,6 @@ class DeFiX {
     g('media-url-input').oninput    = () => this._previewMedia();
     g('media-attach-btn').onclick   = () => this._attachMedia();
     g('media-cancel-btn').onclick   = () => this.closeModal('media-modal');
-
-    g('close-thread').onclick          = () => this.closeModal('thread-modal');
-    g('post-thread-reply-btn').onclick = () => this.postThreadReply();
-    g('thread-reply-input').oninput = () => {
-      utils.autoGrow(g('thread-reply-input'));
-      utils.updateCharCount(g('thread-reply-input'), g('thread-count'));
-    };
 
     this._initPullToRefresh();
   }
@@ -2080,16 +2082,107 @@ class DeFiX {
   async goNotifications() {
     if (!this.signer) { utils.toast('Connect wallet to view Notifications'); return; }
     this.setNav('nav-notifs','notifs');
-    this.state.mode    = 'notifications';
-    this.state.channel = this.state.signerAddr;
-    this.g('feed-title').textContent     = '🔔 Notifications';
-    this.g('compose-area').style.display = 'none';
+    this.g('feed-title').textContent       = '🔔 Notifications';
+    this.g('compose-area').style.display   = 'none';
     this.g('channel-banner').style.display = 'none';
-    this.setChActive(null);
-    this.updateChLabel();
+    this.g('feed-tabs').style.display      = 'none';
+    this.g('new-banner').style.display     = 'none';
+    this.g('loading-more').style.display   = 'none';
+    this.state.mode = 'notifications';
     localStorage.setItem(LAST_CHECK_KEY, Date.now().toString());
     this.clearNotifBadge();
-    await this.resetAndFetch();
+
+    this.g('feed').innerHTML = `<div class="prof-empty"><span>⏳</span><h3>Loading notifications…</h3></div>`;
+
+    try {
+      const allNotifs = [];
+      for (let page = 1; page <= 3; page++) {
+        let raw;
+        try { raw = await this.apiFetch(this.state.signerAddr, page); }
+        catch { break; }
+        raw.forEach(tx => {
+          const from = tx.from?.toLowerCase();
+          const to   = tx.to?.toLowerCase();
+          if (to !== this.state.signerAddr || from === this.state.signerAddr) return;
+          if (!tx.input || tx.input === '0x') return;
+          try {
+            const text = ethers.utils.toUtf8String(tx.input).trim();
+            if (text.startsWith(PROFILE_PREFIX) || text.startsWith(BOOKMARK_PREFIX)) return;
+            const ts = tx.timeStamp ? new Date(Number(tx.timeStamp)*1000).toISOString() : new Date().toISOString();
+            let type = 'message', target = null, preview = '';
+            if (text.startsWith(LIKE_PREFIX)) {
+              type = 'like'; target = text.slice(LIKE_PREFIX.length).trim().toLowerCase();
+            } else if (text.startsWith(FOLLOW_PREFIX)) {
+              type = 'follow'; target = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
+            } else if (text.startsWith(UNFOLLOW_PREFIX)) {
+              return; /* skip unfollows from notifications */
+            } else if (text.match(/^REPLY_TO:(0x[a-f0-9]{64})\n\n/i)) {
+              type = 'reply';
+              const m = text.match(/^REPLY_TO:(0x[a-f0-9]{64})\n\n/i);
+              target  = m[1].toLowerCase();
+              preview = text.slice(m[0].length).trim().slice(0, 100);
+            } else if (text.match(/^REPOST:(0x[a-f0-9]{64})/i)) {
+              type = 'repost';
+              const m = text.match(/^REPOST:(0x[a-f0-9]{64})/i);
+              target  = m[1].toLowerCase();
+            } else {
+              type = 'message'; preview = text.slice(0, 100);
+            }
+            allNotifs.push({ type, from, target, preview, timestamp: ts, txHash: tx.hash.toLowerCase() });
+          } catch { /* skip */ }
+        });
+        if (raw.length < 50) break;
+      }
+
+      if (!allNotifs.length) {
+        this.g('feed').innerHTML = `<div class="prof-empty"><span>🔔</span><h3>No notifications yet</h3><p>When someone likes, follows, or replies to you, it appears here.</p></div>`;
+        return;
+      }
+
+      /* Render */
+      const icons = { like:'❤️', follow:'👤', reply:'💬', repost:'🔁', message:'✉️' };
+      const labels = {
+        like:    'liked your post',
+        follow:  'followed you',
+        reply:   'replied to you',
+        repost:  'reposted your post',
+        message: 'sent you a message',
+      };
+
+      let html = '<div class="notif-list">';
+      allNotifs.forEach(n => {
+        const prof = this.state.profCache[n.from];
+        const pic  = utils.safe(prof?.picUrl || 'image1.jpeg');
+        const name = prof?.username ? utils.safe(prof.username) : this.trunc(n.from);
+        const time = this.relTime(n.timestamp);
+        const icon = icons[n.type] || '📩';
+        const label = labels[n.type] || 'interacted with you';
+        const txLink = `https://otter.pulsechain.com/tx/${utils.safe(n.txHash)}`;
+        html += `
+          <div class="notif-item" onclick="window.open('${txLink}','_blank')">
+            <div class="notif-icon-wrap">${icon}</div>
+            <img src="${pic}" class="notif-avatar" onerror="this.src='image1.jpeg'">
+            <div class="notif-body">
+              <span class="notif-name">${name}</span>
+              <span class="notif-label"> ${label}</span>
+              ${n.preview ? `<div class="notif-preview">${utils.safe(n.preview)}</div>` : ''}
+            </div>
+            <span class="notif-time">${time}</span>
+          </div>`;
+        /* Fetch profile for avatar */
+        this.fetchOtherProfile(n.from);
+      });
+      html += '</div>';
+      this.g('feed').innerHTML = html;
+
+      /* Re-render after profiles load */
+      setTimeout(() => {
+        if (this.state.mode === 'notifications') this.goNotifications();
+      }, 2000);
+
+    } catch (err) {
+      this.g('feed').innerHTML = `<div class="prof-empty"><span>⚠️</span><h3>Error loading</h3><p>${utils.safe(err.message)}</p></div>`;
+    }
   }
 
   async goSelf() {
@@ -2596,7 +2689,12 @@ class DeFiX {
         if (Number(tx.timeStamp) * 1000 <= lastCheck) return false;
         try {
           const text = ethers.utils.toUtf8String(tx.input).trim();
-          return text.length > 0 && !text.startsWith(PROFILE_PREFIX);
+          /* Include: likes, follows, replies, reposts, direct messages */
+          /* Exclude: profile saves, bookmarks, unfollows */
+          if (text.startsWith(PROFILE_PREFIX)) return false;
+          if (text.startsWith(BOOKMARK_PREFIX)) return false;
+          if (text.startsWith(UNFOLLOW_PREFIX)) return false;
+          return text.length > 0;
         } catch { return false; }
       }).length;
       this.setNotifBadge(count);
@@ -2689,14 +2787,13 @@ class DeFiX {
     this.renderFeed();
   }
 
-  /* Load likes, bookmarks, follows from user's own self-sends */
+  /* Load likes, bookmarks, follows from chain */
   async fetchMyReactions() {
     if (!this.state.signerAddr) return;
     this.state.likes.clear();
     this.state.bookmarks.clear();
     this.state.following.clear();
     try {
-      /* Scan pages 1-4 (200 self-send txs) — reactions are self-sends */
       for (let page = 1; page <= 4; page++) {
         let raw;
         try { raw = await this.apiFetch(this.state.signerAddr, page); }
@@ -2704,15 +2801,18 @@ class DeFiX {
         raw.forEach(tx => {
           const from = tx.from?.toLowerCase();
           const to   = tx.to?.toLowerCase();
-          if (from !== this.state.signerAddr || to !== this.state.signerAddr) return;
+          if (from !== this.state.signerAddr) return; /* only my sent txs */
           if (!tx.input || tx.input === '0x') return;
           try {
             const text = ethers.utils.toUtf8String(tx.input).trim();
             if (text.startsWith(LIKE_PREFIX)) {
+              /* Likes: sent to channel */
               this.state.likes.add(text.slice(LIKE_PREFIX.length).trim().toLowerCase());
-            } else if (text.startsWith(BOOKMARK_PREFIX)) {
+            } else if (text.startsWith(BOOKMARK_PREFIX) && to === from) {
+              /* Bookmarks: self-send only */
               this.state.bookmarks.add(text.slice(BOOKMARK_PREFIX.length).trim().toLowerCase());
             } else if (text.startsWith(FOLLOW_PREFIX)) {
+              /* Follows: sent TO the target address */
               this.state.following.add(text.slice(FOLLOW_PREFIX.length).trim().toLowerCase());
             } else if (text.startsWith(UNFOLLOW_PREFIX)) {
               this.state.following.delete(text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase());
@@ -2899,7 +2999,7 @@ class DeFiX {
           <span class="prof-count-item" id="prof-following-count">
             <strong>—</strong> Following
           </span>
-          <span class="prof-count-item">
+          <span class="prof-count-item" id="prof-follower-count">
             <strong>?</strong> Followers
           </span>
         </div>
@@ -2946,8 +3046,9 @@ class DeFiX {
       followBtn.onclick = () => this.toggleFollow(address, followBtn);
     }
 
-    /* Count following */
+    /* Count following and fetch follower count */
     this._showFollowingCount();
+    this._fetchFollowerCount(address);
   }
 
   _showFollowingCount() {
@@ -2958,21 +3059,59 @@ class DeFiX {
     }
   }
 
+  async _fetchFollowerCount(address) {
+    /* Scan received txs for FOLLOW:{address} sent TO this address */
+    const el = document.getElementById('prof-follower-count');
+    if (!el) return;
+    try {
+      let count = 0;
+      const seen = new Set(); /* dedupe — last FOLLOW/UNFOLLOW per sender wins */
+      const follows = new Map(); /* sender → 'follow'|'unfollow' */
+      for (let page = 1; page <= 3; page++) {
+        let raw;
+        try { raw = await this.apiFetch(address, page); }
+        catch { break; }
+        raw.forEach(tx => {
+          const from = tx.from?.toLowerCase();
+          const to   = tx.to?.toLowerCase();
+          if (to !== address.toLowerCase()) return;
+          if (!tx.input || tx.input === '0x') return;
+          try {
+            const text = ethers.utils.toUtf8String(tx.input).trim();
+            if (text.startsWith(FOLLOW_PREFIX)) {
+              const target = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
+              if (target === address.toLowerCase()) follows.set(from, 'follow');
+            } else if (text.startsWith(UNFOLLOW_PREFIX)) {
+              const target = text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase();
+              if (target === address.toLowerCase()) follows.set(from, 'unfollow');
+            }
+          } catch { /* skip */ }
+        });
+        if (raw.length < 50) break;
+      }
+      count = [...follows.values()].filter(v => v === 'follow').length;
+      el.innerHTML = `<strong>${count}</strong> Followers`;
+    } catch { /* silent — leave as ? */ }
+  }
+
   async toggleFollow(address, btn) {
     if (!this.signer) { utils.toast('Connect wallet to follow'); return; }
     const addr = address.toLowerCase();
     const isFollowing = this.state.following.has(addr);
+    /* Send FOLLOW/UNFOLLOW TO the target address (not self-send).
+       This lets the target count followers by scanning their received txs.
+       You find your following list by scanning your own sent FOLLOW: txs. */
     const prefix = isFollowing ? UNFOLLOW_PREFIX : FOLLOW_PREFIX;
-    const ok = await this.publish(prefix + addr, null, this.state.signerAddr);
+    const ok = await this.publish(prefix + addr, null, addr);
     if (ok) {
       if (isFollowing) {
         this.state.following.delete(addr);
-        btn.textContent  = 'Follow';
-        btn.className    = 'prof-follow-btn';
+        btn.textContent = 'Follow';
+        btn.className   = 'prof-follow-btn';
       } else {
         this.state.following.add(addr);
-        btn.textContent  = 'Following';
-        btn.className    = 'prof-following-btn';
+        btn.textContent = 'Following';
+        btn.className   = 'prof-following-btn';
       }
       this._showFollowingCount();
     }
@@ -3087,7 +3226,7 @@ class DeFiX {
         const el = document.createElement('div');
         el.className      = 'post-item';
         el.dataset.txhash = p.txHash;
-        el.innerHTML      = this.postHTML(p, false, replyMap);
+        el.innerHTML      = this.postHTML(p, false, replyMap, null);
         frag.appendChild(el);
         if (p.reporter !== this.state.signerAddr) this.fetchOtherProfile(p.reporter);
       });
@@ -3304,35 +3443,57 @@ class DeFiX {
       try { raw = ethers.utils.toUtf8String(tx.input).trim(); }
       catch { return acc; }
       if (!raw) return acc;
+
+      /* Profile saves (self-send) — never shown anywhere in feed */
       if (raw.startsWith(PROFILE_PREFIX) && from === to) return acc;
+      /* Bookmarks (self-send) — private, only visible in bookmark tab */
+      if (raw.startsWith(BOOKMARK_PREFIX) && from === to) return acc;
+
+      /* Reactions: LIKE/FOLLOW/UNFOLLOW — parse as typed posts.
+         renderFeed skips them from display; notifications tab shows them. */
+      let postType = 'post';
+      let reactionTarget = null;
+      if (raw.startsWith(LIKE_PREFIX)) {
+        postType = 'like';
+        reactionTarget = raw.slice(LIKE_PREFIX.length).trim().toLowerCase();
+      } else if (raw.startsWith(FOLLOW_PREFIX)) {
+        postType = 'follow';
+        reactionTarget = raw.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
+      } else if (raw.startsWith(UNFOLLOW_PREFIX)) {
+        postType = 'unfollow';
+        reactionTarget = raw.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase();
+      }
+
+      /* Mode-based address filtering */
       let direction = null;
-      if (mode === 'inbox') {
-        if (from !== signerAddr && to !== signerAddr) return acc;
-        if (raw.startsWith(PROFILE_PREFIX)) return acc;
-        direction = (from === signerAddr) ? 'sent' : 'received';
-      } else if (mode === 'self') {
-        if (to !== signerAddr) return acc;
-      } else if (mode === 'notifications') {
+      if (mode === 'notifications') {
+        /* Notifications: txs TO me, not FROM me, newer than lastCheck */
         if (to !== signerAddr || from === signerAddr) return acc;
         if (Number(tx.timeStamp) * 1000 <= lastCheck) return acc;
+      } else if (mode === 'self') {
+        if (to !== signerAddr) return acc;
       } else {
+        /* main / custom / wave — must be to this channel */
         if (to !== channel) return acc;
       }
-      const m        = raw.match(/^REPLY_TO:(0x[a-f0-9]{64})\n\n/i);
-      const parentTx = m ? m[1].toLowerCase() : null;
-      let   display  = m ? raw.slice(m[0].length).trim() : raw;
 
-      /* Handle REPOST: prefix — extract quoted txHash, build display */
-      let repostOf = null;
-      const repostM = raw.match(/^REPOST:(0x[a-f0-9]{64})(?:\n\n([\s\S]*))?$/i);
-      if (repostM) {
-        repostOf = repostM[1].toLowerCase();
-        display  = repostM[2]?.trim() || '';   /* comment (may be empty) */
+      /* For regular posts: parse reply/repost structure */
+      let parentTx = null, display = raw, repostOf = null;
+      if (postType === 'post') {
+        const m = raw.match(/^REPLY_TO:(0x[a-f0-9]{64})\n\n/i);
+        if (m) { parentTx = m[1].toLowerCase(); display = raw.slice(m[0].length).trim(); }
+        const repostM = raw.match(/^REPOST:(0x[a-f0-9]{64})(?:\n\n([\s\S]*))?$/i);
+        if (repostM) {
+          repostOf = repostM[1].toLowerCase();
+          display  = repostM[2]?.trim() || '';
+          postType = 'repost';
+        }
+        if (!display && !repostOf) return acc;
       }
 
-      if (!display && !repostOf) return acc;
       acc.push({
         content: raw, display, parentTx, repostOf, direction,
+        postType, reactionTarget,
         reporter: from, to: to ?? null,
         timestamp: tx.timeStamp
           ? new Date(Number(tx.timeStamp) * 1000).toISOString()
@@ -3430,7 +3591,7 @@ class DeFiX {
           p.reporter.toLowerCase().includes(term));
       }
     }
-    if (!list.length) {
+    if (!displayList.length) {
       const msgs = {
         notifications: 'No new notifications',
         inbox: 'No messages yet',
@@ -3446,17 +3607,25 @@ class DeFiX {
       return;
     }
     const replyMap = new Map();
+    const likeMap  = new Map(); /* txHash of liked post → count */
     this.state.posts.forEach(p => {
       if (p.parentTx) replyMap.set(p.parentTx, (replyMap.get(p.parentTx) || 0) + 1);
+      if (p.postType === 'like' && p.reactionTarget)
+        likeMap.set(p.reactionTarget, (likeMap.get(p.reactionTarget) || 0) + 1);
     });
+
+    /* Only render actual posts — filter out reactions/follows */
+    const displayList = list.filter(p =>
+      !p.postType || p.postType === 'post' || p.postType === 'repost'
+    );
     const frag = document.createDocumentFragment();
     this._postMap.clear();
-    list.forEach(post => {
+    displayList.forEach(post => {
       this._postMap.set(post.txHash, post);
       const el = document.createElement('div');
       el.className      = 'post-item';
       el.dataset.txhash = post.txHash;
-      el.innerHTML      = this.postHTML(post, false, replyMap);
+      el.innerHTML      = this.postHTML(post, false, replyMap, likeMap);
       frag.appendChild(el);
       if (post.reporter !== this.state.signerAddr) this.fetchOtherProfile(post.reporter);
     });
@@ -3464,7 +3633,7 @@ class DeFiX {
     feed.appendChild(frag);
   }
 
-  postHTML(post, inModal, replyMap) {
+  postHTML(post, inModal, replyMap, likeMap) {
     const isOwn    = post.reporter === this.state.signerAddr;
     const expanded = this.state.expanded.has(post.txHash);
 
@@ -3527,7 +3696,9 @@ class DeFiX {
       : '';
 
     const rc = replyMap ? (replyMap.get(post.txHash) || 0) : 0;
+    const lc = likeMap  ? (likeMap.get(post.txHash)  || 0) : 0;
     const rcLabel = rc > 0 ? String(rc) : '';
+    const lcLabel = lc > 0 ? String(lc) : '';
     const fullDate = new Date(post.timestamp).toLocaleString();
     const relT     = this.relTime(post.timestamp);
     const isLiked     = this.state.likes.has(post.txHash);
@@ -3563,7 +3734,7 @@ class DeFiX {
               <span class="act-icon">🔁</span>
             </button>
             <button class="act-btn act-like ${isLiked ? 'liked' : ''}" data-action="like" title="${isLiked ? 'Unlike' : 'Like'}">
-              <span class="act-icon">${isLiked ? '❤️' : '🤍'}</span>
+              <span class="act-icon">${isLiked ? '❤️' : '🤍'}</span><span class="act-count">${lcLabel}</span>
             </button>
             <button class="act-btn act-bookmark ${isBookmarked ? 'bookmarked' : ''}" data-action="bookmark" title="${isBookmarked ? 'Remove bookmark' : 'Bookmark'}">
               <span class="act-icon">${isBookmarked ? '🔖' : '🏷️'}</span>
@@ -3597,7 +3768,11 @@ class DeFiX {
       const tx      = await this.signer.sendTransaction({ ...txReq, gasLimit: gas });
       const receipt = await tx.wait();
       const hash    = receipt.transactionHash.toLowerCase();
-      if (!body.startsWith(PROFILE_PREFIX)) {
+      if (!body.startsWith(PROFILE_PREFIX) &&
+          !body.startsWith(LIKE_PREFIX) &&
+          !body.startsWith(BOOKMARK_PREFIX) &&
+          !body.startsWith(FOLLOW_PREFIX) &&
+          !body.startsWith(UNFOLLOW_PREFIX)) {
         const post = {
           content: body, display: content.trim(),
           parentTx, direction: null,
@@ -3651,7 +3826,7 @@ class DeFiX {
     const icon = btn?.querySelector('.act-icon');
 
     if (this.state.likes.has(hash)) {
-      /* Optimistic unlike — local only (blockchain likes are write-only) */
+      /* Optimistic unlike — local only (on-chain likes are write-only) */
       this.state.likes.delete(hash);
       if (btn)  btn.classList.remove('liked');
       if (icon) icon.textContent = '🤍';
@@ -3661,10 +3836,11 @@ class DeFiX {
       this.state.likes.add(hash);
       if (btn)  btn.classList.add('liked');
       if (icon) icon.textContent = '❤️';
-      /* Write to chain — self-send */
-      const ok = await this.publish(LIKE_PREFIX + hash, null, this.state.signerAddr);
+      /* Send LIKE to the channel the post lives in — makes counts computable.
+         Filtered from feed display by parseTxs. Public but that's fine on-chain. */
+      const destination = post.to || this.state.channel;
+      const ok = await this.publish(LIKE_PREFIX + hash, null, destination);
       if (!ok) {
-        /* Rollback on failure */
         this.state.likes.delete(hash);
         if (btn)  btn.classList.remove('liked');
         if (icon) icon.textContent = '🤍';
@@ -3742,43 +3918,127 @@ class DeFiX {
   }
 
   openThread(post) {
+    /* Save previous view so back button can restore it */
+    this._prevMode    = this.state.mode;
+    this._prevChannel = this.state.channel;
+    this._prevPosts   = this.state.posts;
+
+    this.state.mode = 'thread';
+    this.g('compose-area').style.display   = 'none';
+    this.g('channel-banner').style.display = 'none';
+    this.g('feed-tabs').style.display      = 'none';
+    this.g('new-banner').style.display     = 'none';
+    this.g('loading-more').style.display   = 'none';
+    this.g('feed-title').textContent       = 'Post';
+
+    /* Back button in header */
+    const existingBack = document.getElementById('thread-back-btn');
+    if (!existingBack) {
+      const backBtn = document.createElement('button');
+      backBtn.id = 'thread-back-btn';
+      backBtn.style.cssText = `background:transparent;border:none;color:var(--text);
+        font-size:20px;cursor:pointer;padding:4px 8px;border-radius:50%;
+        transition:background 0.18s;display:flex;align-items:center;gap:6px;
+        font-weight:700;font-size:15px;`;
+      backBtn.innerHTML = '← Back';
+      backBtn.onmouseenter = () => backBtn.style.background = 'rgba(255,255,255,0.06)';
+      backBtn.onmouseleave = () => backBtn.style.background = 'transparent';
+      backBtn.onclick = () => this._threadBack();
+      this.g('feed-header').insertBefore(backBtn, this.g('feed-header').firstChild);
+    }
+
     this.state.threadPost = post;
-    const origEl = document.createElement('div');
-    origEl.className      = 'post-item';
-    origEl.dataset.txhash = post.txHash;
-    origEl.innerHTML      = this.postHTML(post, true, null);
-    origEl.style.cssText  = 'border:none;cursor:default';
-    this.g('thread-orig').replaceChildren(origEl);
-    this.renderThreadReplies(post);
-    this.g('thread-reply-input').value        = '';
-    this.g('thread-reply-input').style.height = '';
-    this.g('thread-count').textContent        = '';
-    this.g('thread-modal').classList.add('open');
+    this._renderThreadPage(post);
     this.fetchThreadReplies(post);
   }
 
-  renderThreadReplies(post) {
+  _threadBack() {
+    const btn = document.getElementById('thread-back-btn');
+    if (btn) btn.remove();
+    /* Restore previous view */
+    const prev = this._prevMode || 'main';
+    if (prev === 'main')         this.goHome();
+    else if (prev === 'profile') this.openProfileModal();
+    else if (prev === 'self')    this.goSelf();
+    else if (prev === 'custom') {
+      this.g('custom-input').value = this._prevChannel || '';
+      this.goCustom();
+    } else this.goHome();
+  }
+
+  _renderThreadPage(post) {
+    const replyMap = new Map();
+    this.state.posts.forEach(p => {
+      if (p.parentTx) replyMap.set(p.parentTx, (replyMap.get(p.parentTx) || 0) + 1);
+    });
+    this._postMap.set(post.txHash, post);
+    const origHTML = this.postHTML(post, true, replyMap, null);
+
     const replies = this.state.posts
-      .filter(p => p.parentTx === post.txHash)
-      .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-    const rc = this.g('thread-replies');
-    if (replies.length) {
-      rc.innerHTML = '';
-      replies.forEach(r => {
-        const el = document.createElement('div');
-        el.className      = 'post-item thread-reply-item';
-        el.dataset.txhash = r.txHash;
-        el.innerHTML      = this.postHTML(r, true, null);
-        rc.appendChild(el);
-      });
-    } else {
-      rc.innerHTML = `<p style="color:var(--muted);font-size:14px;padding:20px 0;text-align:center">No replies yet — be the first!</p>`;
+      .filter(p => p.parentTx === post.txHash && p.postType !== 'like' && p.postType !== 'follow')
+      .sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+    let repliesHTML = '';
+    replies.forEach(r => {
+      this._postMap.set(r.txHash, r);
+      repliesHTML += `<div class="post-item thread-reply-item" data-txhash="${utils.safe(r.txHash)}">${this.postHTML(r, true, null, null)}</div>`;
+    });
+
+    this.g('feed').innerHTML = `
+      <div class="thread-page">
+        <div class="post-item thread-orig-item" data-txhash="${utils.safe(post.txHash)}"
+          style="cursor:default;border-bottom:2px solid var(--border)">
+          ${origHTML}
+        </div>
+        <div id="thread-replies-page">
+          ${repliesHTML || '<div class="prof-empty" style="padding:32px"><span>💬</span><h3>No replies yet</h3><p>Be the first to reply.</p></div>'}
+        </div>
+        <div id="thread-loading-page" style="display:none;padding:16px;text-align:center;color:var(--muted);font-size:14px">
+          ⟳ Fetching replies from chain…
+        </div>
+        <div class="thread-compose">
+          <img src="${utils.safe(this.state.profile.picUrl || 'image1.jpeg')}"
+            class="compose-avatar" onerror="this.src='image1.jpeg'">
+          <div style="flex:1">
+            <textarea class="auto-textarea" id="thread-page-input"
+              placeholder="Post your reply…" style="min-height:60px"></textarea>
+            <div style="display:flex;justify-content:flex-end;margin-top:8px">
+              <button class="btn-pri" id="thread-page-reply-btn"
+                style="padding:9px 20px">Reply</button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+
+    /* Wire thread compose */
+    const input = document.getElementById('thread-page-input');
+    const btn   = document.getElementById('thread-page-reply-btn');
+    if (input) input.oninput = () => utils.autoGrow(input);
+    if (btn) btn.onclick = () => this._postThreadPageReply(post, input);
+
+    /* Wire click delegation on replies */
+    const repliesEl = document.getElementById('thread-replies-page');
+    if (repliesEl) repliesEl.addEventListener('click', e => this.onFeedClick(e, true));
+    const origEl = this.g('feed').querySelector('.thread-orig-item');
+    if (origEl) origEl.addEventListener('click', e => this.onFeedClick(e, true));
+  }
+
+  async _postThreadPageReply(post, inputEl) {
+    const text = inputEl?.value.trim();
+    if (!text) return;
+    const ok = await this.publish(text, post.txHash, post.to);
+    if (ok) {
+      inputEl.value = '';
+      inputEl.style.height = '';
+      /* Re-render thread with new reply */
+      this._renderThreadPage(post);
     }
   }
 
   async fetchThreadReplies(post) {
-    const loading = this.g('thread-loading');
-    loading.style.display = 'block';
+    const loadingEl = document.getElementById('thread-loading-page');
+    if (loadingEl) loadingEl.style.display = 'block';
+
     const targetHash = post.txHash;
     const scanAddr   = post.to || this.state.channel;
     const known      = new Set(this.state.posts.map(p => p.txHash));
@@ -3801,8 +4061,9 @@ class DeFiX {
             known.add(hash);
             newFound.push({
               content: text, display, parentTx: targetHash, direction: null,
+              postType: 'post', reactionTarget: null, repostOf: null,
               reporter: tx.from?.toLowerCase(), to: tx.to?.toLowerCase() ?? null,
-              timestamp: tx.timeStamp ? new Date(Number(tx.timeStamp) * 1000).toISOString() : new Date().toISOString(),
+              timestamp: tx.timeStamp ? new Date(Number(tx.timeStamp)*1000).toISOString() : new Date().toISOString(),
               txHash: hash, channel: scanAddr, mode: post.mode,
             });
           } catch { /* skip */ }
@@ -3810,27 +4071,16 @@ class DeFiX {
         if (raw.length < 50) break;
       }
     } finally {
-      loading.style.display = 'none';
+      if (loadingEl) loadingEl.style.display = 'none';
     }
+
     if (newFound.length > 0) {
       this.state.posts = [...this.state.posts, ...newFound]
         .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
       await this.cache.savePosts(newFound);
-      if (this.state.threadPost?.txHash === targetHash) {
-        this.renderThreadReplies(post);
-        this.renderFeed();
+      if (this.state.threadPost?.txHash === targetHash && this.state.mode === 'thread') {
+        this._renderThreadPage(post);
       }
-    }
-  }
-
-  async postThreadReply() {
-    const text = this.g('thread-reply-input').value.trim();
-    if (!text || !this.state.threadPost) return;
-    const ok = await this.publish(text, this.state.threadPost.txHash, this.state.threadPost.to);
-    if (ok) {
-      this.g('thread-reply-input').value = '';
-      this.g('thread-reply-input').style.height = '';
-      this.renderThreadReplies(this.state.threadPost);
     }
   }
 
