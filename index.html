@@ -428,9 +428,14 @@ nav { flex:1; padding:4px 0; }
   position:sticky; top:0; height:100vh;
   background:var(--bg-dark);
   overflow-y:auto; display:flex;
-  flex-direction:column; gap:16px;
-  padding:12px 16px 16px;
+  flex-direction:column; gap:12px;
+  padding:12px 16px 24px;
+  scrollbar-width:thin;
+  scrollbar-color:var(--border) transparent;
 }
+#sidebar-right::-webkit-scrollbar { width:4px; }
+#sidebar-right::-webkit-scrollbar-track { background:transparent; }
+#sidebar-right::-webkit-scrollbar-thumb { background:var(--border); border-radius:4px; }
 
 .sb-search {
   position:sticky; top:0; z-index:10;
@@ -553,10 +558,41 @@ nav { flex:1; padding:4px 0; }
 
 .sb-footer {
   font-size:13px; color:var(--muted); line-height:2;
-  padding:4px 0; margin-top:auto;
+  padding:8px 0 4px; margin-top:auto;
 }
-.sb-footer a { color:var(--muted); margin-right:6px; }
-.sb-footer a:hover { text-decoration:underline; }
+.sb-footer a {
+  color:var(--muted); margin-right:8px;
+  display:inline-block; transition:color 0.18s;
+}
+.sb-footer a:hover { color:var(--primary-lt); text-decoration:underline; }
+.sb-footer-row { display:flex; flex-wrap:wrap; gap:2px 0; margin-bottom:4px; }
+.sb-copyright { font-size:12px; color:var(--muted); opacity:0.6; margin-top:4px; }
+
+/* DeFiX channel card */
+.defix-inner {
+  background:linear-gradient(135deg,rgba(124,77,255,0.1),rgba(179,136,255,0.06));
+  padding:14px 16px; cursor:pointer; transition:background 0.2s;
+  border-radius:16px;
+}
+.defix-inner:hover {
+  background:linear-gradient(135deg,rgba(124,77,255,0.18),rgba(179,136,255,0.1));
+}
+.defix-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+.defix-brand { display:flex; align-items:center; gap:10px; }
+.defix-icon {
+  width:36px; height:36px;
+  background:linear-gradient(135deg,var(--primary),var(--primary-lt));
+  border-radius:10px; display:flex; align-items:center;
+  justify-content:center; font-size:18px; flex-shrink:0;
+}
+.defix-name {
+  font-size:14px; font-weight:700;
+  background:linear-gradient(90deg,var(--primary),var(--primary-lt));
+  -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+}
+.defix-sub  { font-size:11px; color:var(--muted); }
+.defix-tag  { font-size:11px; font-weight:700; color:var(--primary-lt); }
+.defix-desc { font-size:12px; color:var(--muted); line-height:1.5; }
 
 /* ── Mobile ─────────────────────────────────────────────────────────────── */
 #mobile-fab {
@@ -733,8 +769,10 @@ nav { flex:1; padding:4px 0; }
 #ptr-pill.show { top:72px; }
 
 /* ── Responsive ─────────────────────────────────────────────────────────── */
-@media (max-width:1100px) { #sidebar-right { flex:0 0 290px; width:290px; } }
-@media (max-width:900px) {
+@media (max-width:1280px) { #sidebar-right { flex:0 0 310px; width:310px; } }
+@media (max-width:1100px) { #sidebar-right { flex:0 0 260px; width:260px; padding:12px 10px 24px; } }
+@media (max-width:1100px) .sb-card-title { font-size:18px; }
+@media (max-width:900px)  {
   #sidebar-right { display:none; }
   #main { flex:1; width:auto; max-width:none; border-right:none; }
 }
@@ -1194,34 +1232,48 @@ nav { flex:1; padding:4px 0; }
 
   <!-- Right sidebar -->
   <div id="sidebar-right">
+    <!-- Sticky search -->
     <div class="sb-search">
       <div class="search-wrap">
         <span class="search-icon">🔎</span>
-        <input type="text" id="search-input" placeholder="Search Pulse">
+        <input type="text" id="search-input" placeholder="Search DeFiX">
       </div>
     </div>
 
+    <!-- What's happening — top liked posts placeholder -->
     <div class="sb-card">
       <div class="sb-card-title">What's happening</div>
-      <div class="sb-card-row">
+      <div class="sb-card-row" onclick="pulse.filterByTag('DeFiX')" style="cursor:pointer">
         <div style="flex:1">
           <span class="trend-label">Trending on PulseChain</span>
           <span class="trend-name">#DeFiX</span>
-          <span class="trend-count">On-chain posts</span>
+          <span class="trend-count">On-chain social</span>
         </div>
+        <span style="font-size:20px;align-self:center">📈</span>
       </div>
-      <div class="sb-card-row">
+      <div class="sb-card-row" onclick="pulse.goWave()" style="cursor:pointer">
         <div style="flex:1">
-          <span class="trend-label">Featured</span>
+          <span class="trend-label">Featured partner</span>
           <span class="trend-name">Wave on Pulse 📻</span>
-          <span class="trend-count">Live radio on-chain</span>
+          <span class="trend-count">Live free speech radio</span>
         </div>
+        <span style="font-size:20px;align-self:center">🎙️</span>
+      </div>
+      <div class="sb-card-row" style="cursor:pointer" onclick="window.open('https://pulsechain.com','_blank')">
+        <div style="flex:1">
+          <span class="trend-label">Powered by</span>
+          <span class="trend-name">PulseChain ⚡</span>
+          <span class="trend-count">Chain ID 369</span>
+        </div>
+        <span style="font-size:20px;align-self:center">🔗</span>
       </div>
       <button class="sb-show-more" id="wave-btn">Open Wave on Pulse →</button>
     </div>
 
+    <!-- Wave on Pulse animated card -->
     <div class="sb-card" style="overflow:visible">
-      <div class="wave-inner" id="wave-card-btn" role="button" tabindex="0">
+      <div class="wave-inner" id="wave-card-btn" role="button" tabindex="0"
+        aria-label="Open Wave on Pulse channel">
         <div class="wave-top">
           <div class="wave-brand">
             <div class="wave-icon">📻</div>
@@ -1236,10 +1288,37 @@ nav { flex:1; padding:4px 0; }
           <span></span><span></span><span></span><span></span>
           <span></span><span></span><span></span>
         </div>
-        <div class="wave-desc">Live spaces &amp; shows transcribed directly to the chain.</div>
+        <div class="wave-desc">Live free speech radio — permanently archived on PulseChain.</div>
+        <div style="margin-top:10px">
+          <a href="https://waveonpulse.com" target="_blank" rel="noopener noreferrer"
+            onclick="event.stopPropagation()"
+            style="font-size:12px;color:var(--wave-c);text-decoration:none;transition:color 0.18s"
+            onmouseover="this.style.color='#00ccff'" onmouseout="this.style.color='var(--wave-c)'">
+            🌐 waveonpulse.com ↗
+          </a>
+        </div>
       </div>
     </div>
 
+    <!-- DeFiX channel card -->
+    <div class="sb-card" style="overflow:visible">
+      <div class="defix-inner" id="defix-card-btn" role="button" tabindex="0"
+        aria-label="Open DeFiX channel">
+        <div class="defix-top">
+          <div class="defix-brand">
+            <div class="defix-icon">⚡</div>
+            <div>
+              <div class="defix-name">DeFiX Channel</div>
+              <div class="defix-sub">Official updates & tech</div>
+            </div>
+          </div>
+          <div class="defix-tag">📡 View</div>
+        </div>
+        <div class="defix-desc">Technical updates, announcements and discussions about DeFiX — the decentralized X.</div>
+      </div>
+    </div>
+
+    <!-- Channels card -->
     <div class="sb-card">
       <div class="sb-card-title">Channels</div>
       <button class="ch-btn active" id="ch-main">
@@ -1255,9 +1334,21 @@ nav { flex:1; padding:4px 0; }
       <span class="ch-label" id="ch-label"></span>
     </div>
 
+    <!-- Footer links -->
     <div class="sb-footer">
-      <a href="#">About</a><a href="#">PulseChain</a><a href="#">Wave</a>
-      <br>© 2025 DeFiX
+      <div class="sb-footer-row">
+        <a href="https://github.com/HyperLightCoder/DeFiX/blob/main/README.md"
+          target="_blank" rel="noopener noreferrer">About</a>
+        <a href="https://pulsechain.com"
+          target="_blank" rel="noopener noreferrer">PulseChain</a>
+        <a href="https://waveonpulse.com"
+          target="_blank" rel="noopener noreferrer">Wave</a>
+        <a href="https://github.com/HyperLightCoder/DeFiX"
+          target="_blank" rel="noopener noreferrer">GitHub</a>
+        <a href="https://x.com/PLSUnderground"
+          target="_blank" rel="noopener noreferrer">𝕏 @PLSUnderground</a>
+      </div>
+      <div class="sb-copyright">© 2025 DeFiX — Decentralized X on PulseChain</div>
     </div>
   </div>
 </div>
@@ -1449,6 +1540,7 @@ const DRAFT_KEY      = 'defixDraft';
 const PRUNE_KEY      = 'defixLastPrune';
 const LAST_CHECK_KEY = 'defixLastCheck';
 const WAVE_ADDRESS   = '0x0000000000000000000000000000000000000000';
+const DEFIX_CHANNEL  = '0x0000000000000000000000000000000000000001'; /* placeholder — update with real address */
 const LIKE_PREFIX     = 'LIKE:';
 const BOOKMARK_PREFIX = 'BOOKMARK:';
 const FOLLOW_PREFIX   = 'FOLLOW:';
@@ -1891,6 +1983,11 @@ class DeFiX {
       wcb.onclick   = () => this.goWave();
       wcb.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') this.goWave(); };
     }
+    const dcb = g('defix-card-btn');
+    if (dcb) {
+      dcb.onclick   = () => this.goDeFiX();
+      dcb.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') this.goDeFiX(); };
+    }
 
     window.addEventListener('scroll', utils.debounce(() => this.onScroll(), 150));
 
@@ -2223,6 +2320,20 @@ class DeFiX {
     this.setChActive(null);
     this.updateChLabel();
     this.showChannelBanner(WAVE_ADDRESS);
+    await this.resetAndFetch();
+  }
+
+  async goDeFiX() {
+    this.setNav(null, null);
+    this.state.mode    = 'custom';
+    this.state.channel = DEFIX_CHANNEL;
+    this.g('custom-input').value         = DEFIX_CHANNEL;
+    this.g('feed-title').textContent     = '⚡ DeFiX Channel';
+    this.g('compose-area').style.display = 'flex';
+    this.g('feed-tabs').style.display    = 'none';
+    this.setChActive(null);
+    this.updateChLabel();
+    this.showChannelBanner(DEFIX_CHANNEL);
     await this.resetAndFetch();
   }
 
@@ -3591,21 +3702,6 @@ class DeFiX {
           p.reporter.toLowerCase().includes(term));
       }
     }
-    if (!displayList.length) {
-      const msgs = {
-        notifications: 'No new notifications',
-        inbox: 'No messages yet',
-        self:  'No posts to your channel yet',
-        wave:  'No Wave transmissions yet',
-      };
-      feed.innerHTML = `
-        <div class="empty-state">
-          <span class="empty-icon">📡</span>
-          <h3>${this.state.loading ? 'Scanning the chain…' : (msgs[this.state.mode] || 'Nothing here yet')}</h3>
-          <p style="font-size:14px;margin-top:6px;color:var(--muted)">${this.state.loading ? `Checked ${this.state.nextPage - 1} page(s) so far` : 'Be the first to post in this channel'}</p>
-        </div>`;
-      return;
-    }
     const replyMap = new Map();
     const likeMap  = new Map(); /* txHash of liked post → count */
     this.state.posts.forEach(p => {
@@ -3618,6 +3714,21 @@ class DeFiX {
     const displayList = list.filter(p =>
       !p.postType || p.postType === 'post' || p.postType === 'repost'
     );
+
+    if (!displayList.length) {
+      const msgs = {
+        notifications: 'No new notifications',
+        self:  'No posts to your channel yet',
+        wave:  'No Wave transmissions yet',
+      };
+      feed.innerHTML = `
+        <div class="empty-state">
+          <span class="empty-icon">📡</span>
+          <h3>${this.state.loading ? 'Scanning the chain…' : (msgs[this.state.mode] || 'Nothing here yet')}</h3>
+          <p style="font-size:14px;margin-top:6px;color:var(--muted)">${this.state.loading ? `Checked ${this.state.nextPage - 1} page(s) so far` : 'Be the first to post in this channel'}</p>
+        </div>`;
+      return;
+    }
     const frag = document.createDocumentFragment();
     this._postMap.clear();
     displayList.forEach(post => {
