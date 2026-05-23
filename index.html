@@ -79,7 +79,16 @@ nav { flex:1; padding:4px 0; }
 .nav-btn:hover  { background:rgba(255,255,255,0.06); }
 .nav-btn.active { font-weight:800; color:var(--text); }
 .nav-btn.active .nav-icon { filter:drop-shadow(0 0 2px var(--primary-lt)); }
-.nav-icon  { font-size:24px; width:28px; text-align:center; flex-shrink:0; }
+.nav-icon  {
+  width:28px; height:28px; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center;
+  color:var(--text);
+}
+.nav-btn.active .nav-icon { color:var(--text); }
+.mn-btn .mn-icon {
+  width:26px; height:26px; line-height:1;
+  display:flex; align-items:center; justify-content:center;
+}
 .nav-label { font-size:20px; }
 .notif-badge {
   display:none; position:absolute; top:10px; right:14px;
@@ -619,7 +628,7 @@ nav { flex:1; padding:4px 0; }
   font-size:10px; cursor:pointer; padding:6px 12px;
   border-radius:12px; position:relative; transition:color 0.18s;
 }
-.mn-btn .mn-icon { font-size:24px; line-height:1; }
+.mn-btn .mn-icon { width:26px; height:26px; line-height:1; display:flex; align-items:center; justify-content:center; }
 .mn-btn.active,.mn-btn:hover { color:var(--primary-lt); }
 .mn-dot {
   display:none; position:absolute; top:4px; right:8px;
@@ -1115,32 +1124,48 @@ nav { flex:1; padding:4px 0; }
 
     <nav>
       <button class="nav-btn active" id="nav-home">
-        <span class="nav-icon">🏠</span><span class="nav-label">Home</span>
+        <span class="nav-icon">
+          <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 1.696L.622 8.807l1.06 1.696L3 9.679V19.5C3 20.881 4.119 22 5.5 22h4a1 1 0 001-1v-6h3v6a1 1 0 001 1h4c1.381 0 2.5-1.119 2.5-2.5V9.679l1.318.824 1.06-1.696L12 1.696zM19 19.5c0 .276-.224.5-.5.5H15v-6a1 1 0 00-1-1h-4a1 1 0 00-1 1v6H5.5a.5.5 0 01-.5-.5V8.429l7-4.375 7 4.375V19.5z"/></svg>
+        </span><span class="nav-label">Home</span>
       </button>
       <button class="nav-btn" id="nav-explore">
-        <span class="nav-icon">🔭</span><span class="nav-label">Explore</span>
+        <span class="nav-icon">
+          <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M10.25 3.75c-3.59 0-6.5 2.91-6.5 6.5s2.91 6.5 6.5 6.5c1.795 0 3.419-.726 4.596-1.904 1.178-1.177 1.904-2.801 1.904-4.596 0-3.59-2.91-6.5-6.5-6.5zm-8.5 6.5c0-4.694 3.806-8.5 8.5-8.5s8.5 3.806 8.5 8.5c0 1.986-.682 3.815-1.814 5.272l4.771 4.771-1.414 1.414-4.771-4.771A8.456 8.456 0 0110.25 18.75c-4.694 0-8.5-3.806-8.5-8.5z"/></svg>
+        </span><span class="nav-label">Explore</span>
       </button>
       <button class="nav-btn" id="nav-notifs">
-        <span class="nav-icon">🔔</span><span class="nav-label">Notifications</span>
+        <span class="nav-icon">
+          <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M19.993 9.042C19.48 5.017 16.054 2 11.998 2s-7.482 3.017-7.995 7.042L2.991 17H7.5c.265 2.266 2.187 4 4.498 4s4.233-1.734 4.499-4h4.51l-1.014-7.958zM12 19c-1.206 0-2.234-.686-2.755-1.682L12 17l2.755.318C14.234 18.314 13.206 19 12 19zm-8.28-4l.837-6.967C4.984 5.765 8.079 4 11.998 4c3.92 0 7.015 1.765 7.441 4.033L20.28 15H3.72z"/></svg>
+        </span><span class="nav-label">Notifications</span>
         <span class="notif-badge" id="notif-badge"></span>
       </button>
       <button class="nav-btn" id="nav-channels">
-        <span class="nav-icon">💬</span><span class="nav-label">Channels</span>
+        <span class="nav-icon">
+          <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M1.998 5.5c0-1.381 1.119-2.5 2.5-2.5h15c1.381 0 2.5 1.119 2.5 2.5v13c0 1.381-1.119 2.5-2.5 2.5h-15c-1.381 0-2.5-1.119-2.5-2.5v-13zm2.5-.5a.5.5 0 00-.5.5v2.764l8 3.638 8-3.638V5.5a.5.5 0 00-.5-.5h-15zM19.998 10.236l-8 3.636-8-3.636V18.5a.5.5 0 00.5.5h15a.5.5 0 00.5-.5v-8.264z"/></svg>
+        </span><span class="nav-label">Channels</span>
       </button>
       <button class="nav-btn" id="nav-bookmarks">
-        <span class="nav-icon">🔖</span><span class="nav-label">Bookmarks</span>
+        <span class="nav-icon">
+          <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5zM6.5 4c-.276 0-.5.22-.5.5v14.56l6-4.29 6 4.29V4.5c0-.28-.224-.5-.5-.5h-11z"/></svg>
+        </span><span class="nav-label">Bookmarks</span>
       </button>
       <button class="nav-btn" id="nav-profile">
-        <span class="nav-icon">👤</span><span class="nav-label">Profile</span>
+        <span class="nav-icon">
+          <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M5.651 19h12.698c-.337-1.8-1.023-2.891-1.929-3.4-1.285-.736-3.574-1.1-4.42-1.1-.845 0-3.135.364-4.42 1.1-.906.509-1.592 1.6-1.929 3.4zM12 11c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zm0 2c-2.5 0-4.418.733-5.649 1.896C5.23 16.02 4.617 17.467 4.39 19.5c-.046.441.233.9.683.9h13.854c.45 0 .729-.459.683-.9-.226-2.033-.84-3.48-1.961-4.604C16.418 13.733 14.5 13 12 13zm0-8C9.239 5 7 7.239 7 10s2.239 5 5 5 5-2.239 5-5-2.239-5-5-5z"/></svg>
+        </span><span class="nav-label">Profile</span>
       </button>
       <!-- More button + popup -->
       <div class="nav-more-wrap" id="nav-more-wrap">
         <button class="nav-btn" id="nav-more">
-          <span class="nav-icon">⋯</span><span class="nav-label">More</span>
+          <span class="nav-icon">
+            <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M3 12c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zm9 2c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm7 0c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2z"/></svg>
+          </span><span class="nav-label">More</span>
         </button>
         <div class="more-popup" id="more-popup">
           <button class="more-item" id="more-settings">
-            <span class="more-icon">⚙️</span>
+            <span class="more-icon">
+              <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M10.54 2.751l.52-1.5h1.88l.52 1.5.72 2.08 2.08-.72 1.5-.52 1.33 1.33-.52 1.5-.72 2.08 2.08.72 1.5.52v1.88l-1.5.52-2.08.72.72 2.08.52 1.5-1.33 1.33-1.5-.52-2.08-.72-.72 2.08-.52 1.5H9.46l-.52-1.5-.72-2.08-2.08.72-1.5.52-1.33-1.33.52-1.5.72-2.08-2.08-.72-1.5-.52V9.46l1.5-.52 2.08-.72-.72-2.08-.52-1.5 1.33-1.33 1.5.52 2.08.72.72-2.08zM12 15.5c1.93 0 3.5-1.57 3.5-3.5S13.93 8.5 12 8.5 8.5 10.07 8.5 12s1.57 3.5 3.5 3.5z"/></svg>
+            </span>
             <span class="more-label">Settings &amp; Privacy</span>
           </button>
           <button class="more-item more-soon" disabled>
@@ -1183,7 +1208,7 @@ nav { flex:1; padding:4px 0; }
 
     <div id="feed-tabs">
       <button class="feed-tab active" id="tab-foryou">For You</button>
-      <button class="feed-tab" id="tab-channel">Channel</button>
+      <button class="feed-tab" id="tab-following">Following</button>
     </div>
 
     <div id="channel-banner">
@@ -1205,9 +1230,15 @@ nav { flex:1; padding:4px 0; }
         <textarea id="compose-text" placeholder="What's happening on Pulse?"></textarea>
         <div id="compose-toolbar">
           <div class="compose-icons">
-            <button class="cmp-icon" id="cmp-image-btn" title="Attach image">🖼</button>
-            <button class="cmp-icon" id="cmp-gif-btn" title="Attach GIF">GIF</button>
-            <button class="cmp-icon" id="cmp-emoji-btn" title="Emoji">😊</button>
+            <button class="cmp-icon" id="cmp-image-btn" title="Attach image">
+              <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 5.5C3 4.119 4.119 3 5.5 3h13C19.881 3 21 4.119 21 5.5v13c0 1.381-1.119 2.5-2.5 2.5h-13C4.119 21 3 19.881 3 18.5v-13zM5.5 5c-.276 0-.5.224-.5.5v9.086l3-3 3 3 5-5 3 3V5.5c0-.276-.224-.5-.5-.5h-13zM19 15.414l-3-3-5 5-3-3-3 3V18.5c0 .276.224.5.5.5h13c.276 0 .5-.224.5-.5v-3.086zM9.75 7C8.784 7 8 7.784 8 8.75s.784 1.75 1.75 1.75 1.75-.784 1.75-1.75S10.716 7 9.75 7z"/></svg>
+            </button>
+            <button class="cmp-icon" id="cmp-gif-btn" title="Attach GIF">
+              <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 5.5C3 4.119 4.119 3 5.5 3h13C19.881 3 21 4.119 21 5.5v13c0 1.381-1.119 2.5-2.5 2.5h-13C4.119 21 3 19.881 3 18.5v-13zM5.5 5c-.276 0-.5.224-.5.5v13c0 .276.224.5.5.5h13c.276 0 .5-.224.5-.5v-13c0-.276-.224-.5-.5-.5h-13zM8 13.5v-3h1.5v.75H11v1.5H9.5v.75H8zm4.5-3H14c.552 0 1 .448 1 1v1c0 .552-.448 1-1 1h-1.5V10.5zm1.25 1.25v.5H14v-.5h-.25zM15.5 10.5H17v1.25h-1.5v.25H17v1.25h-1.5c-.552 0-1-.448-1-1v-1.25c0-.552.448-.5 1-.5z"/></svg>
+            </button>
+            <button class="cmp-icon" id="cmp-emoji-btn" title="Emoji">
+              <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M8 9.5C8 8.672 8.672 8 9.5 8s1.5.672 1.5 1.5S10.328 11 9.5 11 8 10.328 8 9.5zm6.5 1.5c.828 0 1.5-.672 1.5-1.5S15.328 8 14.5 8 13 8.672 13 9.5s.672 1.5 1.5 1.5zM12 16c-2.224 0-3.021-1.4-3.094-1.536l-1.76.992C7.196 15.69 8.638 18 12 18s4.804-2.31 4.854-2.544l-1.76-.992C15.021 14.6 14.224 16 12 16zm-.002-14C6.477 2 2 6.477 2 12s4.477 10 9.998 10C17.523 22 22 17.523 22 12S17.523 2 11.998 2zM12 20C7.582 20 4 16.418 4 12s3.582-8 8-8 8 3.582 8 8-3.582 8-8 8z"/></svg>
+            </button>
           </div>
           <div class="compose-right">
             <div class="char-ring ok" id="char-ring">
@@ -1358,14 +1389,22 @@ nav { flex:1; padding:4px 0; }
 
 <!-- Mobile nav -->
 <nav id="mobile-nav">
-  <button class="mn-btn active" data-mn="home"><span class="mn-icon">🏠</span>Home</button>
-  <button class="mn-btn" data-mn="explore"><span class="mn-icon">🔭</span>Explore</button>
+  <button class="mn-btn active" data-mn="home">
+    <span class="mn-icon"><svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 1.696L.622 8.807l1.06 1.696L3 9.679V19.5C3 20.881 4.119 22 5.5 22h4a1 1 0 001-1v-6h3v6a1 1 0 001 1h4c1.381 0 2.5-1.119 2.5-2.5V9.679l1.318.824 1.06-1.696L12 1.696z"/></svg></span>Home
+  </button>
+  <button class="mn-btn" data-mn="explore">
+    <span class="mn-icon"><svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M10.25 3.75c-3.59 0-6.5 2.91-6.5 6.5s2.91 6.5 6.5 6.5c1.795 0 3.419-.726 4.596-1.904 1.178-1.177 1.904-2.801 1.904-4.596 0-3.59-2.91-6.5-6.5-6.5zm-8.5 6.5c0-4.694 3.806-8.5 8.5-8.5s8.5 3.806 8.5 8.5c0 1.986-.682 3.815-1.814 5.272l4.771 4.771-1.414 1.414-4.771-4.771A8.456 8.456 0 0110.25 18.75c-4.694 0-8.5-3.806-8.5-8.5z"/></svg></span>Explore
+  </button>
   <button class="mn-btn" data-mn="notifs">
-    <span class="mn-icon">🔔</span>Alerts
+    <span class="mn-icon"><svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M19.993 9.042C19.48 5.017 16.054 2 11.998 2s-7.482 3.017-7.995 7.042L2.991 17H7.5c.265 2.266 2.187 4 4.498 4s4.233-1.734 4.499-4h4.51l-1.014-7.958z"/></svg></span>Alerts
     <span class="mn-dot" id="mn-dot"></span>
   </button>
-  <button class="mn-btn" data-mn="channels"><span class="mn-icon">💬</span>Channels</button>
-  <button class="mn-btn" data-mn="profile"><span class="mn-icon">👤</span>Profile</button>
+  <button class="mn-btn" data-mn="channels">
+    <span class="mn-icon"><svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M1.998 5.5c0-1.381 1.119-2.5 2.5-2.5h15c1.381 0 2.5 1.119 2.5 2.5v13c0 1.381-1.119 2.5-2.5 2.5h-15c-1.381 0-2.5-1.119-2.5-2.5v-13zm2.5-.5a.5.5 0 00-.5.5v2.764l8 3.638 8-3.638V5.5a.5.5 0 00-.5-.5h-15zM19.998 10.236l-8 3.636-8-3.636V18.5a.5.5 0 00.5.5h15a.5.5 0 00.5-.5v-8.264z"/></svg></span>Channels
+  </button>
+  <button class="mn-btn" data-mn="profile">
+    <span class="mn-icon"><svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 11c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zm0-6C9.239 5 7 7.239 7 10s2.239 5 5 5 5-2.239 5-5-2.239-5-5-5zM5.651 19h12.698c-.337-1.8-1.023-2.891-1.929-3.4-1.285-.736-3.574-1.1-4.42-1.1-.845 0-3.135.364-4.42 1.1-.906.509-1.592 1.6-1.929 3.4z"/></svg></span>Profile
+  </button>
 </nav>
 
 <div id="ptr-pill">↓ Release to refresh</div>
@@ -1886,8 +1925,8 @@ class DeFiX {
     g('nav-post-btn').onclick  = () => this.openComposeModal();
     g('mobile-fab').onclick    = () => this.openComposeModal();
 
-    g('tab-foryou').onclick  = () => this.setFeedTab('foryou');
-    g('tab-channel').onclick = () => this.setFeedTab('channel');
+    g('tab-foryou').onclick   = () => this.setFeedTab('foryou');
+    g('tab-following').onclick = () => this.setFeedTab('following');
 
     g('compose-text').addEventListener('focus', () => {
       g('compose-area').classList.add('focused');
@@ -2117,12 +2156,24 @@ class DeFiX {
 
   setFeedTab(tab) {
     document.querySelectorAll('.feed-tab').forEach(t => t.classList.remove('active'));
-    this.g(tab === 'foryou' ? 'tab-foryou' : 'tab-channel').classList.add('active');
-    if (tab === 'channel') {
-      if (this.state.signerAddr) this.goSelf();
-      else utils.toast('Connect wallet to view your channel');
+    this.g(tab === 'foryou' ? 'tab-foryou' : 'tab-following').classList.add('active');
+    if (tab === 'following') {
+      if (!this.signer) { utils.toast('Connect wallet to see Following feed'); return; }
+      if (this.state.following.size === 0) {
+        utils.toast('Follow some accounts first to see their posts here');
+        this.g('tab-foryou').classList.add('active');
+        this.g('tab-following').classList.remove('active');
+        return;
+      }
+      /* Filter current feed to only posts from followed addresses */
+      this.state.searchTerm = '';
+      this._followingFilter = true;
+      this.renderFeed();
     } else {
-      this.goHome();
+      this._followingFilter = false;
+      this.state.searchTerm = '';
+      this.g('search-input').value = '';
+      this.renderFeed();
     }
   }
 
@@ -3039,13 +3090,15 @@ class DeFiX {
 
   async goProfilePage(address, isOwn = false) {
     this.setNav(isOwn ? 'nav-profile' : null, isOwn ? 'profile' : null);
-    this.state.mode = 'profile';
+    this.state.mode    = 'profile';
+    this.state.channel = address; /* prevent renderFeed from overwriting this page */
     this.g('compose-area').style.display   = 'none';
     this.g('channel-banner').style.display = 'none';
     this.g('feed-tabs').style.display      = 'none';
     this.g('new-banner').style.display     = 'none';
     this.g('loading-more').style.display   = 'none';
-    this.g('feed-title').textContent       = '';
+    /* Set a real title so the header isn't blank */
+    this.g('feed-title').textContent = isOwn ? 'Profile' : 'Profile';
 
     /* Fetch profile data if not own */
     let prof = isOwn
@@ -3692,6 +3745,13 @@ class DeFiX {
     const feed = this.g('feed');
     const term = this.state.searchTerm;
     let list = this.state.posts;
+
+    /* Following tab filter */
+    if (this._followingFilter && this.state.following.size > 0) {
+      list = list.filter(p => this.state.following.has(p.reporter?.toLowerCase()));
+    }
+
+    /* Search filter */
     if (term) {
       if (term.startsWith('#')) {
         const tag = term.slice(1).toLowerCase();
@@ -3702,12 +3762,15 @@ class DeFiX {
           p.reporter.toLowerCase().includes(term));
       }
     }
-    const replyMap = new Map();
-    const likeMap  = new Map(); /* txHash of liked post → count */
+    const replyMap  = new Map();
+    const likeMap   = new Map();
+    const repostMap = new Map();
     this.state.posts.forEach(p => {
       if (p.parentTx) replyMap.set(p.parentTx, (replyMap.get(p.parentTx) || 0) + 1);
-      if (p.postType === 'like' && p.reactionTarget)
-        likeMap.set(p.reactionTarget, (likeMap.get(p.reactionTarget) || 0) + 1);
+      if (p.postType === 'like'   && p.reactionTarget)
+        likeMap.set(p.reactionTarget,   (likeMap.get(p.reactionTarget)   || 0) + 1);
+      if (p.postType === 'repost' && p.repostOf)
+        repostMap.set(p.repostOf, (repostMap.get(p.repostOf) || 0) + 1);
     });
 
     /* Only render actual posts — filter out reactions/follows */
@@ -3736,7 +3799,7 @@ class DeFiX {
       const el = document.createElement('div');
       el.className      = 'post-item';
       el.dataset.txhash = post.txHash;
-      el.innerHTML      = this.postHTML(post, false, replyMap, likeMap);
+      el.innerHTML      = this.postHTML(post, false, replyMap, likeMap, repostMap);
       frag.appendChild(el);
       if (post.reporter !== this.state.signerAddr) this.fetchOtherProfile(post.reporter);
     });
@@ -3744,7 +3807,7 @@ class DeFiX {
     feed.appendChild(frag);
   }
 
-  postHTML(post, inModal, replyMap, likeMap) {
+  postHTML(post, inModal, replyMap, likeMap, repostMap) {
     const isOwn    = post.reporter === this.state.signerAddr;
     const expanded = this.state.expanded.has(post.txHash);
 
@@ -3806,13 +3869,15 @@ class DeFiX {
       ? `<span class="reply-badge">↳ Replying to ${this.trunc(post.parentTx)}</span>`
       : '';
 
-    const rc = replyMap ? (replyMap.get(post.txHash) || 0) : 0;
-    const lc = likeMap  ? (likeMap.get(post.txHash)  || 0) : 0;
-    const rcLabel = rc > 0 ? String(rc) : '';
-    const lcLabel = lc > 0 ? String(lc) : '';
+    const rc = replyMap  ? (replyMap.get(post.txHash)  || 0) : 0;
+    const lc = likeMap   ? (likeMap.get(post.txHash)   || 0) : 0;
+    const rpc = repostMap ? (repostMap.get(post.txHash) || 0) : 0;
+    const rcLabel  = rc  > 0 ? String(rc)  : '';
+    const lcLabel  = lc  > 0 ? String(lc)  : '';
+    const rpcLabel = rpc > 0 ? String(rpc) : '';
     const fullDate = new Date(post.timestamp).toLocaleString();
     const relT     = this.relTime(post.timestamp);
-    const isLiked     = this.state.likes.has(post.txHash);
+    const isLiked      = this.state.likes.has(post.txHash);
     const isBookmarked = this.state.bookmarks.has(post.txHash);
 
     return `
@@ -3832,31 +3897,45 @@ class DeFiX {
             ${dirBadge}
           </div>
           ${toLabel}${replyBadge}
-          ${post.repostOf ? `<div class="repost-label">🔁 <span class="post-name">${displayName}</span> reposted</div>` : ''}
+          ${post.repostOf ? `<div class="repost-label">
+            <svg viewBox="0 0 24 24" width="14" height="14" style="vertical-align:middle;margin-right:4px"><path fill="currentColor" d="M4.5 3.88l4.432 4.14-1.364 1.46L5.5 7.55V16c0 1.1.896 2 2 2H13v2H7.5c-2.209 0-4-1.79-4-4V7.55L1.432 9.48.068 8.02 4.5 3.88zM16.5 6H11V4h5.5c2.209 0 4 1.79 4 4v8.45l2.068-1.93 1.364 1.46L19.5 20.12l-4.432-4.14 1.364-1.46 2.068 1.93V8c0-1.1-.896-2-2-2z"/></svg>
+            <span class="post-name">${displayName}</span> reposted</div>` : ''}
           <div class="post-body">${bodyHtml}</div>
           ${repostCard}
           ${needsMore ? `<button class="read-more-btn" data-action="expand">Show more ↓</button>` : ''}
           ${imgHtml ? `<div class="post-images">${imgHtml}</div>` : ''}
           <div class="post-actions">
             <button class="act-btn act-reply" data-action="reply" title="Reply">
-              <span class="act-icon">💬</span><span class="act-count">${rcLabel}</span>
+              <span class="act-icon"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M1.751 10c0-4.42 3.584-8 8.005-8h4.366c4.49 0 8.129 3.64 8.129 8.13 0 2.96-1.607 5.68-4.196 7.11l-8.054 4.46v-3.69h-.067c-4.49.1-8.183-3.51-8.183-8.01zm8.005-6c-3.317 0-6.005 2.69-6.005 6 0 3.37 2.77 6.08 6.138 6.01l.351-.01h1.761v2.3l5.087-2.81c1.951-1.08 3.163-3.13 3.163-5.36 0-3.39-2.744-6.13-6.129-6.13H9.756z"/></svg></span>
+              <span class="act-count">${rcLabel}</span>
             </button>
             <button class="act-btn act-repost" data-action="repost" title="Repost">
-              <span class="act-icon">🔁</span>
+              <span class="act-icon"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M4.5 3.88l4.432 4.14-1.364 1.46L5.5 7.55V16c0 1.1.896 2 2 2H13v2H7.5c-2.209 0-4-1.79-4-4V7.55L1.432 9.48.068 8.02 4.5 3.88zM16.5 6H11V4h5.5c2.209 0 4 1.79 4 4v8.45l2.068-1.93 1.364 1.46L19.5 20.12l-4.432-4.14 1.364-1.46 2.068 1.93V8c0-1.1-.896-2-2-2z"/></svg></span>
+              <span class="act-count">${rpcLabel}</span>
             </button>
             <button class="act-btn act-like ${isLiked ? 'liked' : ''}" data-action="like" title="${isLiked ? 'Unlike' : 'Like'}">
-              <span class="act-icon">${isLiked ? '❤️' : '🤍'}</span><span class="act-count">${lcLabel}</span>
+              <span class="act-icon">
+                ${isLiked
+                  ? `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="#f91880" d="M20.884 13.19c-1.351 2.48-4.001 5.12-8.379 7.67l-.503.3-.504-.3c-4.379-2.55-7.029-5.19-8.382-7.67-1.36-2.5-1.41-4.86-.514-6.67.887-1.79 2.647-2.91 4.601-3.01 1.651-.09 3.368.56 4.798 2.01 1.429-1.45 3.146-2.1 4.796-2.01 1.954.1 3.714 1.22 4.601 3.01.896 1.81.846 4.17-.514 6.67z"/></svg>`
+                  : `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M16.697 5.5c-1.222-.06-2.679.51-3.89 2.16l-.805 1.09-.806-1.09C9.984 6.01 8.526 5.44 7.304 5.5c-1.243.07-2.349.78-2.91 1.91-.552 1.12-.633 2.78.479 4.82 1.074 1.97 3.257 4.27 7.129 6.61 3.87-2.34 6.052-4.64 7.126-6.61 1.111-2.04 1.03-3.7.477-4.82-.561-1.13-1.666-1.84-2.908-1.91zm4.187 7.69c-1.351 2.48-4.001 5.12-8.379 7.67l-.503.3-.504-.3c-4.379-2.55-7.029-5.19-8.382-7.67-1.36-2.5-1.41-4.86-.514-6.67.887-1.79 2.647-2.91 4.601-3.01 1.651-.09 3.368.56 4.798 2.01 1.429-1.45 3.146-2.1 4.796-2.01 1.954.1 3.714 1.22 4.601 3.01.896 1.81.846 4.17-.514 6.67z"/></svg>`}
+              </span>
+              <span class="act-count">${lcLabel}</span>
             </button>
             <button class="act-btn act-bookmark ${isBookmarked ? 'bookmarked' : ''}" data-action="bookmark" title="${isBookmarked ? 'Remove bookmark' : 'Bookmark'}">
-              <span class="act-icon">${isBookmarked ? '🔖' : '🏷️'}</span>
+              <span class="act-icon">
+                ${isBookmarked
+                  ? `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="#1d9bf0" d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5z"/></svg>`
+                  : `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5zM6.5 4c-.276 0-.5.22-.5.5v14.56l6-4.29 6 4.29V4.5c0-.28-.224-.5-.5-.5h-11z"/></svg>`}
+              </span>
             </button>
             <button class="act-btn act-share" data-action="share" title="Copy link">
-              <span class="act-icon">🔗</span>
+              <span class="act-icon"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2.59l5.7 5.7-1.41 1.42L13 6.41V16h-2V6.41l-3.3 3.3-1.41-1.42L12 2.59zM21 15l-.02 3.51c0 1.38-1.12 2.49-2.5 2.49H5.5C4.11 21 3 19.88 3 18.5V15h2v3.5c0 .28.22.5.5.5h12.98c.28 0 .5-.22.5-.5L19 15h2z"/></svg></span>
             </button>
             <a href="https://otter.pulsechain.com/tx/${utils.safe(post.txHash)}"
-              target="_blank" class="otter-link"
-              onclick="event.stopPropagation()">
-              <span class="act-icon" title="View on OtterScan">🦦</span>
+              target="_blank" class="otter-link" onclick="event.stopPropagation()">
+              <span class="act-icon" title="View on OtterScan">
+                <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M18.36 5.64c-1.95-1.96-5.11-1.96-7.07 0L9.88 7.05 8.46 5.64l1.42-1.42c2.73-2.73 7.16-2.73 9.9 0 2.73 2.74 2.73 7.17 0 9.9l-1.42 1.42-1.41-1.42 1.41-1.41c1.96-1.96 1.96-5.12 0-7.07zm-2.12 3.53l-7.07 7.07-1.41-1.41 7.07-7.07 1.41 1.41zm-12.02.71l1.42-1.42 1.41 1.42-1.41 1.41c-1.96 1.96-1.96 5.12 0 7.07 1.95 1.96 5.11 1.96 7.07 0l1.41-1.41 1.42 1.41-1.42 1.42c-2.73 2.73-7.16 2.73-9.9 0-2.73-2.74-2.73-7.17 0-9.9z"/></svg>
+              </span>
             </a>
           </div>
         </div>
@@ -3936,27 +4015,26 @@ class DeFiX {
     const btn  = itemEl.querySelector('[data-action="like"]');
     const icon = btn?.querySelector('.act-icon');
 
+    const heartFull  = `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="#f91880" d="M20.884 13.19c-1.351 2.48-4.001 5.12-8.379 7.67l-.503.3-.504-.3c-4.379-2.55-7.029-5.19-8.382-7.67-1.36-2.5-1.41-4.86-.514-6.67.887-1.79 2.647-2.91 4.601-3.01 1.651-.09 3.368.56 4.798 2.01 1.429-1.45 3.146-2.1 4.796-2.01 1.954.1 3.714 1.22 4.601 3.01.896 1.81.846 4.17-.514 6.67z"/></svg>`;
+    const heartEmpty = `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M16.697 5.5c-1.222-.06-2.679.51-3.89 2.16l-.805 1.09-.806-1.09C9.984 6.01 8.526 5.44 7.304 5.5c-1.243.07-2.349.78-2.91 1.91-.552 1.12-.633 2.78.479 4.82 1.074 1.97 3.257 4.27 7.129 6.61 3.87-2.34 6.052-4.64 7.126-6.61 1.111-2.04 1.03-3.7.477-4.82-.561-1.13-1.666-1.84-2.908-1.91zm4.187 7.69c-1.351 2.48-4.001 5.12-8.379 7.67l-.503.3-.504-.3c-4.379-2.55-7.029-5.19-8.382-7.67-1.36-2.5-1.41-4.86-.514-6.67.887-1.79 2.647-2.91 4.601-3.01 1.651-.09 3.368.56 4.798 2.01 1.429-1.45 3.146-2.1 4.796-2.01 1.954.1 3.714 1.22 4.601 3.01.896 1.81.846 4.17-.514 6.67z"/></svg>`;
+
     if (this.state.likes.has(hash)) {
-      /* Optimistic unlike — local only (on-chain likes are write-only) */
       this.state.likes.delete(hash);
       if (btn)  btn.classList.remove('liked');
-      if (icon) icon.textContent = '🤍';
+      if (icon) icon.innerHTML = heartEmpty;
       utils.toast('Like removed');
     } else {
-      /* Optimistic add */
       this.state.likes.add(hash);
       if (btn)  btn.classList.add('liked');
-      if (icon) icon.textContent = '❤️';
-      /* Send LIKE to the channel the post lives in — makes counts computable.
-         Filtered from feed display by parseTxs. Public but that's fine on-chain. */
+      if (icon) icon.innerHTML = heartFull;
       const destination = post.to || this.state.channel;
       const ok = await this.publish(LIKE_PREFIX + hash, null, destination);
       if (!ok) {
         this.state.likes.delete(hash);
         if (btn)  btn.classList.remove('liked');
-        if (icon) icon.textContent = '🤍';
+        if (icon) icon.innerHTML = heartEmpty;
       } else {
-        utils.toast('❤️ Liked on-chain');
+        utils.toast('Liked on-chain');
       }
     }
   }
@@ -3968,22 +4046,25 @@ class DeFiX {
     const btn  = itemEl.querySelector('[data-action="bookmark"]');
     const icon = btn?.querySelector('.act-icon');
 
+    const bmFull  = `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="#1d9bf0" d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5z"/></svg>`;
+    const bmEmpty = `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5zM6.5 4c-.276 0-.5.22-.5.5v14.56l6-4.29 6 4.29V4.5c0-.28-.224-.5-.5-.5h-11z"/></svg>`;
+
     if (this.state.bookmarks.has(hash)) {
       this.state.bookmarks.delete(hash);
       if (btn)  btn.classList.remove('bookmarked');
-      if (icon) icon.textContent = '🏷️';
+      if (icon) icon.innerHTML = bmEmpty;
       utils.toast('Bookmark removed');
     } else {
       this.state.bookmarks.add(hash);
       if (btn)  btn.classList.add('bookmarked');
-      if (icon) icon.textContent = '🔖';
+      if (icon) icon.innerHTML = bmFull;
       const ok = await this.publish(BOOKMARK_PREFIX + hash, null, this.state.signerAddr);
       if (!ok) {
         this.state.bookmarks.delete(hash);
         if (btn)  btn.classList.remove('bookmarked');
-        if (icon) icon.textContent = '🏷️';
+        if (icon) icon.innerHTML = bmEmpty;
       } else {
-        utils.toast('🔖 Bookmarked on-chain');
+        utils.toast('Bookmarked on-chain');
       }
     }
   }
