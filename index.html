@@ -2307,7 +2307,7 @@ class DeFiX {
         const label = labels[n.type] || 'interacted with you';
         const txLink = `https://otter.pulsechain.com/tx/${utils.safe(n.txHash)}`;
         html += `
-          <div class="notif-item" onclick="window.open('${txLink}','_blank')">
+          <div class="notif-item" data-from="${utils.safe(n.from)}" onclick="window.open('${txLink}','_blank')">
             <div class="notif-icon-wrap">${icon}</div>
             <img src="${pic}" class="notif-avatar" onerror="this.src='image1.jpeg'">
             <div class="notif-body">
@@ -2323,10 +2323,30 @@ class DeFiX {
       html += '</div>';
       this.g('feed').innerHTML = html;
 
-      /* Re-render after profiles load */
-      setTimeout(() => {
-        if (this.state.mode === 'notifications') this.goNotifications();
-      }, 2000);
+      /* Lazy-refresh avatars/names once profiles load. Single non-recursive update. */
+      const refreshAvatars = () => {
+        if (this.state.mode !== 'notifications') return;
+        document.querySelectorAll('.notif-item').forEach(item => {
+          const addr = item.dataset.from;
+          if (!addr) return;
+          const prof = this.state.profCache[addr];
+          if (prof?.picUrl) {
+            const img = item.querySelector('.notif-avatar');
+            if (img && img.src.endsWith('image1.jpeg') && prof.picUrl !== 'image1.jpeg') {
+              img.src = prof.picUrl;
+            }
+          }
+          if (prof?.username) {
+            const nameEl = item.querySelector('.notif-name');
+            if (nameEl && nameEl.textContent.startsWith('0x')) {
+              nameEl.textContent = prof.username;
+            }
+          }
+        });
+      };
+      /* One-shot refresh after profile fetches resolve */
+      setTimeout(refreshAvatars, 1500);
+      setTimeout(refreshAvatars, 4000);
 
     } catch (err) {
       this.g('feed').innerHTML = `<div class="prof-empty"><span>⚠️</span><h3>Error loading</h3><p>${utils.safe(err.message)}</p></div>`;
@@ -2946,7 +2966,9 @@ class DeFiX {
     if (Date.now() - lastScan > 86_400_000) {
       setTimeout(() => this.rebuildChannelHistory(), 3000);
     }
-    this.renderFeed();
+    /* Only re-render feed if we're actually on a feed view */
+    const feedModes = ['main', 'self', 'custom', 'wave'];
+    if (feedModes.includes(this.state.mode)) this.renderFeed();
   }
 
   /* Load likes, bookmarks, follows from chain */
@@ -3016,6 +3038,17 @@ class DeFiX {
           const data = JSON.parse(text.slice(PROFILE_PREFIX.length).trim());
           this.applyProfile(data);
           await this.cache.saveProfile({ address: this.state.signerAddr, ...data });
+          /* If the profile page is open for this user, refresh the header in-place */
+          if (this.state.mode === 'profile' && this.state.channel === this.state.signerAddr) {
+            const nameEl = document.getElementById('prof-display-name');
+            const handleEl = document.getElementById('prof-handle-addr');
+            const avatarEl = document.getElementById('prof-page-avatar');
+            if (nameEl)   nameEl.textContent = data.username || this.trunc(this.state.signerAddr);
+            if (avatarEl) avatarEl.src = data.picUrl || 'image1.jpeg';
+            /* Bio — update if element exists */
+            const bioEl = document.querySelector('.prof-bio');
+            if (bioEl && data.bio) bioEl.textContent = data.bio;
+          }
           return;
         } catch { continue; }
       }
@@ -3100,19 +3133,34 @@ class DeFiX {
     /* Set a real title so the header isn't blank */
     this.g('feed-title').textContent = isOwn ? 'Profile' : 'Profile';
 
-    /* Fetch profile data if not own */
-    let prof = isOwn
-      ? this.state.profile
-      : (this.state.profCache[address] || null);
-    if (!prof && !isOwn) {
-      await this.fetchOtherProfile(address);
-      prof = this.state.profCache[address] || {};
+    /* For own profile: use state.profile if populated, otherwise try cache */
+    let prof;
+    if (isOwn) {
+      prof = this.state.profile?.username ? this.state.profile : null;
+      if (!prof) {
+        /* Cache fallback — state.profile may not be populated yet */
+        const cached = await this.cache.getProfile(address);
+        if (cached) { this.applyProfile(cached); prof = this.state.profile; }
+        else prof = this.state.profile; /* use default — fetchMyProfile will refresh */
+      }
+    } else {
+      prof = this.state.profCache[address] || null;
+      if (!prof) {
+        await this.fetchOtherProfile(address);
+        prof = this.state.profCache[address] || {};
+      }
     }
     if (!prof) prof = {};
 
     this.g('feed').innerHTML = this._profilePageHTML(address, prof, isOwn);
     this._wireProfilePageListeners(address, isOwn);
-    this.loadProfileTab(address, isOwn, 'posts');
+    /* Scan more pages for own profile; kick off fresh profile fetch if needed */
+    const maxPages = isOwn ? 8 : 4;
+    this.loadProfileTab(address, isOwn, 'posts', maxPages);
+    /* If profile data looked empty, refresh from chain in background */
+    if (isOwn && !this.state.profile?.username) {
+      this.fetchMyProfile();
+    }
   }
 
   _profilePageHTML(address, prof, isOwn) {
@@ -3186,11 +3234,12 @@ class DeFiX {
 
   _wireProfilePageListeners(address, isOwn) {
     /* Tab switching */
+    const maxPages = isOwn ? 8 : 4;
     document.querySelectorAll('.prof-tab').forEach(btn => {
       btn.onclick = () => {
         document.querySelectorAll('.prof-tab').forEach(t => t.classList.remove('active'));
         btn.classList.add('active');
-        this.loadProfileTab(address, isOwn, btn.dataset.ptab);
+        this.loadProfileTab(address, isOwn, btn.dataset.ptab, maxPages);
       };
     });
 
@@ -3282,7 +3331,7 @@ class DeFiX {
   }
 
   /* ── Profile tab content ────────────────────────────────────────────── */
-  async loadProfileTab(address, isOwn, tab) {
+  async loadProfileTab(address, isOwn, tab, maxPages = 4) {
     const feedEl = document.getElementById('prof-feed');
     if (!feedEl) return;
     feedEl.innerHTML = `<div class="prof-empty"><span>⏳</span><h3>Loading…</h3></div>`;
@@ -3292,29 +3341,49 @@ class DeFiX {
       return;
     }
 
+    /* Match same media-detection logic as linkify */
+    const imgRe     = /\.(jpg|jpeg|png|gif|webp|svg|avif|tiff|bmp)(\?[^\s]*)?$/i;
+    const ipfsRe    = /\/(ipfs|ipns)\//i;
+    const imgHosts  = new Set(['pbs.twimg.com','ton.twimg.com','i.imgur.com','imgur.com',
+      'cdn.discordapp.com','media.discordapp.net','media.tenor.com','c.tenor.com',
+      'media.giphy.com','i.giphy.com','media1.giphy.com','media2.giphy.com',
+      'media3.giphy.com','media4.giphy.com','nftstorage.link','gateway.pinata.cloud',
+      'cloudflare-ipfs.com','dweb.link']);
+    const isMediaUrl = url => {
+      if (imgRe.test(url)) return true;
+      if (ipfsRe.test(url)) return true;
+      if (url.includes('arweave.net/')) return true;
+      try { return imgHosts.has(new URL(url).hostname); } catch { return false; }
+    };
+
     try {
       let posts = [];
-      const imgRe = /\.(jpg|jpeg|png|gif|webp|svg)(\?[^\s]*)?$/i;
 
       if (tab === 'likes') {
         /* Likes: resolve txHashes from state.likes */
-        const likedHashes = [...this.state.likes];
-        /* First check already-cached posts */
         const fromCache = this.state.posts.filter(p => this.state.likes.has(p.txHash));
         const cachedSet = new Set(fromCache.map(p => p.txHash));
         posts = fromCache;
-        /* Fetch any not in cache from chain (up to 20) */
-        const missing = likedHashes.filter(h => !cachedSet.has(h)).slice(0, 20);
+        const missing = [...this.state.likes].filter(h => !cachedSet.has(h)).slice(0, 20);
         for (const hash of missing) {
           try {
             const cached = await this.cache.getPosts(p => p.txHash === hash);
-            if (cached.length) { posts.push(cached[0]); continue; }
+            if (cached.length) posts.push(cached[0]);
           } catch { /* skip */ }
         }
         posts.sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
       } else {
-        /* Posts, Replies, Media: scan address pages */
-        const raw = await this._scanProfilePages(address, 4);
+        /* Posts / Replies / Media: scan once, cache, reuse across tabs */
+        this._profileScanCache = this._profileScanCache || {};
+        const cacheKey = `${address}_${maxPages}`;
+        let raw = this._profileScanCache[cacheKey];
+        if (!raw) {
+          raw = await this._scanProfilePages(address, maxPages);
+          /* Cache for 60s — covers all tab switching */
+          this._profileScanCache[cacheKey] = raw;
+          setTimeout(() => { delete this._profileScanCache[cacheKey]; }, 60_000);
+        }
+
         raw.forEach(tx => {
           const from = tx.from?.toLowerCase();
           const to   = tx.to?.toLowerCase();
@@ -3332,9 +3401,10 @@ class DeFiX {
             const display = m ? text.slice(m[0].length).trim() : text;
             if (!display) return;
             if (tab === 'media') {
-              const hasImg = /https?:\/\/[^\s<>"{}|\\^[\]`]+/g.test(display) &&
-                Array.from(display.matchAll(/https?:\/\/[^\s<>"{}|\\^[\]`]+/g))
-                  .some(mm => imgRe.test(mm[0]));
+              const urls = [...display.matchAll(/https?:\/\/[^\s<>"{}|\\^[\]`]+|ipfs:\/\/\S+|arweave:\/\/\S+/g)].map(m => m[0]);
+              const resolveUrl = u => u.startsWith('ipfs://') ? 'https://ipfs.io/ipfs/' + u.slice(7)
+                : u.startsWith('arweave://') ? 'https://arweave.net/' + u.slice(10) : u;
+              const hasImg = urls.some(u => isMediaUrl(resolveUrl(u)));
               if (!hasImg) return;
             }
             posts.push({
@@ -3365,11 +3435,15 @@ class DeFiX {
       }
 
       if (tab === 'media') {
-        /* Media grid */
         const imgUrls = [];
+        const resolveUrl = u => u.startsWith('ipfs://') ? 'https://ipfs.io/ipfs/' + u.slice(7)
+          : u.startsWith('arweave://') ? 'https://arweave.net/' + u.slice(10) : u;
         posts.forEach(p => {
-          const matches = [...p.display.matchAll(/https?:\/\/[^\s<>"{}|\\^[\]`]+/g)];
-          matches.filter(mm => imgRe.test(mm[0])).forEach(mm => imgUrls.push({ url: mm[0], txHash: p.txHash }));
+          const matches = [...p.display.matchAll(/https?:\/\/[^\s<>"{}|\\^[\]`]+|ipfs:\/\/\S+|arweave:\/\/\S+/g)];
+          matches.forEach(mm => {
+            const resolved = resolveUrl(mm[0]);
+            if (isMediaUrl(resolved)) imgUrls.push({ url: resolved, txHash: p.txHash });
+          });
         });
         feedEl.innerHTML = `<div class="prof-media-grid">${
           imgUrls.slice(0,60).map(({ url, txHash }) =>
@@ -3742,6 +3816,10 @@ class DeFiX {
   }
 
   renderFeed() {
+    /* These modes manage #feed themselves — don't overwrite them */
+    const selfManaged = ['profile', 'thread', 'notifications', 'channels', 'explore', 'bookmarks', 'settings'];
+    if (selfManaged.includes(this.state.mode)) return;
+
     const feed = this.g('feed');
     const term = this.state.searchTerm;
     let list = this.state.posts;
