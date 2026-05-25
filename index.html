@@ -1725,6 +1725,10 @@ const ethers = window.ethers;
 
 /* ── Constants ────────────────────────────────────────────────────────── */
 const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
+/* SW_CACHE_VER: bump this string whenever you deploy a new version.
+   The service worker uses it to invalidate cached files.
+   Format: date + build number, e.g. '20250526-1' */
+const SW_CACHE_VER = '20250526-1';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -2130,7 +2134,10 @@ class DeFiX {
     this._walletReg    = false;
     this._postMap      = new Map();
     this.g             = id => document.getElementById(id);
-    this._debouncedRender = utils.debounce(() => this.renderFeed(), 150);
+    /* Profile-triggered re-renders: instead of rebuilding the entire feed,
+       patch only the avatar+name elements for the address that just loaded.
+       Full re-renders still happen for structural changes (new posts, filters). */
+    this._debouncedRender = utils.debounce(() => this._patchProfilesInFeed(), 120);
     this._draftSave       = utils.debounce(() => this._saveDraft(), 500);
   }
 
@@ -3494,7 +3501,9 @@ class DeFiX {
   _registerWalletListeners() {
     if (this._walletReg) return;
     this._walletReg = true;
-    window.ethereum.on('accountsChanged', accounts => {
+    const eth = this._getEthereum();
+    if (!eth || typeof eth.on !== 'function') return;
+    eth.on('accountsChanged', accounts => {
       if (accounts.length === 0) this.disconnect();
       else if (accounts[0].toLowerCase() !== this.state.signerAddr) {
         utils.toast('Account changed — reconnecting…');
@@ -3502,7 +3511,7 @@ class DeFiX {
         setTimeout(() => this.connect(), 500);
       }
     });
-    window.ethereum.on('chainChanged', chainId => {
+    eth.on('chainChanged', chainId => {
       if (parseInt(chainId, 16) !== PULSE_CHAIN_ID) {
         utils.toast('Wrong network — please switch to PulseChain');
         this.disconnect();
@@ -3510,10 +3519,23 @@ class DeFiX {
     });
   }
 
+  /* Safely get the current ethereum provider. Some browser extensions
+     (evmAsk, Brave Wallet) conflict with MetaMask by trying to redefine
+     window.ethereum after it's already been set as non-configurable.
+     We cache a reference at first access and use that throughout. */
+  _getEthereum() {
+    if (!this._cachedEthereum) {
+      try { this._cachedEthereum = window.ethereum; }
+      catch { this._cachedEthereum = null; }
+    }
+    return this._cachedEthereum;
+  }
+
   async tryAutoReconnect() {
-    if (!window.ethereum) return;
+    const eth = this._getEthereum();
+    if (!eth) return;
     try {
-      const prov = new ethers.providers.Web3Provider(window.ethereum);
+      const prov = new ethers.providers.Web3Provider(eth);
       const accs = await prov.listAccounts();
       if (accs.length && localStorage.getItem('defixConnected') === '1') {
         this.signer = prov.getSigner();
@@ -3527,11 +3549,12 @@ class DeFiX {
   async toggleWallet() { this.signer ? this.disconnect() : await this.connect(); }
 
   async connect() {
-    if (!window.ethereum) { utils.toast('MetaMask not detected'); return; }
+    const eth = this._getEthereum();
+    if (!eth) { utils.toast('MetaMask / wallet not detected'); return; }
     try {
-      const prov = new ethers.providers.Web3Provider(window.ethereum);
+      const prov = new ethers.providers.Web3Provider(eth);
       if ((await prov.getNetwork()).chainId !== PULSE_CHAIN_ID) {
-        await window.ethereum.request({ method:'wallet_switchEthereumChain', params:[{ chainId:'0x171' }] });
+        await eth.request({ method:'wallet_switchEthereumChain', params:[{ chainId:'0x171' }] });
       }
       await prov.send('eth_requestAccounts', []);
       this.signer = prov.getSigner();
@@ -3540,7 +3563,16 @@ class DeFiX {
       this._registerWalletListeners();
       await this.afterConnect();
       utils.toast('Wallet connected ✓');
-    } catch (err) { utils.toast('Connect failed: ' + (err.message || err)); }
+    } catch (err) {
+      /* Extension conflict errors look like "Cannot redefine property" —
+         they come from third-party extensions, not from our code. */
+      const msg = err.message || String(err);
+      if (msg.includes('redefine') || msg.includes('defineProperty')) {
+        utils.toast('Wallet extension conflict detected. Try disabling other wallet extensions and reload.');
+      } else {
+        utils.toast('Connect failed: ' + msg);
+      }
+    }
   }
 
   async afterConnect() {
@@ -5430,6 +5462,65 @@ class DeFiX {
     if (bottom >= doc.scrollHeight - 600) this.fetchPosts(false);
   }
 
+  /* __ Profile patch: update avatars + names in-place after profile fetch __
+     Called by _debouncedRender (triggered by fetchOtherProfile completions).
+     Walks existing post-item elements and patches only changed avatar/name
+     nodes — no innerHTML rebuild, no reflow of the whole feed.
+     Falls back to full renderFeed if the post list has changed. */
+  _patchProfilesInFeed() {
+    const feed = this.g('feed');
+    if (!feed) return;
+    /* If feed structure doesn't match current state (new posts, different
+       mode), fall back to a full render scheduled in idle time. */
+    const items = feed.querySelectorAll('.post-item[data-txhash]');
+    if (items.length === 0) { this.renderFeed(); return; }
+    /* Quick hash-list check: if the displayed posts differ from state.posts,
+       do a full render. If they match, just patch the DOM. */
+    const displayedHashes = [...items].map(el => el.dataset.txhash);
+    const stateHashes = this.state.posts
+      .filter(p => !p.postType || p.postType === 'post' || p.postType === 'repost')
+      .slice(0, displayedHashes.length)
+      .map(p => p.txHash);
+    const listsMatch = displayedHashes.length === stateHashes.length &&
+      displayedHashes.every((h, i) => h === stateHashes[i]);
+    if (!listsMatch) {
+      /* Post list changed — need full render, but defer to idle time so
+         it doesn't block the thread that triggered us. */
+      if (typeof requestIdleCallback !== 'undefined') {
+        requestIdleCallback(() => this.renderFeed(), { timeout: 2000 });
+      } else {
+        setTimeout(() => this.renderFeed(), 0);
+      }
+      return;
+    }
+    /* Patch avatars and names in-place. O(n) DOM walk but no innerHTML. */
+    items.forEach(item => {
+      const hash = item.dataset.txhash;
+      const post = this._postMap.get(hash);
+      if (!post) return;
+      const addr = post.reporter;
+      if (!addr || addr === this.state.signerAddr) return;
+      const prof = this.state.profCache[addr];
+      if (!prof || (!prof.username && prof.picUrl === 'image1.jpeg')) return;
+      /* Patch avatar */
+      const avatar = item.querySelector('.post-avatar');
+      if (avatar && prof.picUrl && prof.picUrl !== 'image1.jpeg' &&
+          avatar.src.endsWith('image1.jpeg')) {
+        avatar.src = prof.picUrl;
+      }
+      /* Patch display name */
+      const nameEl = item.querySelector('.post-name');
+      if (nameEl && prof.username) {
+        const safe = utils.safe(prof.username);
+        if (nameEl.textContent !== safe && nameEl.textContent.includes('...')) {
+          nameEl.textContent = safe;
+        }
+      }
+    });
+    /* Also refresh sidebar panels (cheap) */
+    this._refreshSidebarPanels();
+  }
+
   /* ── Sidebar: dynamic trending + who-to-follow ────────────────────────
      Called from fetchPosts() after new posts land and from feed re-renders.
      Cheap: all data comes from in-memory state.posts and state.profCache. */
@@ -6049,6 +6140,41 @@ class DeFiX {
 }
 
 const pulse = new DeFiX();
+
+/* ── Service Worker — offline shell + fast repeat loads ──────────────
+   Registers sw.js which caches index.html and ethers.js for instant
+   load on repeat visits. API calls (PulseScan) bypass the cache.
+   To force a cache refresh after a new deploy:
+     1. Bump SW_CACHE_VER at the top of this file
+     2. Push to GitHub — the SW will detect the version mismatch
+        on next page load and fetch fresh assets automatically. */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js')
+      .then(reg => {
+        /* Pass the current cache version to the SW via postMessage
+           so it knows when to invalidate its cache. */
+        const sendVer = () => {
+          if (reg.active) reg.active.postMessage({ type: 'CACHE_VER', ver: SW_CACHE_VER });
+        };
+        if (reg.active) sendVer();
+        reg.addEventListener('updatefound', () => {
+          reg.installing?.addEventListener('statechange', e => {
+            if (e.target.state === 'activated') sendVer();
+          });
+        });
+        /* When the SW signals a new version is ready, show the user
+           a refresh banner so they get the update without a hard reload. */
+        navigator.serviceWorker.addEventListener('message', e => {
+          if (e.data?.type === 'NEW_VERSION_READY') {
+            utils.toast('↺ New version available — refresh to update');
+          }
+        });
+        console.log('[SW] Registered, scope:', reg.scope);
+      })
+      .catch(err => console.warn('[SW] Registration failed:', err));
+  });
+}
 pulse.init().catch(err => {
   console.error('Init error:', err);
   utils.toast('Startup failed — see console');
