@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>DeFiX</title>
+<title>Say It DeFi</title>
 <link rel="icon" type="image/jpeg" href="image1.jpeg">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"></script>
 <style>
@@ -427,9 +427,17 @@ nav { flex:1; padding:4px 0; }
   transition:opacity 0.15s, transform 0.15s;
   cursor:pointer;
   font-size:14px;
+  /* Hover area: extend invisible padding so mouse can move from trigger
+     to popup without the popup dismissing. Twitter does the same. */
+  padding-top:20px;
+  margin-top:-12px;
 }
 .profile-popup.open { display:block; }
 .profile-popup.visible { opacity:1; transform:translateY(0); }
+/* Touch devices: suppress hover-open so click-open is the only trigger */
+@media (hover: none) {
+  .post-name, .post-avatar { cursor:pointer; }
+}
 .pp-header { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:10px; }
 .pp-avatar { width:60px; height:60px; border-radius:50%; object-fit:cover; flex-shrink:0; background:#222; }
 .pp-follow-btn {
@@ -1193,9 +1201,9 @@ nav { flex:1; padding:4px 0; }
   <div id="sidebar-left">
     <div class="logo-wrap" onclick="pulse.goHome()">
       <div class="logo-img-wrap">
-        <img src="image1.jpeg" alt="DeFiX">
+        <img src="image1.jpeg" alt="Say It DeFi">
       </div>
-      <span class="site-name">DeFiX</span>
+      <span class="site-name">Say It DeFi</span>
     </div>
 
     <nav>
@@ -1278,7 +1286,7 @@ nav { flex:1; padding:4px 0; }
     <button id="new-banner">✦ New posts — click to load</button>
 
     <div id="feed-header">
-      <span id="feed-title">DeFiX</span>
+      <span id="feed-title">Home</span>
       <button id="refresh-btn" title="Refresh">↺</button>
     </div>
 
@@ -1342,7 +1350,7 @@ nav { flex:1; padding:4px 0; }
     <div class="sb-search">
       <div class="search-wrap">
         <span class="search-icon">🔎</span>
-        <input type="text" id="search-input" placeholder="Search DeFiX">
+        <input type="text" id="search-input" placeholder="Search Say It DeFi">
       </div>
     </div>
 
@@ -1408,21 +1416,21 @@ nav { flex:1; padding:4px 0; }
       </div>
     </div>
 
-    <!-- DeFiX channel card -->
+    <!-- Say It DeFi channel card -->
     <div class="sb-card" style="overflow:visible">
       <div class="defix-inner" id="defix-card-btn" role="button" tabindex="0"
-        aria-label="Open DeFiX channel">
+        aria-label="Open Say It DeFi channel">
         <div class="defix-top">
           <div class="defix-brand">
             <div class="defix-icon">⚡</div>
             <div>
-              <div class="defix-name">DeFiX Channel</div>
+              <div class="defix-name">Say It DeFi Channel</div>
               <div class="defix-sub">Official updates & tech</div>
             </div>
           </div>
           <div class="defix-tag">📡 View</div>
         </div>
-        <div class="defix-desc">Technical updates, announcements and discussions about DeFiX — the decentralized X.</div>
+        <div class="defix-desc">Technical updates, announcements and discussions about Say It DeFi — uncensorable social on PulseChain.</div>
       </div>
     </div>
 
@@ -1456,7 +1464,7 @@ nav { flex:1; padding:4px 0; }
         <a href="https://x.com/PLSUnderground"
           target="_blank" rel="noopener noreferrer">𝕏 @PLSUnderground</a>
       </div>
-      <div class="sb-copyright">© 2025 DeFiX — Decentralized X on PulseChain</div>
+      <div class="sb-copyright">© 2025 Say It DeFi — Uncensorable social on PulseChain</div>
     </div>
   </div>
 </div>
@@ -1969,7 +1977,7 @@ class Cache {
   }
 }
 
-/* ── DeFiX ─────────────────────────────────────────────────── */
+/* ── Say It DeFi ────────────────────────────────────────────── */
 class DeFiX {
   constructor() {
     this.state = {
@@ -2129,6 +2137,70 @@ class DeFiX {
     };
 
     g('feed').addEventListener('click', e => handlePostClick(e, false));
+
+    /* ── Hover popup (desktop only) ──────────────────────────────────
+       Uses mouseover/mouseout on the feed so we don't attach N listeners.
+       400ms hover delay matches Twitter. Cleared immediately on mouseout
+       unless the mouse moved into the popup itself. */
+    let _hoverTimer = null;
+    let _hoverAddr  = null;
+    const isTouch = () => window.matchMedia('(hover: none)').matches;
+
+    const onFeedMouseover = e => {
+      if (isTouch()) return;
+      const trigger = e.target.closest('.post-name, .post-avatar');
+      if (!trigger) return;
+      const item = e.target.closest('.post-item');
+      const post = item ? this._postMap.get(item.dataset.txhash) : null;
+      if (!post?.reporter) return;
+      const addr = post.reporter.toLowerCase();
+      /* If already showing for this address, don't re-trigger */
+      if (this.g('profile-popup')?.classList.contains('open') &&
+          this.g('profile-popup').dataset.addr === addr) return;
+      /* Debounce: cancel any pending show, restart timer */
+      clearTimeout(_hoverTimer);
+      _hoverAddr = addr;
+      _hoverTimer = setTimeout(() => {
+        if (_hoverAddr === addr) this.showProfilePopup(addr, trigger, 'hover');
+      }, 400);
+    };
+
+    const onFeedMouseout = e => {
+      if (isTouch()) return;
+      /* Did the mouse leave toward the popup? If so, keep it open. */
+      const popup = this.g('profile-popup');
+      if (popup?.contains(e.relatedTarget)) return;
+      clearTimeout(_hoverTimer);
+      _hoverAddr = null;
+      /* Small grace window — if mouse re-enters popup within 150ms,
+         we leave it open. This prevents flicker when gap between
+         trigger and popup is crossed. */
+      if (popup?.classList.contains('open')) {
+        const closeTimer = setTimeout(() => {
+          /* Only auto-close if mouse is outside BOTH trigger and popup */
+          if (!popup.matches(':hover') && !popup.contains(document.activeElement)) {
+            this.hideProfilePopup();
+          }
+        }, 150);
+        popup._pendingClose = closeTimer;
+      }
+    };
+
+    /* Mouseout from popup itself — close after grace period */
+    document.addEventListener('mouseleave', e => {
+      const popup = this.g('profile-popup');
+      if (!popup || !popup.classList.contains('open')) return;
+      if (e.target !== popup && !popup.contains(e.target)) return;
+      /* Target is the popup or its child — check relatedTarget */
+      if (popup.contains(e.relatedTarget)) return;
+      clearTimeout(popup._pendingClose);
+      popup._pendingClose = setTimeout(() => {
+        if (!popup.matches(':hover')) this.hideProfilePopup();
+      }, 200);
+    }, true);
+
+    g('feed').addEventListener('mouseover', onFeedMouseover);
+    g('feed').addEventListener('mouseout',  onFeedMouseout);
 
     g('cb-address').onclick = () => {
       const addr = g('cb-address').textContent;
@@ -2355,7 +2427,7 @@ class DeFiX {
     this.setNav('nav-home','home');
     this.state.mode    = 'main';
     this.state.channel = MAIN_CHANNEL;
-    this.g('feed-title').textContent       = 'DeFiX';
+    this.g('feed-title').textContent       = 'Home';
     this.g('compose-area').style.display   = 'flex';
     this.g('channel-banner').style.display = 'none';
     this.g('feed-tabs').style.display      = 'flex';
@@ -2541,7 +2613,7 @@ class DeFiX {
     this.state.mode    = 'custom';
     this.state.channel = DEFIX_CHANNEL;
     this.g('custom-input').value         = DEFIX_CHANNEL;
-    this.g('feed-title').textContent     = '⚡ DeFiX Channel';
+    this.g('feed-title').textContent     = '⚡ Say It DeFi Channel';
     this.g('compose-area').style.display = 'flex';
     this.g('feed-tabs').style.display    = 'none';
     this.setChActive(null);
@@ -2877,9 +2949,9 @@ class DeFiX {
       <div class="settings-section">
         <div class="settings-section-title">About</div>
         <div class="settings-about-logo">
-          <img src="image1.jpeg" alt="DeFiX">
+          <img src="image1.jpeg" alt="Say It DeFi">
           <div>
-            <strong>DeFiX</strong>
+            <strong>Say It DeFi</strong>
             <span>Decentralized X — on-chain social on PulseChain</span>
           </div>
         </div>
@@ -3172,60 +3244,117 @@ class DeFiX {
 
   async fetchMyProfile() {
     if (!this.state.signerAddr) return;
+    /* Scan every page of this wallet's tx history until we either find the
+       PROFILE_DATA self-send or exhaust all pages. Profile-save txs are
+       self-sends (from === to === signerAddr) so they only appear once in
+       history; on an active wallet it could be many pages deep. */
     try {
-      const raw = await this.apiFetch(this.state.signerAddr, 1);
-      for (const tx of raw) {
-        if (tx.from?.toLowerCase() !== this.state.signerAddr) continue;
-        if (tx.to?.toLowerCase()   !== this.state.signerAddr) continue;
-        try {
-          const text = ethers.utils.toUtf8String(tx.input).trim();
-          if (!text.startsWith(PROFILE_PREFIX)) continue;
-          const data = JSON.parse(text.slice(PROFILE_PREFIX.length).trim());
-          this.applyProfile(data);
-          await this.cache.saveProfile({ address: this.state.signerAddr, ...data });
-          /* If the profile page is open for this user, refresh the header in-place */
-          if (this.state.mode === 'profile' && this.state.channel === this.state.signerAddr) {
-            const nameEl = document.getElementById('prof-display-name');
-            const handleEl = document.getElementById('prof-handle-addr');
-            const avatarEl = document.getElementById('prof-page-avatar');
-            if (nameEl)   nameEl.textContent = data.username || this.trunc(this.state.signerAddr);
-            if (avatarEl) avatarEl.src = data.picUrl || 'image1.jpeg';
-            /* Bio — update if element exists */
-            const bioEl = document.querySelector('.prof-bio');
-            if (bioEl && data.bio) bioEl.textContent = data.bio;
-          }
-          return;
-        } catch { continue; }
-      }
-    } catch (err) { console.warn('Profile fetch error', err); }
-  }
-
-  async fetchOtherProfile(address) {
-    if (!address || address in this.state.profCache) return;
-    this.state.profCache[address] = null;
-    const work = async () => {
-      this._profInFlight++;
-      try {
-        const db = await this.cache.getProfile(address);
-        if (db) {
-          this.state.profCache[address] = { username: db.username||'', picUrl: db.picUrl||'image1.jpeg' };
-          this._debouncedRender(); return;
-        }
-        const raw = await this.apiFetch(address, 1);
+      for (let page = 1; ; page++) {
+        let raw;
+        try { raw = await this.apiFetch(this.state.signerAddr, page); }
+        catch (err) { console.warn('fetchMyProfile API error (p' + page + '):', err); break; }
+        if (!raw || !raw.length) break; /* end of tx history */
         for (const tx of raw) {
-          if (tx.from?.toLowerCase() !== address || tx.to?.toLowerCase() !== address) continue;
+          if (tx.from?.toLowerCase() !== this.state.signerAddr) continue;
+          if (tx.to?.toLowerCase()   !== this.state.signerAddr) continue;
           try {
             const text = ethers.utils.toUtf8String(tx.input).trim();
             if (!text.startsWith(PROFILE_PREFIX)) continue;
             const data = JSON.parse(text.slice(PROFILE_PREFIX.length).trim());
-            this.state.profCache[address] = { username: data.username||'', picUrl: data.picUrl||'image1.jpeg' };
-            await this.cache.saveProfile({ address, ...data });
-            this._debouncedRender(); return;
+            this.applyProfile(data);
+            await this.cache.saveProfile({ address: this.state.signerAddr, ...data });
+            /* Profile found — update the open profile page header in-place
+               without a full re-render (preserves the already-loaded feed). */
+            if (this.state.mode === 'profile' &&
+                this.state.channel === this.state.signerAddr) {
+              const nameEl   = document.getElementById('prof-display-name');
+              const avatarEl = document.getElementById('prof-page-avatar');
+              if (nameEl)   nameEl.textContent = data.username || this.trunc(this.state.signerAddr);
+              if (avatarEl) avatarEl.src = data.picUrl || 'image1.jpeg';
+              const bioEl = document.querySelector('.prof-bio');
+              if (bioEl && data.bio) bioEl.textContent = data.bio;
+              const coverEl = document.querySelector('.prof-cover');
+              if (coverEl && data.coverUrl)
+                coverEl.style.background = `url('${data.coverUrl}') center/cover no-repeat`;
+            }
+            return; /* found — stop */
           } catch { continue; }
         }
-        this.state.profCache[address] = { username:'', picUrl:'image1.jpeg' };
+        if (raw.length < 50) break; /* last page — stop regardless */
+      }
+    } catch (err) { console.warn('fetchMyProfile error:', err); }
+  }
+
+  async fetchOtherProfile(address) {
+    if (!address || address in this.state.profCache) return;
+    /* Mark in-progress immediately — prevents duplicate concurrent fetches. */
+    this.state.profCache[address] = null;
+    const work = async () => {
+      this._profInFlight++;
+      try {
+        /* 1. Try IndexedDB cache first — fast, no API call needed. */
+        const db = await this.cache.getProfile(address);
+        if (db) {
+          /* Store ALL available fields — popup and profile page need bio,
+             coverUrl, location, website — not just username + picUrl. */
+          this.state.profCache[address] = {
+            username: db.username  || '',
+            picUrl:   db.picUrl    || 'image1.jpeg',
+            bio:      db.bio       || '',
+            coverUrl: db.coverUrl  || '',
+            location: db.location  || '',
+            website:  db.website   || '',
+          };
+          this._debouncedRender();
+          return;
+        }
+        /* 2. Scan the FULL tx history of this address until we find
+              a PROFILE_DATA self-send or run out of pages.
+              - profInFlight cap (3 concurrent) prevents API flooding.
+              - _debouncedRender() fires immediately on find, so the UI
+                updates progressively — user sees names/avatars appear
+                as each profile is located rather than waiting for all.
+              - Cached permanently in IndexedDB so subsequent sessions
+                are instant regardless of how deep the scan went. */
+        for (let page = 1; ; page++) {
+          let raw;
+          try { raw = await this.apiFetch(address, page); }
+          catch (err) {
+            console.warn(`fetchOtherProfile(${this.trunc(address)}) API err p${page}:`, err);
+            break;
+          }
+          if (!raw || !raw.length) break; /* end of tx history */
+          let found = false;
+          for (const tx of raw) {
+            if (tx.from?.toLowerCase() !== address ||
+                tx.to?.toLowerCase()   !== address) continue;
+            try {
+              const text = ethers.utils.toUtf8String(tx.input).trim();
+              if (!text.startsWith(PROFILE_PREFIX)) continue;
+              const data = JSON.parse(text.slice(PROFILE_PREFIX.length).trim());
+              this.state.profCache[address] = {
+                username: data.username || '',
+                picUrl:   data.picUrl   || 'image1.jpeg',
+                bio:      data.bio      || '',
+                coverUrl: data.coverUrl || '',
+                location: data.location || '',
+                website:  data.website  || '',
+              };
+              await this.cache.saveProfile({ address, ...data });
+              this._debouncedRender();
+              found = true;
+              break;
+            } catch { continue; }
+          }
+          if (found) return;
+          if (raw.length < 50) break; /* last page — stop */
+        }
+        /* No profile found — store empty placeholder so we don't re-scan. */
+        this.state.profCache[address] = { username:'', picUrl:'image1.jpeg',
+                                          bio:'', coverUrl:'', location:'', website:'' };
       } catch {
-        this.state.profCache[address] = { username:'', picUrl:'image1.jpeg' };
+        this.state.profCache[address] = { username:'', picUrl:'image1.jpeg',
+                                          bio:'', coverUrl:'', location:'', website:'' };
       } finally {
         this._profInFlight--;
         this._drainProfileQueue();
@@ -3768,6 +3897,18 @@ class DeFiX {
     const data = { username, picUrl, coverUrl, bio, location, website, joinedTs };
     this.applyProfile(data);
     await this.cache.saveProfile({ address: this.state.signerAddr, ...data });
+    /* Keep profCache in sync so the popup reflects the new profile immediately
+       without waiting for the next fetchOtherProfile scan. */
+    if (this.state.signerAddr) {
+      this.state.profCache[this.state.signerAddr] = {
+        username: data.username || '',
+        picUrl:   data.picUrl   || 'image1.jpeg',
+        bio:      data.bio      || '',
+        coverUrl: data.coverUrl || '',
+        location: data.location || '',
+        website:  data.website  || '',
+      };
+    }
     const ok = await this.publish(PROFILE_PREFIX + JSON.stringify(data), null, this.state.signerAddr);
     if (ok) {
       this.closeModal('profile-modal');
@@ -5155,15 +5296,21 @@ class DeFiX {
      in the feed. Click on the popup body (not the Follow button) opens
      the full profile page. Closes on outside click, ESC, scroll, or a
      second click on the same anchor (toggle). */
-  async showProfilePopup(address, anchorEl) {
+  async showProfilePopup(address, anchorEl, trigger = 'click') {
     address = address.toLowerCase();
     const popup = this.g('profile-popup');
     if (!popup) return;
-    /* Toggle: if popup is already open for this address, close it. */
-    if (popup.classList.contains('open') && popup.dataset.addr === address) {
+    /* Click-toggle: clicking the same anchor again closes the popup.
+       Hover-open never toggles — moving away closes it instead. */
+    if (trigger === 'click' &&
+        popup.classList.contains('open') && popup.dataset.addr === address) {
       this.hideProfilePopup();
       return;
     }
+    /* If hover is opening but click-popup is already showing something else,
+       don't clobber it — let click take priority. */
+    if (trigger === 'hover' && popup.classList.contains('open') &&
+        popup.dataset.addr !== address) return;
     popup.dataset.addr = address;
 
     /* Resolve profile data: own state, prof cache, then trigger fetch if missing. */
