@@ -470,6 +470,17 @@ nav { flex:1; padding:4px 0; }
 #sb-w2f-list .sb-card-row { display:flex; align-items:center; gap:8px; padding:10px 14px; }
 #sb-w2f-list .w2f-follow-btn:hover { background:rgba(231,233,234,0.85); }
 .act-bookmark.bookmarked        { color:#1d9bf0; }
+/* J/K keyboard navigation focus ring — subtle, doesn't fight the dark theme */
+.post-item.kb-focus {
+  outline:2px solid var(--primary);
+  outline-offset:-2px;
+  border-radius:4px;
+}
+/* Views slot — read-only, no hover colour */
+.act-views { display:flex; align-items:center; gap:4px; font-size:13px;
+             color:var(--muted); cursor:default; user-select:none; }
+.act-views .act-icon { border-radius:9999px; padding:6px;
+                       display:flex; align-items:center; justify-content:center; }
 .act-share:hover            { color:#1d9bf0; }
 .act-share:hover .act-icon  { background:rgba(29,155,240,0.1); }
 .otter-link {
@@ -527,14 +538,16 @@ nav { flex:1; padding:4px 0; }
 
 .sb-card {
   background:var(--bg-card); border:1px solid var(--border);
-  border-radius:16px; overflow:hidden;
-  /* Cap each card so a single tall card can't push others off-screen.
-     The inner list scrolls within these bounds. 70vh leaves room for
-     the search bar above and breathing room below. */
-  max-height:70vh;
+  border-radius:16px;
+  /* Flex column so title stays pinned and inner list scrolls.
+     NO overflow:hidden — that was clipping content in cards that don't
+     have a dedicated inner scroll container (Channels, Wave cards). */
   display:flex; flex-direction:column;
+  /* Cap height so one card can't consume the entire sidebar.
+     min-content lets short cards (2-3 rows) stay compact. */
+  max-height:min(60vh, 480px);
 }
-/* Inner list inside any sb-card — flex grow + internal overflow */
+/* The trending and W2F cards have dedicated inner scroll targets. */
 .sb-card > #sb-trending-list,
 .sb-card > #sb-w2f-list,
 .sb-card > .sb-card-scroll {
@@ -542,20 +555,29 @@ nav { flex:1; padding:4px 0; }
   overflow-y:auto;
   scrollbar-width:thin;
   scrollbar-color:var(--border) transparent;
+  border-radius:0 0 16px 16px; /* match card corners at bottom */
 }
 .sb-card > #sb-trending-list::-webkit-scrollbar,
 .sb-card > #sb-w2f-list::-webkit-scrollbar,
 .sb-card > .sb-card-scroll::-webkit-scrollbar { width:4px; }
 .sb-card > #sb-trending-list::-webkit-scrollbar-thumb,
 .sb-card > #sb-w2f-list::-webkit-scrollbar-thumb,
-.sb-card > .sb-card-scroll::-webkit-scrollbar-thumb { background:var(--border); border-radius:4px; }
+.sb-card > .sb-card-scroll::-webkit-scrollbar-thumb {
+  background:var(--border); border-radius:4px;
+}
+/* Cards without a dedicated inner scroll container (Channels, Wave, etc.)
+   get overflow-y:auto directly so their content is never silently clipped. */
+.sb-card:not(:has(> #sb-trending-list)):not(:has(> #sb-w2f-list)) {
+  overflow-y:auto;
+  scrollbar-width:thin;
+  scrollbar-color:var(--border) transparent;
+}
 .sb-card-title {
-  /* clamp(min, fluid, max): min for tiny viewports, scales up to 20px on
-     large screens. Stops font-size from varying wildly across browsers
-     that interpret the user's default text-size differently. */
-  font-size:clamp(15px, 1.2vw + 8px, 20px); font-weight:800;
+  /* Fixed px values — sidebar is always 350px wide so vw-relative sizing
+     just varies with the overall viewport, not the sidebar. Simpler. */
+  font-size:19px; font-weight:800;
   padding:14px 16px 10px; color:var(--text);
-  flex-shrink:0; /* keep the title visible when the card scrolls */
+  flex-shrink:0;
 }
 .sb-card-row {
   display:flex; align-items:flex-start; gap:12px;
@@ -563,9 +585,10 @@ nav { flex:1; padding:4px 0; }
 }
 .sb-card-row:hover { background:rgba(255,255,255,0.03); }
 .sb-card-row + .sb-card-row { border-top:1px solid var(--border); }
-.trend-label { font-size:clamp(11px, 0.7vw + 6px, 13px); color:var(--muted); display:block; }
-.trend-name  { font-size:clamp(13px, 0.9vw + 7px, 16px); font-weight:700; margin:1px 0; display:block; }
-.trend-count { font-size:clamp(11px, 0.8vw + 6px, 14px); color:var(--muted); display:block; }
+.trend-label { font-size:12px; color:var(--muted); display:block; }
+.trend-name  { font-size:15px; font-weight:700; margin:2px 0; display:block;
+               overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.trend-count { font-size:13px; color:var(--muted); display:block; }
 .sb-show-more {
   display:block; width:100%; padding:14px 16px;
   background:transparent; border:none; border-top:1px solid var(--border);
@@ -1223,6 +1246,12 @@ nav { flex:1; padding:4px 0; }
         </span><span class="nav-label">Notifications</span>
         <span class="notif-badge" id="notif-badge"></span>
       </button>
+      <!-- My Channel nav button — hidden until wallet connected -->
+      <button class="nav-btn" id="nav-mychannel" style="display:none">
+        <span class="nav-icon">
+          <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M17.863 13.44c1.477 1.58 2.366 3.8 2.632 6.46l.11 1.1H3.395l.11-1.1c.266-2.66 1.155-4.88 2.632-6.46C7.627 11.85 9.648 11 12 11s4.373.85 5.863 2.44zM12 2C9.791 2 8 3.79 8 6s1.791 4 4 4 4-1.79 4-4-1.791-4-4-4z"/></svg>
+        </span><span class="nav-label">My Channel</span>
+      </button>
       <button class="nav-btn" id="nav-channels">
         <span class="nav-icon">
           <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M1.998 5.5c0-1.381 1.119-2.5 2.5-2.5h15c1.381 0 2.5 1.119 2.5 2.5v13c0 1.381-1.119 2.5-2.5 2.5h-15c-1.381 0-2.5-1.119-2.5-2.5v-13zm2.5-.5a.5.5 0 00-.5.5v2.764l8 3.638 8-3.638V5.5a.5.5 0 00-.5-.5h-15zM19.998 10.236l-8 3.636-8-3.636V18.5a.5.5 0 00.5.5h15a.5.5 0 00.5-.5v-8.264z"/></svg>
@@ -1690,11 +1719,28 @@ const ERC721_ABI = [
 const utils = {
   _t: null,
   toast(msg, ms = 3000) {
+    /* Queue toasts so rapid-fire actions (like + repost) show both messages
+       rather than the second one immediately stomping the first. */
+    this._toastQueue = this._toastQueue || [];
+    this._toastBusy  = this._toastBusy  || false;
+    this._toastQueue.push({ msg, ms });
+    if (!this._toastBusy) this._drainToastQueue();
+  },
+  _drainToastQueue() {
+    if (!this._toastQueue?.length) { this._toastBusy = false; return; }
+    this._toastBusy = true;
+    const { msg, ms } = this._toastQueue.shift();
     const el = document.getElementById('toast');
+    if (!el) { this._drainToastQueue(); return; }
     el.textContent = msg;
     el.style.display = 'block';
-    clearTimeout(this._t);
-    this._t = setTimeout(() => { el.style.display = 'none'; }, ms);
+    /* After this toast, wait briefly then show the next (or hide). */
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => {
+      el.style.display = 'none';
+      /* Short gap between queued toasts so the user sees the transition */
+      setTimeout(() => this._drainToastQueue(), 200);
+    }, ms);
   },
   loading(show, label = 'Publishing…') {
     document.getElementById('loading-overlay').classList.toggle('on', show);
@@ -2033,18 +2079,37 @@ class DeFiX {
     setTimeout(() => { this.pollNew(); this.startPolling(); }, POLL_FIRST_MS);
   }
 
+  /* Per-channel draft storage — keyed by channel address so switching
+     channels preserves each channel's draft independently. Falls back
+     to DRAFT_KEY for backwards compat with any saved drafts. */
+  _draftKey() {
+    const ch = this.state.channel || 'global';
+    return `${DRAFT_KEY}:${ch}`;
+  }
   _saveDraft() {
     const v = this.g('compose-text').value;
-    v.trim() ? localStorage.setItem(DRAFT_KEY, v) : localStorage.removeItem(DRAFT_KEY);
+    const key = this._draftKey();
+    if (v.trim()) {
+      localStorage.setItem(key, v);
+    } else {
+      localStorage.removeItem(key);
+      localStorage.removeItem(DRAFT_KEY); /* clean up legacy key too */
+    }
   }
   _restoreDraft() {
-    const draft = localStorage.getItem(DRAFT_KEY);
+    /* Try per-channel key first, then fall back to legacy global key */
+    const draft = localStorage.getItem(this._draftKey())
+                || localStorage.getItem(DRAFT_KEY)
+                || '';
     if (!draft) return;
     this.g('compose-text').value = draft;
     utils.autoGrow(this.g('compose-text'));
     utils.updateCharCount(this.g('compose-text'), null);
   }
-  _clearDraft() { localStorage.removeItem(DRAFT_KEY); }
+  _clearDraft() {
+    localStorage.removeItem(this._draftKey());
+    localStorage.removeItem(DRAFT_KEY); /* clean up any legacy key */
+  }
 
   wireListeners() {
     const g = this.g.bind(this);
@@ -2081,6 +2146,7 @@ class DeFiX {
     g('nav-explore').onclick   = () => this.goExplore();
     g('nav-notifs').onclick    = () => this.goNotifications();
     g('nav-channels').onclick  = () => this.goChannels();
+    g('nav-mychannel').onclick = () => this.goSelf();
     g('nav-bookmarks').onclick = () => this.goBookmarks();
     g('nav-profile').onclick   = () => this.openProfileModal();
     g('nav-more').onclick      = e => { e.stopPropagation(); this.toggleMoreMenu(); };
@@ -2237,13 +2303,79 @@ class DeFiX {
     document.addEventListener('keydown', e => {
       const active = document.activeElement?.tagName;
       if (active === 'INPUT' || active === 'TEXTAREA') return;
-      if (e.key === 'n' || e.key === 'N') { e.preventDefault(); g('compose-text').focus(); g('compose-text').scrollIntoView({ behavior:'smooth', block:'center' }); }
-      if (e.key === '/') { e.preventDefault(); g('search-input').focus(); }
-      if (e.key === 'e' || e.key === 'E') { e.preventDefault(); this.openComposeModal(); }
+      /* ── Compose / nav shortcuts ── */
+      if (e.key === 'n' || e.key === 'N') {
+        e.preventDefault();
+        g('compose-text').focus();
+        g('compose-text').scrollIntoView({ behavior:'smooth', block:'center' });
+        return;
+      }
+      if (e.key === '/') { e.preventDefault(); g('search-input').focus(); return; }
+      if (e.key === 'e' || e.key === 'E') { e.preventDefault(); this.openComposeModal(); return; }
+      /* ── J/K post navigation ── */
+      if (e.key === 'j' || e.key === 'J' || e.key === 'k' || e.key === 'K') {
+        e.preventDefault();
+        const items = [...document.querySelectorAll('.post-item')];
+        if (!items.length) return;
+        const focused = document.querySelector('.post-item.kb-focus');
+        let idx = focused ? items.indexOf(focused) : -1;
+        if (e.key === 'j' || e.key === 'J') idx = Math.min(idx + 1, items.length - 1);
+        else                                  idx = Math.max(idx - 1, 0);
+        items.forEach(el => el.classList.remove('kb-focus'));
+        items[idx].classList.add('kb-focus');
+        items[idx].scrollIntoView({ behavior:'smooth', block:'nearest' });
+        this._kbFocusedPost = this._postMap.get(items[idx].dataset.txhash);
+        return;
+      }
+      /* ── Actions on focused post ── */
+      const post = this._kbFocusedPost;
+      if (post) {
+        if (e.key === 'Enter') { e.preventDefault(); this.openThread(post); return; }
+        if (e.key === 'l' || e.key === 'L') {
+          e.preventDefault();
+          const el = document.querySelector(`.post-item.kb-focus`);
+          if (el) this.toggleLike(post, el);
+          return;
+        }
+        if (e.key === 'r' || e.key === 'R') { e.preventDefault(); this.openReplyModal(post); return; }
+        if (e.key === 't' || e.key === 'T') { e.preventDefault(); this.openRepostModal(post); return; }
+        if (e.key === 'b' || e.key === 'B') {
+          e.preventDefault();
+          const el = document.querySelector(`.post-item.kb-focus`);
+          if (el) this.toggleBookmark(post, el);
+          return;
+        }
+        if (e.key === 'u' || e.key === 'U') {
+          e.preventDefault();
+          utils.copyToClipboard(`https://otter.pulsechain.com/tx/${post.txHash}`, 'Link copied!');
+          return;
+        }
+      }
+      /* ── Page navigation shortcuts ── */
+      if (e.key === 'g' && !e.shiftKey) {
+        /* g+h home, g+n notifications, g+p profile etc — wait for 2nd key */
+        this._gPressed = true;
+        setTimeout(() => { this._gPressed = false; }, 1500);
+        return;
+      }
+      if (this._gPressed) {
+        this._gPressed = false;
+        if (e.key === 'h') { e.preventDefault(); this.goHome(); return; }
+        if (e.key === 'n') { e.preventDefault(); this.goNotifications(); return; }
+        if (e.key === 'p') { e.preventDefault(); this.openProfileModal(); return; }
+        if (e.key === 's') { e.preventDefault(); this.goSelf(); return; }
+        if (e.key === 'b') { e.preventDefault(); this.goBookmarks(); return; }
+      }
       if (e.key === 'Escape') {
         /* Close popup first — it's higher in the UI stack than modals. */
         if (this.g('profile-popup')?.classList.contains('open')) {
           this.hideProfilePopup();
+          return;
+        }
+        /* Clear J/K focus */
+        if (document.querySelector('.post-item.kb-focus')) {
+          document.querySelectorAll('.post-item.kb-focus').forEach(el => el.classList.remove('kb-focus'));
+          this._kbFocusedPost = null;
           return;
         }
         ['compose-modal','profile-modal','reply-modal','repost-modal','media-modal'].forEach(id => {
@@ -2569,7 +2701,7 @@ class DeFiX {
 
   async goSelf() {
     if (!this.signer) { utils.toast('Connect wallet to view your channel'); return; }
-    this.setNav(null, null);
+    this.setNav('nav-mychannel', null);
     this.state.mode    = 'self';
     this.state.channel = this.state.signerAddr;
     this.g('feed-title').textContent     = '📡 My Channel';
@@ -3170,6 +3302,7 @@ class DeFiX {
     this.g('connect-btn').style.display  = 'none';
     this.g('ap-addr').textContent        = this.trunc(addr);
     this.g('ch-self').style.display      = 'block';
+    this.g('nav-mychannel').style.display = '';  /* show My Channel nav btn */
     const cached = await this.cache.getProfile(addr);
     if (cached) this.applyProfile(cached);
     /* Load profile + reactions in parallel */
@@ -3233,6 +3366,7 @@ class DeFiX {
     this.g('connect-btn').style.display  = 'block';
     this.g('compose-avatar').src         = 'image1.jpeg';
     this.g('ch-self').style.display      = 'none';
+    this.g('nav-mychannel').style.display = 'none';
     this.g('ap-avatar').src          = 'image1.jpeg';
     this.g('ap-name').textContent    = 'My Wallet';
     this.g('ap-addr').textContent    = '';
@@ -4132,6 +4266,9 @@ class DeFiX {
           ? new Date(Number(tx.timeStamp) * 1000).toISOString()
           : new Date().toISOString(),
         txHash: tx.hash.toLowerCase(), channel, mode,
+        /* Block number used as a Twitter-style "view count" proxy.
+           Shows chain confirmation depth as a useful on-chain signal. */
+        blockNumber: tx.blockNumber ? Number(tx.blockNumber) : null,
       });
       return acc;
     }, []);
@@ -4203,9 +4340,9 @@ class DeFiX {
 
   async resetAndFetch() {
     this.stopPolling();
-    /* Bump token so any in-flight fetch from the previous channel aborts
-       its writes — otherwise state.loading sticks true and the new
-       channel's first fetch silently does nothing. */
+    /* Save current draft before channel switch, then restore the new
+       channel's draft after the channel address changes. */
+    this._saveDraft();
     this._fetchToken++;
     this.state.loading   = false;
     this.state.posts     = [];
@@ -4217,6 +4354,9 @@ class DeFiX {
     this.state.searchTerm = '';
     this.g('search-input').value = '';
     this.g('new-banner').style.display = 'none';
+    /* Restore draft for the new channel (set by caller before resetAndFetch) */
+    this.g('compose-text').value = '';
+    this._restoreDraft();
     await this.loadCached();
     await this.fetchPosts(true);
     if (this.state.mode !== 'notifications') this.startPolling();
@@ -4430,6 +4570,12 @@ class DeFiX {
               </span>
               <span class="act-count">${lcLabel}</span>
             </button>
+            ${post.blockNumber
+              ? `<span class="act-views" title="Block #${post.blockNumber}">
+                  <span class="act-icon"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg></span>
+                  <span class="act-count">${(post.blockNumber).toLocaleString()}</span>
+                </span>`
+              : ''}
             <button class="act-btn act-bookmark ${isBookmarked ? 'bookmarked' : ''}" data-action="bookmark" title="${isBookmarked ? 'Remove bookmark' : 'Bookmark'}">
               <span class="act-icon">
                 ${isBookmarked
