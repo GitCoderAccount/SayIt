@@ -476,6 +476,28 @@ nav { flex:1; padding:4px 0; }
   outline-offset:-2px;
   border-radius:4px;
 }
+/* ── Explore page ── */
+.explore-page { padding:0; }
+.explore-section { border-bottom:8px solid var(--bg-mid); }
+.explore-section-title {
+  font-size:20px; font-weight:800; padding:16px 16px 8px;
+  color:var(--text); position:sticky; top:53px;
+  background:var(--bg); z-index:5;
+  border-bottom:1px solid var(--border);
+}
+.explore-row {
+  display:flex; align-items:center; gap:12px;
+  padding:12px 16px; cursor:pointer; transition:background 0.15s;
+  border-bottom:1px solid var(--border);
+}
+.explore-row:hover { background:rgba(255,255,255,0.04); }
+.explore-rank { font-size:16px; font-weight:700; color:var(--muted); width:24px; text-align:center; flex-shrink:0; }
+.explore-avatar { width:44px; height:44px; border-radius:50%; object-fit:cover; flex-shrink:0; background:#222; }
+.explore-content { flex:1; min-width:0; }
+.explore-label { font-size:12px; color:var(--muted); }
+.explore-name { font-size:15px; font-weight:700; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.explore-meta { font-size:13px; color:var(--muted); margin-top:1px; }
+.explore-arrow { color:var(--muted); font-size:16px; flex-shrink:0; }
 /* Views slot — read-only, no hover colour */
 .act-views { display:flex; align-items:center; gap:4px; font-size:13px;
              color:var(--muted); cursor:default; user-select:none; }
@@ -1222,7 +1244,7 @@ nav { flex:1; padding:4px 0; }
 
   <!-- Left sidebar -->
   <div id="sidebar-left">
-    <div class="logo-wrap" onclick="pulse.goHome()">
+    <div class="logo-wrap" id="logo-wrap">
       <div class="logo-img-wrap">
         <img src="image1.jpeg" alt="Say It DeFi">
       </div>
@@ -1389,7 +1411,7 @@ nav { flex:1; padding:4px 0; }
       <div id="sb-trending-list">
         <!-- Dynamic trending hashtags inserted by renderTrending().
              Pinned partner rows always shown at the bottom. -->
-        <div class="sb-card-row" onclick="pulse.goWave()" style="cursor:pointer">
+        <div class="sb-card-row" id="sb-wave-row" style="cursor:pointer">
           <div style="flex:1">
             <span class="trend-label">Featured partner</span>
             <span class="trend-name">Wave on Pulse 📻</span>
@@ -1516,6 +1538,9 @@ nav { flex:1; padding:4px 0; }
   <button class="mn-btn" data-mn="channels">
     <span class="mn-icon"><svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M1.998 5.5c0-1.381 1.119-2.5 2.5-2.5h15c1.381 0 2.5 1.119 2.5 2.5v13c0 1.381-1.119 2.5-2.5 2.5h-15c-1.381 0-2.5-1.119-2.5-2.5v-13zm2.5-.5a.5.5 0 00-.5.5v2.764l8 3.638 8-3.638V5.5a.5.5 0 00-.5-.5h-15zM19.998 10.236l-8 3.636-8-3.636V18.5a.5.5 0 00.5.5h15a.5.5 0 00.5-.5v-8.264z"/></svg></span>Channels
   </button>
+  <button class="mn-btn" id="mn-mychannel" data-mn="mychannel" style="display:none">
+    <span class="mn-icon"><svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M17.863 13.44c1.477 1.58 2.366 3.8 2.632 6.46l.11 1.1H3.395l.11-1.1c.266-2.66 1.155-4.88 2.632-6.46C7.627 11.85 9.648 11 12 11s4.373.85 5.863 2.44zM12 2C9.791 2 8 3.79 8 6s1.791 4 4 4 4-1.79 4-4-1.791-4-4-4z"/></svg></span>My Channel
+  </button>
   <button class="mn-btn" data-mn="profile">
     <span class="mn-icon"><svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 11c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zm0-6C9.239 5 7 7.239 7 10s2.239 5 5 5 5-2.239 5-5-2.239-5-5-5zM5.651 19h12.698c-.337-1.8-1.023-2.891-1.929-3.4-1.285-.736-3.574-1.1-4.42-1.1-.845 0-3.135.364-4.42 1.1-.906.509-1.592 1.6-1.929 3.4z"/></svg></span>Profile
   </button>
@@ -1615,6 +1640,22 @@ nav { flex:1; padding:4px 0; }
   </div>
 </div>
 
+<!-- Share card modal -->
+<div class="modal-bg" id="share-modal">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-head">
+      <span class="modal-title">Share Post</span>
+      <button class="modal-close" id="close-share-modal">✕</button>
+    </div>
+    <canvas id="share-canvas" style="width:100%;border-radius:12px;display:block;background:#16181c;margin-bottom:12px"></canvas>
+    <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+      <button class="btn-pri" id="share-copy-img-btn">📋 Copy Image</button>
+      <button class="btn-pri" id="share-native-btn" style="display:none">📤 Share…</button>
+      <button class="btn-ghost" id="share-copy-link-btn">🔗 Copy Link</button>
+    </div>
+  </div>
+</div>
+
 <!-- Reply modal -->
 <div class="modal-bg" id="reply-modal">
   <div class="modal">
@@ -1708,6 +1749,7 @@ const BOOKMARK_PREFIX = 'BOOKMARK:';
 const FOLLOW_PREFIX   = 'FOLLOW:';
 const UNFOLLOW_PREFIX = 'UNFOLLOW:';
 const SETTINGS_KEY    = 'defixSettings';
+const MUTE_KEY        = 'defixMuted';   /* JSON array of muted addresses */
 const CHANNELS_KEY    = 'defixChannelsScan';
 
 const ERC721_ABI = [
@@ -1894,7 +1936,23 @@ const utils = {
     el.style.height = 'auto';
     el.style.height = Math.min(el.scrollHeight, 400) + 'px';
   },
-  copyToClipboard(text, label = 'Copied to clipboard!') {
+  /* Check if an img URL is too large to render safely.
+     Loads a test Image element and checks naturalWidth*naturalHeight*4 bytes.
+     Returns true if safe, false if oversized. Timeout: 5s. */
+  async checkImageSize(url, maxBytes = 8_000_000) {
+    return new Promise(resolve => {
+      const img = new Image();
+      const timer = setTimeout(() => { img.src = ''; resolve(true); }, 5000);
+      img.onload = () => {
+        clearTimeout(timer);
+        const bytes = img.naturalWidth * img.naturalHeight * 4;
+        resolve(bytes <= maxBytes);
+      };
+      img.onerror = () => { clearTimeout(timer); resolve(true); };
+      img.src = url;
+    });
+  },
+  copyToClipboard(text, label = 'Copied!') {
     navigator.clipboard?.writeText(text).then(() => this.toast(label)).catch(() => this.toast('Copy failed'));
   },
   updateCharCount(el, countEl) {
@@ -1921,15 +1979,29 @@ class Cache {
   constructor() {
     this._db    = null;
     this._ready = new Promise((res, rej) => {
-      const req = indexedDB.open('DeFiX', 1);
+      const req = indexedDB.open('DeFiX', 2);
       req.onupgradeneeded = e => {
-        const db = e.target.result;
+        const db  = e.target.result;
+        const old = e.oldVersion; /* 0 = fresh install, 1 = prior version */
+        /* v1 stores -- create if missing (handles fresh installs) */
         if (!db.objectStoreNames.contains('posts'))
           db.createObjectStore('posts', { keyPath: 'txHash' });
         if (!db.objectStoreNames.contains('profiles'))
           db.createObjectStore('profiles', { keyPath: 'address' });
         if (!db.objectStoreNames.contains('channels'))
           db.createObjectStore('channels', { keyPath: 'address' });
+        /* v2: muted addresses store (persistent across sessions) */
+        if (old < 2 && !db.objectStoreNames.contains('muted'))
+          db.createObjectStore('muted', { keyPath: 'address' });
+        /* v2: migrations log (self-documenting; future versions can query it) */
+        if (!db.objectStoreNames.contains('migrations')) {
+          const ms = db.createObjectStore('migrations', { keyPath: 'version' });
+          /* Record v1→v2 migration */
+          ms.transaction.oncomplete = () => {
+            const tx = db.transaction('migrations', 'readwrite');
+            tx.objectStore('migrations').put({ version: 2, ts: Date.now(), note: 'Added muted store' });
+          };
+        }
       };
       req.onsuccess = () => { this._db = req.result; res(); };
       req.onerror   = () => rej(req.error);
@@ -2037,6 +2109,7 @@ class DeFiX {
       likes:      new Set(),   /* txHashes this user has liked */
       bookmarks:  new Set(),   /* txHashes this user has bookmarked */
       following:  new Set(),   /* addresses this user follows */
+      muted:      new Set(JSON.parse(localStorage.getItem(MUTE_KEY)||'[]')),
       /* channel history */
       channelHistory: [],      /* [{address, label, lastActivity, preview, postCount}] */
       /* settings */
@@ -2114,6 +2187,9 @@ class DeFiX {
   wireListeners() {
     const g = this.g.bind(this);
 
+    g('logo-wrap').onclick     = () => this.goHome();
+    const sbWave = g('sb-wave-row');
+    if (sbWave) sbWave.onclick = () => this.goWave();
     g('connect-btn').onclick   = () => this.toggleWallet();
     g('nav-post-btn').onclick  = () => this.openComposeModal();
     g('mobile-fab').onclick    = () => this.openComposeModal();
@@ -2155,11 +2231,12 @@ class DeFiX {
     document.querySelectorAll('[data-mn]').forEach(b => {
       b.onclick = () => {
         const t = b.dataset.mn;
-        if (t === 'home')     this.goHome();
-        if (t === 'explore')  this.goExplore();
-        if (t === 'notifs')   this.goNotifications();
-        if (t === 'channels') this.goChannels();
-        if (t === 'profile')  this.openProfileModal();
+        if (t === 'home')      this.goHome();
+        if (t === 'explore')   this.goExplore();
+        if (t === 'notifs')    this.goNotifications();
+        if (t === 'channels')  this.goChannels();
+        if (t === 'mychannel') this.goSelf();
+        if (t === 'profile')   this.openProfileModal();
       };
     });
 
@@ -2384,7 +2461,7 @@ class DeFiX {
       }
     });
 
-    ['compose-modal','profile-modal','reply-modal','repost-modal','media-modal'].forEach(id => {
+    ['compose-modal','profile-modal','reply-modal','repost-modal','media-modal','share-modal'].forEach(id => {
       g(id).addEventListener('click', e => { if (e.target === g(id)) this.closeModal(id); });
     });
 
@@ -2420,6 +2497,7 @@ class DeFiX {
     };
     g('fetch-nft-btn').onclick = () => this.fetchNFTImage();
 
+    g('close-share-modal').onclick = () => this.closeModal('share-modal');
     g('close-reply').onclick      = () => this.closeModal('reply-modal');
     g('cancel-reply-btn').onclick = () => this.closeModal('reply-modal');
     g('post-reply-btn').onclick   = () => this.postReply();
@@ -2494,7 +2572,10 @@ class DeFiX {
       this.toggleBookmark(post, item);
     } else if (action === 'share') {
       e.stopPropagation();
-      utils.copyToClipboard(`https://otter.pulsechain.com/tx/${post.txHash}`, 'Link copied!');
+      this.openShareCard(post);
+    } else if (action === 'mute') {
+      e.stopPropagation();
+      this.muteAddress(post.reporter);
     } else if (!action && !inModal && !e.target.closest('a') && !e.target.closest('button')) {
       this.openThread(post);
     }
@@ -2511,15 +2592,77 @@ class DeFiX {
         this.g('tab-following').classList.remove('active');
         return;
       }
-      /* Filter current feed to only posts from followed addresses */
       this.state.searchTerm = '';
       this._followingFilter = true;
+      /* Show what we have immediately, then fetch fresh posts from followed
+         addresses in parallel (up to 5 concurrent). */
       this.renderFeed();
+      this._fetchFollowingFeed();
     } else {
       this._followingFilter = false;
       this.state.searchTerm = '';
       this.g('search-input').value = '';
       this.renderFeed();
+    }
+  }
+
+  async _fetchFollowingFeed() {
+    const addrs = [...this.state.following].slice(0, 20); /* cap at 20 to avoid flooding */
+    if (!addrs.length) return;
+    const known = new Set(this.state.posts.map(p => p.txHash));
+    let newPosts = [];
+    /* Fetch page 1 from each followed address -- 5 at a time */
+    const BATCH = 5;
+    for (let i = 0; i < addrs.length; i += BATCH) {
+      const batch = addrs.slice(i, i + BATCH);
+      const results = await Promise.allSettled(
+        batch.map(addr => this.apiFetch(addr, 1))
+      );
+      results.forEach((res, j) => {
+        if (res.status !== 'fulfilled') return;
+        const addr = batch[j];
+        res.value.forEach(tx => {
+          const hash = tx.hash?.toLowerCase();
+          if (!hash || known.has(hash)) return;
+          if (!tx.input || tx.input === '0x') return;
+          try {
+            const text = ethers.utils.toUtf8String(tx.input).trim();
+            if (text.startsWith(PROFILE_PREFIX)) return;
+            const isReaction = text.startsWith(LIKE_PREFIX) ||
+              text.startsWith(BOOKMARK_PREFIX) || text.startsWith(FOLLOW_PREFIX);
+            if (isReaction) return;
+            const m = text.match(/^REPLY_TO:(0x[a-f0-9]{64})\n\n/i);
+            const display = m ? text.slice(m[0].length).trim() : text;
+            if (!display) return;
+            known.add(hash);
+            newPosts.push({
+              content: text, display,
+              parentTx: m ? m[1].toLowerCase() : null,
+              repostOf: null, reactionTarget: null,
+              direction: null, postType: 'post',
+              reporter: tx.from?.toLowerCase(),
+              to: tx.to?.toLowerCase() ?? null,
+              timestamp: tx.timeStamp
+                ? new Date(Number(tx.timeStamp)*1000).toISOString()
+                : new Date().toISOString(),
+              txHash: hash,
+              channel: tx.to?.toLowerCase(),
+              mode: 'main',
+              blockNumber: tx.blockNumber ? Number(tx.blockNumber) : null,
+            });
+          } catch { /* skip */ }
+        });
+      });
+    }
+    if (!newPosts.length) return;
+    /* Merge with existing posts and re-render */
+    this.state.posts = [...this.state.posts, ...newPosts]
+      .sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
+    await this.cache.savePosts(newPosts);
+    /* Only update display if still on following tab */
+    if (this._followingFilter) {
+      this.renderFeed();
+      utils.toast(`Loaded ${newPosts.length} new post${newPosts.length>1?'s':''} from follows`);
     }
   }
 
@@ -2757,18 +2900,111 @@ class DeFiX {
   /* ── New navigation methods ─────────────────────────────────────────── */
   goExplore() {
     this.setNav('nav-explore','explore');
-    this.g('feed-title').textContent     = '🔭 Explore';
-    this.g('compose-area').style.display = 'none';
+    this.state.mode = 'explore';
+    this.g('feed-title').textContent       = '🔭 Explore';
+    this.g('compose-area').style.display   = 'none';
     this.g('channel-banner').style.display = 'none';
-    this.g('feed-tabs').style.display    = 'none';
+    this.g('feed-tabs').style.display      = 'none';
+    this.g('loading-more').style.display   = 'none';
+    this._renderExplorePage();
+  }
+
+  _renderExplorePage() {
+    const posts = this.state.posts;
+    /* ── Trending hashtags ── */
+    const tagCounts = new Map();
+    posts.slice(0, 500).forEach(p => {
+      if (!p.display) return;
+      (p.display.match(/#[A-Za-z0-9_]{2,30}/g) || []).forEach(t => {
+        const k = t.toLowerCase();
+        tagCounts.set(k, (tagCounts.get(k)||0) + 1);
+      });
+    });
+    const topTags = [...tagCounts.entries()]
+      .filter(([,n]) => n >= 2)
+      .sort((a,b) => b[1]-a[1])
+      .slice(0, 10);
+
+    /* ── Most active addresses (by post count in feed) ── */
+    const addrCounts = new Map();
+    posts.filter(p => !p.postType || p.postType === 'post').forEach(p => {
+      const r = p.reporter?.toLowerCase();
+      if (r) addrCounts.set(r, (addrCounts.get(r)||0) + 1);
+    });
+    const topAddrs = [...addrCounts.entries()]
+      .sort((a,b) => b[1]-a[1])
+      .slice(0, 8);
+
+    /* ── Channel history ── */
+    const recentChannels = (this.state.channelHistory || []).slice(0, 6);
+
+    const tagHTML = topTags.length
+      ? topTags.map(([tag, count], i) => {
+          const display = tag.replace(/^#/, '');
+          return `<div class="explore-row" onclick="pulse.filterByTag('${utils.safe(display)}')">
+            <div class="explore-rank">${i+1}</div>
+            <div class="explore-content">
+              <div class="explore-label">Trending on PulseChain</div>
+              <div class="explore-name">#${utils.safe(display)}</div>
+              <div class="explore-meta">${count} post${count>1?'s':''}</div>
+            </div>
+            <div class="explore-arrow">→</div>
+          </div>`;
+        }).join('')
+      : '<div style="padding:16px;color:var(--muted)">Load the feed first to see trending hashtags.</div>';
+
+    const addrHTML = topAddrs.length
+      ? topAddrs.map(([addr, count]) => {
+          const prof = this.state.profCache[addr];
+          const name = prof?.username ? utils.safe(prof.username) : this.trunc(addr);
+          const pic  = utils.safe(prof?.picUrl || 'image1.jpeg');
+          return `<div class="explore-row" onclick="pulse.goProfilePage('${utils.safe(addr)}', ${addr===this.state.signerAddr})">
+            <img src="${pic}" class="explore-avatar" onerror="this.src='image1.jpeg'">
+            <div class="explore-content">
+              <div class="explore-name">${name}</div>
+              <div class="explore-meta">${count} post${count>1?'s':''} in feed</div>
+            </div>
+            <div class="explore-arrow">→</div>
+          </div>`;
+        }).join('')
+      : '<div style="padding:16px;color:var(--muted)">Load the feed first to see active posters.</div>';
+
+    const chHTML = recentChannels.length
+      ? recentChannels.map(ch => {
+          const prof = this.state.profCache[ch.address];
+          const name = prof?.username || ch.label || this.trunc(ch.address);
+          const pic  = utils.safe(prof?.picUrl || ch.picUrl || 'image1.jpeg');
+          return `<div class="explore-row" onclick="pulse.g('custom-input').value='${utils.safe(ch.address)}';pulse.goCustom()">
+            <img src="${pic}" class="explore-avatar" onerror="this.src='image1.jpeg'">
+            <div class="explore-content">
+              <div class="explore-name">${utils.safe(name)}</div>
+              <div class="explore-meta">${this.trunc(ch.address)}</div>
+            </div>
+            <div class="explore-arrow">→</div>
+          </div>`;
+        }).join('')
+      : '<div style="padding:16px;color:var(--muted)">Visit some channels to see them here.</div>';
+
     this.g('feed').innerHTML = `
-      <div class="placeholder-view">
-        <span class="ph-icon">🔭</span>
-        <h2>Explore is coming</h2>
-        <p>Trending hashtags, top channels, and active addresses on PulseChain will appear here.</p>
-        <span class="ph-soon">Coming soon</span>
+      <div class="explore-page">
+        <div class="explore-section">
+          <div class="explore-section-title">📈 Trending</div>
+          ${tagHTML}
+        </div>
+        <div class="explore-section">
+          <div class="explore-section-title">🏆 Most Active</div>
+          ${addrHTML}
+        </div>
+        ${recentChannels.length ? `<div class="explore-section">
+          <div class="explore-section-title">📡 Recent Channels</div>
+          ${chHTML}
+        </div>` : ''}
+        <div style="padding:16px;text-align:center">
+          <button class="settings-btn" onclick="pulse.goHome();setTimeout(()=>pulse._renderExplorePage(),3000)">
+            ↺ Refresh from feed
+          </button>
+        </div>
       </div>`;
-    this.g('loading-more').style.display = 'none';
   }
 
   goBookmarks() {
@@ -3202,10 +3438,21 @@ class DeFiX {
   }
 
   renderBanner(profile, address) {
-    this.g('cb-avatar').src         = profile?.picUrl || 'image1.jpeg';
-    this.g('cb-name').textContent   = profile?.username || this.trunc(address);
-    this.g('cb-bio').textContent    = profile?.bio  || '';
+    this.g('cb-avatar').src          = profile?.picUrl || 'image1.jpeg';
+    this.g('cb-name').textContent    = profile?.username || this.trunc(address);
+    this.g('cb-bio').textContent     = profile?.bio  || '';
     this.g('cb-address').textContent = address || '';
+    /* Show profile cover image in the banner if available */
+    const coverEl = document.querySelector('#channel-banner .cb-cover');
+    if (coverEl) {
+      if (profile?.coverUrl) {
+        coverEl.style.background = `url('${profile.coverUrl.replace(/'/g,"\\'")}') center/cover no-repeat`;
+      } else {
+        /* Reset to default gradient if no cover */
+        coverEl.style.background = '';
+        coverEl.classList.remove('has-custom-cover');
+      }
+    }
   }
 
   async checkNotifBadge() {
@@ -3302,7 +3549,9 @@ class DeFiX {
     this.g('connect-btn').style.display  = 'none';
     this.g('ap-addr').textContent        = this.trunc(addr);
     this.g('ch-self').style.display      = 'block';
-    this.g('nav-mychannel').style.display = '';  /* show My Channel nav btn */
+    this.g('nav-mychannel').style.display = '';       /* desktop My Channel btn */
+    const mnMy = document.getElementById('mn-mychannel');
+    if (mnMy) mnMy.style.display = '';               /* mobile My Channel btn */
     const cached = await this.cache.getProfile(addr);
     if (cached) this.applyProfile(cached);
     /* Load profile + reactions in parallel */
@@ -3366,7 +3615,9 @@ class DeFiX {
     this.g('connect-btn').style.display  = 'block';
     this.g('compose-avatar').src         = 'image1.jpeg';
     this.g('ch-self').style.display      = 'none';
-    this.g('nav-mychannel').style.display = 'none';
+    this.g('nav-mychannel').style.display = 'none';    /* desktop */
+    const mnMyHide = document.getElementById('mn-mychannel');
+    if (mnMyHide) mnMyHide.style.display = 'none';   /* mobile */
     this.g('ap-avatar').src          = 'image1.jpeg';
     this.g('ap-name').textContent    = 'My Wallet';
     this.g('ap-addr').textContent    = '';
@@ -4020,10 +4271,16 @@ class DeFiX {
       utils.toast('Cover photo must be an https:// URL'); return;
     }
     if (picUrl) {
-      const ok = await new Promise(r => {
+      /* Check image loads AND is not excessively large (> 8MB of pixels) */
+      const loadOk = await new Promise(r => {
         const img = new Image(); img.onload = ()=>r(true); img.onerror = ()=>r(false); img.src = picUrl;
       });
-      if (!ok) { picUrl = ''; utils.toast('Profile image could not load — using default'); }
+      if (!loadOk) {
+        picUrl = ''; utils.toast('Profile image could not load -- using default');
+      } else {
+        const sizeOk = await utils.checkImageSize(picUrl);
+        if (!sizeOk) { picUrl = ''; utils.toast('Profile image is too large (> 8 MB) -- using default'); }
+      }
     }
     picUrl = picUrl || 'image1.jpeg';
 
@@ -4414,7 +4671,11 @@ class DeFiX {
         repostMap.set(p.repostOf, (repostMap.get(p.repostOf) || 0) + 1);
     });
 
-    /* Only render actual posts — filter out reactions/follows */
+    /* Filter muted addresses */
+    if (this.state.muted.size > 0) {
+      list = list.filter(p => !this.state.muted.has(p.reporter?.toLowerCase()));
+    }
+    /* Only render actual posts -- filter out reactions/follows */
     const displayList = list.filter(p =>
       !p.postType || p.postType === 'post' || p.postType === 'repost'
     );
@@ -4797,6 +5058,84 @@ class DeFiX {
     this.state.threadPost = post;
     this._renderThreadPage(post);
     this.fetchThreadReplies(post);
+    /* If this post is a reply, fetch and render its ancestors above it */
+    if (post.parentTx) this._fetchThreadAncestors(post);
+  }
+
+  /* Walk the parentTx chain upward from the focused post, showing up to
+     5 ancestors above it. Each hop requires an OtterScan API call.
+     Appends ancestor posts ABOVE the thread-orig-item. */
+  async _fetchThreadAncestors(post) {
+    const MAX_HOPS = 5;
+    let current = post;
+    const ancestors = [];
+    for (let hop = 0; hop < MAX_HOPS && current.parentTx; hop++) {
+      /* Check in-memory postMap first */
+      let parent = this._postMap.get(current.parentTx);
+      if (!parent) {
+        /* Try to find it via OtterScan tx lookup */
+        try {
+          const raw = await this.apiFetch(post.to || this.state.channel, 1);
+          parent = null;
+          for (const tx of raw) {
+            if (tx.hash?.toLowerCase() === current.parentTx) {
+              try {
+                const text = ethers.utils.toUtf8String(tx.input).trim();
+                if (!text || text.startsWith(PROFILE_PREFIX)) continue;
+                const m = text.match(/^REPLY_TO:(0x[a-f0-9]{64})\n\n/i);
+                parent = {
+                  content: text,
+                  display: m ? text.slice(m[0].length).trim() : text,
+                  parentTx: m ? m[1].toLowerCase() : null,
+                  reporter: tx.from?.toLowerCase(),
+                  to: tx.to?.toLowerCase(),
+                  timestamp: tx.timeStamp
+                    ? new Date(Number(tx.timeStamp)*1000).toISOString()
+                    : new Date().toISOString(),
+                  txHash: tx.hash.toLowerCase(),
+                  mode: 'thread', channel: tx.to?.toLowerCase(),
+                  postType: 'post', direction: null,
+                  repostOf: null, reactionTarget: null, blockNumber: tx.blockNumber ? Number(tx.blockNumber) : null,
+                };
+                this._postMap.set(parent.txHash, parent);
+              } catch { /* skip */ }
+              break;
+            }
+          }
+        } catch { break; }
+      }
+      if (!parent) break;
+      ancestors.unshift(parent);
+      if (parent.reporter && parent.reporter !== this.state.signerAddr)
+        this.fetchOtherProfile(parent.reporter);
+      current = parent;
+    }
+    if (!ancestors.length) return;
+    /* Render ancestors above the focal post */
+    const orig = this.g('feed')?.querySelector('.thread-orig-item');
+    if (!orig) return;
+    const frag = document.createDocumentFragment();
+    ancestors.forEach((anc, i) => {
+      const el = document.createElement('div');
+      el.className = 'post-item thread-ancestor-item';
+      el.dataset.txhash = anc.txHash;
+      el.style.cssText = 'opacity:0.85;border-bottom:1px solid var(--border);position:relative;';
+      el.innerHTML = this.postHTML(anc, true, null, null);
+      /* Connecting line between ancestors */
+      if (i < ancestors.length - 1) {
+        el.style.paddingBottom = '0';
+        el.insertAdjacentHTML('beforeend',
+          '<div style="width:2px;height:16px;background:var(--border);margin:0 auto 0 30px;"></div>');
+      }
+      el.addEventListener('click', e => this.onFeedClick(e, true));
+      frag.appendChild(el);
+    });
+    /* Insert a label */
+    const label = document.createElement('div');
+    label.style.cssText = 'padding:8px 16px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--border);';
+    label.textContent = `↑ ${ancestors.length} ancestor post${ancestors.length > 1 ? 's' : ''}`;
+    orig.parentNode.insertBefore(label, orig);
+    orig.parentNode.insertBefore(frag, label);
   }
 
   _threadBack() {
@@ -5599,6 +5938,104 @@ class DeFiX {
     }
     this._popupHandlersAttached = false;
   }
+
+  /* ── Share card ─────────────────────────────────────────────────── */
+  openShareCard(post) {
+    const canvas  = this.g('share-canvas');
+    const modal   = this.g('share-modal');
+    const copyBtn = this.g('share-copy-img-btn');
+    const linkBtn = this.g('share-copy-link-btn');
+    const nativeBtn = this.g('share-native-btn');
+    if (!canvas || !modal) {
+      utils.copyToClipboard(`https://otter.pulsechain.com/tx/${post.txHash}`, 'Link copied!');
+      return;
+    }
+    const dpr = window.devicePixelRatio || 1;
+    const W = 480, H = 280;
+    canvas.width  = W * dpr; canvas.height = H * dpr;
+    canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.fillStyle = '#16181c'; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = '#2f3336'; ctx.lineWidth = 1;
+    ctx.strokeRect(0.5, 0.5, W-1, H-1);
+    const c = this.state.profCache[post.reporter];
+    const displayName = c?.username || this.trunc(post.reporter);
+    const text = (post.display || '').slice(0, 280);
+    const ts = this.relTime(post.timestamp);
+    const brand = '#7c4dff';
+    ctx.fillStyle = brand; ctx.fillRect(0, 0, 4, H);
+    ctx.fillStyle = '#e7e9ea';
+    ctx.font = 'bold 15px system-ui, sans-serif';
+    ctx.fillText(displayName, 24, 36);
+    ctx.fillStyle = '#71767b';
+    ctx.font = '13px system-ui, sans-serif';
+    ctx.fillText('@' + this.trunc(post.reporter), 24, 54);
+    ctx.fillStyle = '#2f3336'; ctx.fillRect(16, 64, W-32, 1);
+    ctx.fillStyle = '#e7e9ea';
+    ctx.font = '14px system-ui, sans-serif';
+    const words = text.split(' ');
+    let line = '', y = 88;
+    for (const word of words) {
+      const test = line + (line ? ' ' : '') + word;
+      if (ctx.measureText(test).width > W-48 && line) {
+        ctx.fillText(line, 24, y); line = word; y += 22;
+        if (y > H-60) { ctx.fillText(line+'…', 24, y); line=''; break; }
+      } else line = test;
+    }
+    if (line) ctx.fillText(line, 24, y);
+    ctx.fillStyle = '#1d1f23'; ctx.fillRect(0, H-48, W, 48);
+    ctx.fillStyle = '#71767b'; ctx.font = '12px system-ui, sans-serif';
+    ctx.fillText(ts + '  ·  PulseChain', 24, H-26);
+    ctx.fillStyle = brand; ctx.font = 'bold 12px system-ui, sans-serif';
+    ctx.fillText('Say It DeFi', W-100, H-26);
+    modal.classList.add('open');
+    copyBtn.onclick = async () => {
+      try {
+        canvas.toBlob(async blob => {
+          if (!blob) { utils.toast('Canvas error'); return; }
+          await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+          utils.toast('Image copied ✓');
+        }, 'image/png');
+      } catch { utils.toast('Copy not supported — try Share'); }
+    };
+    if (navigator.share && navigator.canShare) {
+      nativeBtn.style.display = '';
+      nativeBtn.onclick = async () => {
+        try {
+          const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+          const file = new File([blob], 'post.png', { type:'image/png' });
+          if (navigator.canShare({ files:[file] })) {
+            await navigator.share({ files:[file], title:'Post on Say It DeFi',
+              text: text.slice(0,100), url:`https://otter.pulsechain.com/tx/${post.txHash}` });
+          } else {
+            await navigator.share({ title:'Post on Say It DeFi',
+              url:`https://otter.pulsechain.com/tx/${post.txHash}` });
+          }
+        } catch(err) { if(err.name!=='AbortError') utils.toast('Share failed: '+err.message); }
+      };
+    }
+    linkBtn.onclick = () => utils.copyToClipboard(
+      `https://otter.pulsechain.com/tx/${post.txHash}`, 'Link copied!');
+  }
+
+  /* ── Mute / unmute ──────────────────────────────────────────────── */
+  muteAddress(addr) {
+    addr = addr.toLowerCase();
+    if (this.state.muted.has(addr)) { utils.toast('Already muted'); return; }
+    this.state.muted.add(addr);
+    localStorage.setItem(MUTE_KEY, JSON.stringify([...this.state.muted]));
+    utils.toast(`Muted ${this.trunc(addr)} — refresh to apply`);
+    this.renderFeed();
+  }
+  unmuteAddress(addr) {
+    addr = addr.toLowerCase();
+    this.state.muted.delete(addr);
+    localStorage.setItem(MUTE_KEY, JSON.stringify([...this.state.muted]));
+    utils.toast(`Unmuted ${this.trunc(addr)}`);
+    this.renderFeed();
+  }
+  isMuted(addr) { return this.state.muted.has(addr?.toLowerCase()); }
 
   trunc = a => (a && a.length > 10) ? `${a.slice(0,6)}...${a.slice(-4)}` : (a || '');
 
