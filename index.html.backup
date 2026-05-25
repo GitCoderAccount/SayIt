@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>DeFiX</title>
+<title>Say It DeFi</title>
 <link rel="icon" type="image/jpeg" href="image1.jpeg">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"></script>
 <style>
@@ -38,7 +38,7 @@ a { color:inherit; text-decoration:none; }
 :focus-visible { outline:2px solid var(--primary); outline-offset:2px; }
 
 /* ── Layout ─────────────────────────────────────────────────────────────── */
-#app { display:flex; min-height:100vh; max-width:1225px; margin:0 auto; }
+#app { display:flex; min-height:100vh; max-width:1225px; margin:0 auto; align-items:flex-start; }
 
 /* ── Left sidebar ───────────────────────────────────────────────────────── */
 #sidebar-left {
@@ -47,7 +47,9 @@ a { color:inherit; text-decoration:none; }
   display:flex; flex-direction:column;
   background:var(--bg-dark);
   border-right:1px solid var(--border);
-  padding:0; overflow-y:auto;
+  padding:0;
+  /* Twitter left sidebar never scrolls independently */
+  overflow:hidden;
 }
 .logo-wrap {
   display:flex; align-items:center; gap:10px;
@@ -78,13 +80,13 @@ nav { flex:1; padding:4px 0; }
 }
 .nav-btn:hover  { background:rgba(255,255,255,0.06); }
 .nav-btn.active { font-weight:800; color:var(--text); }
-.nav-btn.active .nav-icon { filter:drop-shadow(0 0 2px var(--primary-lt)); }
-.nav-icon  {
+/* X/Twitter: active nav icon has NO extra styling — just bold label.
+   Icon color stays white. No drop-shadow, no glow. */
+.nav-icon {
   width:28px; height:28px; flex-shrink:0;
   display:flex; align-items:center; justify-content:center;
   color:var(--text);
 }
-.nav-btn.active .nav-icon { color:var(--text); }
 .mn-btn .mn-icon {
   width:26px; height:26px; line-height:1;
   display:flex; align-items:center; justify-content:center;
@@ -108,9 +110,14 @@ nav { flex:1; padding:4px 0; }
 }
 #nav-post-btn:hover { background:var(--primary-lt); box-shadow:var(--neon); }
 
+/* Wrapper pinned to the bottom of the sidebar */
+.sidebar-footer {
+  padding:0 0 12px;  /* 12px from viewport bottom — matches Twitter */
+  flex-shrink:0;
+}
 #account-pill {
   display:flex; align-items:center; gap:10px;
-  padding:10px 16px; margin:8px 0;
+  padding:10px 12px; margin:0;
   border-radius:9999px; cursor:pointer;
   transition:background 0.18s;
 }
@@ -148,25 +155,56 @@ nav { flex:1; padding:4px 0; }
   display:flex; flex-direction:column;
 }
 
-#feed-header {
+/* #feed-header removed — titles are now rendered inline per-page */
+/* Shared sticky page header injected by _makePageHeader() */
+.page-header {
   position:sticky; top:0; z-index:20;
   background:rgba(0,0,0,0.85); backdrop-filter:blur(12px) saturate(180%);
   border-bottom:1px solid var(--border);
-  padding:0 16px; min-height:53px;
+  padding:4px 16px;
+  min-height:53px;
   display:flex; align-items:center;
-  justify-content:space-between; gap:12px;
+  gap:16px;
 }
-#feed-title { font-size:20px; font-weight:700; }
-#refresh-btn {
-  background:transparent; border:none; color:var(--muted);
-  border-radius:9999px; padding:8px; font-size:18px; cursor:pointer;
-  width:36px; height:36px; flex-shrink:0;
+.page-header-title {
+  font-size:20px; font-weight:800; line-height:1.2;
+  color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.page-header-subtitle {
+  font-size:13px; color:var(--muted); line-height:1.2; margin-top:1px;
+}
+.page-header-back {
+  width:34px; height:34px; border-radius:50%;
+  background:transparent; border:none; cursor:pointer;
   display:flex; align-items:center; justify-content:center;
-  transition:background 0.18s, color 0.18s;
+  color:var(--text); flex-shrink:0; transition:background 0.15s;
 }
-#refresh-btn:hover { background:rgba(255,255,255,0.06); color:var(--text); }
+.page-header-back:hover { background:rgba(255,255,255,0.08); }
+.page-header-titles { flex:1; min-width:0; }
+.page-header-title {
+  font-size:20px; font-weight:800; line-height:1.2;
+  color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.page-header-subtitle {
+  font-size:13px; color:var(--muted); margin-top:0; line-height:1.2;
+}
+.page-header-action {
+  width:34px; height:34px; border-radius:50%;
+  background:transparent; border:none; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  color:var(--text); flex-shrink:0; transition:background 0.15s;
+}
+.page-header-action:hover { background:rgba(255,255,255,0.08); }
+/* #refresh-btn removed — pull-to-refresh via double-tap on active tab */
 
-#feed-tabs { display:flex; border-bottom:1px solid var(--border); }
+#feed-tabs {
+  display:flex; border-bottom:1px solid var(--border);
+  /* When header is hidden (home feed), tabs become the sticky top bar */
+  background:rgba(0,0,0,0.85); backdrop-filter:blur(12px) saturate(180%);
+}
+#feed-tabs.tabs-sticky {
+  position:sticky; top:0; z-index:20;
+}
 .feed-tab {
   flex:1; padding:15px 0; text-align:center;
   font-size:15px; font-weight:500; color:var(--muted);
@@ -176,22 +214,26 @@ nav { flex:1; padding:4px 0; }
 .feed-tab:hover { background:rgba(255,255,255,0.03); color:var(--text); }
 .feed-tab.active { font-weight:700; color:var(--text); }
 .feed-tab.active::after {
-  content:''; position:absolute; bottom:-1px; left:50%;
+  content:''; position:absolute; bottom:0; left:50%;
   transform:translateX(-50%);
   width:56px; height:4px; background:var(--primary); border-radius:9999px;
+  transition:transform 0.2s ease;
 }
 
 #new-banner {
   display:none; width:100%; padding:14px 16px;
-  background:transparent; border:none; border-bottom:1px solid var(--border);
-  color:var(--primary-lt); font-size:14px; font-weight:600;
-  cursor:pointer; text-align:left; transition:background 0.15s;
+  background:transparent; border:none;
+  border-bottom:1px solid var(--border);
+  /* X-style: centered text, primary color, full-width tap target */
+  color:var(--primary-lt); font-size:15px; font-weight:500;
+  cursor:pointer; text-align:center;
+  transition:background 0.15s;
 }
-#new-banner:hover { background:rgba(255,255,255,0.03); }
+#new-banner:hover { background:rgba(29,155,240,0.05); }
 
 #channel-banner { display:none; border-bottom:1px solid var(--border); }
 .cb-cover {
-  height:130px;
+  height:150px;  /* Channel banner cover */
   background:linear-gradient(135deg,rgba(124,77,255,0.45),rgba(179,136,255,0.2),rgba(0,229,160,0.1));
 }
 .cb-content {
@@ -222,6 +264,8 @@ nav { flex:1; padding:4px 0; }
 #compose-area {
   display:flex; gap:12px; padding:12px 16px 8px;
   border-bottom:1px solid var(--border);
+  background:var(--bg-dark);
+  position:relative;
 }
 .compose-avatar {
   width:40px; height:40px; border-radius:50%;
@@ -307,7 +351,10 @@ nav { flex:1; padding:4px 0; }
 .post-item {
   padding:12px 16px; border-bottom:1px solid var(--border);
   cursor:pointer; transition:background 0.15s;
+  position:relative;
 }
+/* X: no bottom border on the very last post */
+.post-item:last-child { border-bottom:0; }
 .post-item:hover { background:rgba(255,255,255,0.03); }
 .post-hdr { display:flex; gap:12px; }
 .post-avatar {
@@ -319,7 +366,7 @@ nav { flex:1; padding:4px 0; }
 
 .post-meta-row {
   display:flex; align-items:baseline; flex-wrap:nowrap;
-  gap:0; line-height:1.4; margin-bottom:2px; overflow:hidden;
+  gap:0; line-height:1.4; margin-bottom:0; overflow:hidden;
 }
 .post-name   { font-weight:700; font-size:15px; flex-shrink:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:160px; }
 .post-name:hover { text-decoration:underline; cursor:pointer; }
@@ -344,7 +391,7 @@ nav { flex:1; padding:4px 0; }
 
 .post-body {
   font-size:15px; line-height:1.6; word-break:break-word;
-  color:var(--text); margin-top:4px; margin-bottom:10px;
+  color:var(--text); margin-top:2px; margin-bottom:8px;
 }
 .post-link    { color:#1d9bf0; }
 .post-link:hover    { text-decoration:underline; }
@@ -384,8 +431,19 @@ nav { flex:1; padding:4px 0; }
 /* Post actions */
 .post-actions {
   display:flex; align-items:center;
-  justify-content:space-between;
-  margin-top:4px; max-width:420px;
+  /* Full width of the post column — so Bookmark+Share reach the right edge */
+  width:100%; margin-top:4px;
+}
+/* Left group: Reply, Repost, Like, Views — spread evenly */
+.post-actions-left {
+  display:flex; align-items:center;
+  flex:1; justify-content:space-between;
+  max-width:360px; min-width:0;
+}
+/* Right group: Bookmark + Share — pinned to the right edge like Twitter */
+.post-actions-right {
+  display:flex; align-items:center; gap:0;
+  margin-left:auto;  /* pushes the group to the far right */
 }
 .act-btn {
   display:flex; align-items:center; gap:2px;
@@ -409,7 +467,138 @@ nav { flex:1; padding:4px 0; }
 .act-like.liked .act-icon   { background:rgba(249,24,128,0.08); }
 .act-bookmark:hover             { color:#1d9bf0; }
 .act-bookmark:hover .act-icon   { background:rgba(29,155,240,0.1); }
+/* Verified-style checkmark next to on-chain-profile names */
+.verified-icon { display:inline-flex; align-items:center; margin-left:3px; line-height:0; }
+.verified-icon svg { transition:transform 0.15s; }
+.verified-icon:hover svg { transform:scale(1.1); }
+
+/* ─ Profile hover/click popup card ─────────────────────────────────────
+   Appears on click of .post-name or .post-avatar in feed posts.
+   Click anywhere on the card (except the Follow button) opens full profile. */
+.profile-popup {
+  position:fixed; z-index:9999;
+  width:320px; max-width:calc(100vw - 24px);
+  background:var(--bg-card); border:1px solid var(--border);
+  border-radius:16px; padding:16px;
+  box-shadow:0 12px 32px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3);
+  display:none; opacity:0; transform:translateY(-4px);
+  transition:opacity 0.15s, transform 0.15s;
+  cursor:pointer;
+  font-size:14px;
+  padding-top:20px;
+  margin-top:-12px;
+  /* CRITICAL: never intercept clicks when invisible (during fade-out).
+     Without this, the 150ms opacity fade leaves an invisible 320px
+     element at z-index:9999 that swallows all clicks — including the
+     left sidebar nav buttons. */
+  pointer-events:none;
+}
+.profile-popup.open { display:block; }
+/* Only capture events when actually visible to the user */
+.profile-popup.visible { opacity:1; transform:translateY(0); pointer-events:auto; }
+/* Touch devices: suppress hover-open so click-open is the only trigger */
+@media (hover: none) {
+  .post-name, .post-avatar { cursor:pointer; }
+}
+.pp-header { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:10px; }
+.pp-avatar { width:60px; height:60px; border-radius:50%; object-fit:cover; flex-shrink:0; background:#222; }
+.pp-follow-btn {
+  background:var(--text); color:var(--bg);
+  border:0; border-radius:9999px;
+  padding:7px 18px; font-weight:700; font-size:13px;
+  cursor:pointer; flex-shrink:0;
+}
+.pp-follow-btn:hover { background:rgba(231,233,234,0.85); }
+.pp-follow-btn.following {
+  background:transparent; color:var(--text);
+  border:1px solid var(--border);
+}
+.pp-follow-btn.following:hover {
+  background:rgba(244,33,46,0.1); color:#f4212e;
+  border-color:#f4212e;
+}
+.pp-follow-btn.following:hover::before {
+  content:"Unfollow";
+}
+.pp-follow-btn.following:hover .pp-following-label { display:none; }
+.pp-name { font-weight:800; font-size:15px; color:var(--text); display:flex; align-items:center; gap:4px; }
+.pp-handle { color:var(--muted); font-size:13px; margin-top:1px; }
+.pp-bio { color:var(--text); font-size:14px; margin-top:10px; line-height:1.4; max-height:80px; overflow:hidden; }
+.pp-stats { display:flex; gap:14px; margin-top:10px; font-size:13px; color:var(--muted); }
+.pp-stats strong { color:var(--text); }
+.pp-view-hint { margin-top:10px; font-size:12px; color:var(--primary-lt); opacity:0.7; }
+.profile-popup:hover .pp-view-hint { opacity:1; }
+/* Who-to-follow row hover */
+#sb-w2f-list .sb-card-row { display:flex; align-items:center; gap:8px; padding:10px 14px; }
+#sb-w2f-list .w2f-follow-btn:hover { background:rgba(231,233,234,0.85); }
 .act-bookmark.bookmarked        { color:#1d9bf0; }
+.post-menu-btn {
+  position:absolute; top:12px; right:12px;
+  background:transparent; border:none;
+  color:var(--muted); font-size:18px; cursor:pointer;
+  width:34px; height:34px; border-radius:50%;
+  display:flex; align-items:center; justify-content:center;
+  transition:background 0.15s, color 0.15s;
+  /* Desktop: hidden until hover. Mobile (no hover): always visible. */
+  opacity:0;
+}
+.post-item:hover .post-menu-btn { opacity:1; }
+@media (hover: none) {
+  /* Touch devices have no hover state — show the menu button always */
+  .post-menu-btn { opacity:0.4; }
+  .post-item:active .post-menu-btn { opacity:1; }
+}
+.post-menu-btn:hover { background:rgba(29,155,240,0.1); color:var(--primary-lt); }
+.post-menu-dropdown {
+  position:fixed; z-index:9998;
+  background:var(--bg-card); border:1px solid var(--border);
+  border-radius:12px; padding:4px 0; min-width:220px;
+  box-shadow:0 8px 24px rgba(0,0,0,0.4);
+  display:none;
+}
+.post-menu-dropdown.open { display:block; }
+/* Close post-menu-dropdown when clicking outside — handled in openPostMenu */
+.post-menu-item {
+  display:flex; align-items:center; gap:12px;
+  padding:12px 16px; cursor:pointer; font-size:15px;
+  color:var(--text); transition:background 0.12s;
+}
+.post-menu-item:hover { background:rgba(255,255,255,0.06); }
+.post-menu-item.danger { color:#f4212e; }
+.post-menu-item svg { flex-shrink:0; }
+/* J/K keyboard navigation focus ring — subtle, doesn't fight the dark theme */
+.post-item.kb-focus {
+  outline:2px solid var(--primary);
+  outline-offset:-2px;
+  border-radius:4px;
+}
+/* ── Explore page ── */
+.explore-page { padding:0; }
+.explore-section { border-bottom:8px solid var(--bg-mid); }
+.explore-section-title {
+  font-size:20px; font-weight:800; padding:16px 16px 8px;
+  color:var(--text); position:sticky; top:53px;
+  background:var(--bg); z-index:5;
+  border-bottom:1px solid var(--border);
+}
+.explore-row {
+  display:flex; align-items:center; gap:12px;
+  padding:12px 16px; cursor:pointer; transition:background 0.15s;
+  border-bottom:1px solid var(--border);
+}
+.explore-row:hover { background:rgba(255,255,255,0.04); }
+.explore-rank { font-size:16px; font-weight:700; color:var(--muted); width:24px; text-align:center; flex-shrink:0; }
+.explore-avatar { width:44px; height:44px; border-radius:50%; object-fit:cover; flex-shrink:0; background:#222; }
+.explore-content { flex:1; min-width:0; }
+.explore-label { font-size:12px; color:var(--muted); }
+.explore-name { font-size:15px; font-weight:700; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.explore-meta { font-size:13px; color:var(--muted); margin-top:1px; }
+.explore-arrow { color:var(--muted); font-size:16px; flex-shrink:0; }
+/* Views slot — read-only, no hover colour */
+.act-views { display:flex; align-items:center; gap:4px; font-size:13px;
+             color:var(--muted); cursor:default; user-select:none; }
+.act-views .act-icon { border-radius:9999px; padding:6px;
+                       display:flex; align-items:center; justify-content:center; }
 .act-share:hover            { color:#1d9bf0; }
 .act-share:hover .act-icon  { background:rgba(29,155,240,0.1); }
 .otter-link {
@@ -434,17 +623,16 @@ nav { flex:1; padding:4px 0; }
 /* ── Right sidebar ──────────────────────────────────────────────────────── */
 #sidebar-right {
   flex:0 0 350px; width:350px;
-  position:sticky; top:0; height:100vh;
+  /* NOT position:sticky — the right sidebar scrolls with the page.
+     The search bar inside it IS sticky so it stays visible on scroll. */
   background:var(--bg-dark);
-  overflow-y:auto; display:flex;
+  overflow:visible; display:flex;
   flex-direction:column; gap:12px;
   padding:12px 16px 24px;
-  scrollbar-width:thin;
-  scrollbar-color:var(--border) transparent;
+  /* No scrollbar — sidebar ends where its content ends */
+  scrollbar-width:none;
 }
-#sidebar-right::-webkit-scrollbar { width:4px; }
-#sidebar-right::-webkit-scrollbar-track { background:transparent; }
-#sidebar-right::-webkit-scrollbar-thumb { background:var(--border); border-radius:4px; }
+#sidebar-right::-webkit-scrollbar { display:none; }
 
 .sb-search {
   position:sticky; top:0; z-index:10;
@@ -466,12 +654,49 @@ nav { flex:1; padding:4px 0; }
 }
 
 .sb-card {
+  /* X/Twitter: "What's happening" cards have the same background as sidebar,
+     just a subtle border. bg-card is slightly lighter than bg-dark. */
   background:var(--bg-card); border:1px solid var(--border);
-  border-radius:16px; overflow:hidden;
+  border-radius:16px;
+  /* Flex column so title stays pinned and inner list scrolls.
+     NO overflow:hidden — that was clipping content in cards that don't
+     have a dedicated inner scroll container (Channels, Wave cards). */
+  display:flex; flex-direction:column;
+  /* Cap height so one card can't consume the entire sidebar.
+     min-content lets short cards (2-3 rows) stay compact. */
+  max-height:min(60vh, 480px);
+}
+/* The trending and W2F cards have dedicated inner scroll targets. */
+.sb-card > #sb-trending-list,
+.sb-card > #sb-w2f-list,
+.sb-card > .sb-card-scroll {
+  flex:1 1 auto; min-height:0;
+  overflow-y:auto;
+  scrollbar-width:thin;
+  scrollbar-color:var(--border) transparent;
+  border-radius:0 0 16px 16px; /* match card corners at bottom */
+}
+.sb-card > #sb-trending-list::-webkit-scrollbar,
+.sb-card > #sb-w2f-list::-webkit-scrollbar,
+.sb-card > .sb-card-scroll::-webkit-scrollbar { width:4px; }
+.sb-card > #sb-trending-list::-webkit-scrollbar-thumb,
+.sb-card > #sb-w2f-list::-webkit-scrollbar-thumb,
+.sb-card > .sb-card-scroll::-webkit-scrollbar-thumb {
+  background:var(--border); border-radius:4px;
+}
+/* Cards without a dedicated inner scroll container (Channels, Wave, etc.)
+   get overflow-y:auto directly so their content is never silently clipped. */
+.sb-card:not(:has(> #sb-trending-list)):not(:has(> #sb-w2f-list)) {
+  overflow-y:auto;
+  scrollbar-width:thin;
+  scrollbar-color:var(--border) transparent;
 }
 .sb-card-title {
-  font-size:20px; font-weight:800;
+  /* Fixed px values — sidebar is always 350px wide so vw-relative sizing
+     just varies with the overall viewport, not the sidebar. Simpler. */
+  font-size:19px; font-weight:800;
   padding:14px 16px 10px; color:var(--text);
+  flex-shrink:0;
 }
 .sb-card-row {
   display:flex; align-items:flex-start; gap:12px;
@@ -480,7 +705,8 @@ nav { flex:1; padding:4px 0; }
 .sb-card-row:hover { background:rgba(255,255,255,0.03); }
 .sb-card-row + .sb-card-row { border-top:1px solid var(--border); }
 .trend-label { font-size:12px; color:var(--muted); display:block; }
-.trend-name  { font-size:15px; font-weight:700; margin:1px 0; display:block; }
+.trend-name  { font-size:15px; font-weight:700; margin:2px 0; display:block;
+               overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .trend-count { font-size:13px; color:var(--muted); display:block; }
 .sb-show-more {
   display:block; width:100%; padding:14px 16px;
@@ -566,16 +792,17 @@ nav { flex:1; padding:4px 0; }
 .wave-desc { font-size:12px; color:var(--muted); line-height:1.5; }
 
 .sb-footer {
-  font-size:13px; color:var(--muted); line-height:2;
-  padding:8px 0 4px; margin-top:auto;
+  font-size:13px; color:var(--muted); line-height:1.6;
+  padding:16px 0 8px; margin-top:12px;
+  border-top:1px solid var(--border);
 }
 .sb-footer a {
-  color:var(--muted); margin-right:8px;
-  display:inline-block; transition:color 0.18s;
+  color:var(--muted); margin-right:12px; margin-bottom:4px;
+  display:inline-block; transition:color 0.18s; font-size:13px;
 }
-.sb-footer a:hover { color:var(--primary-lt); text-decoration:underline; }
-.sb-footer-row { display:flex; flex-wrap:wrap; gap:2px 0; margin-bottom:4px; }
-.sb-copyright { font-size:12px; color:var(--muted); opacity:0.6; margin-top:4px; }
+.sb-footer a:hover { color:var(--text); }
+.sb-footer-row { display:flex; flex-wrap:wrap; margin-bottom:8px; }
+.sb-copyright { font-size:12px; color:var(--muted); opacity:0.55; margin-top:6px; line-height:1.4; }
 
 /* DeFiX channel card */
 .defix-inner {
@@ -638,7 +865,7 @@ nav { flex:1; padding:4px 0; }
 
 /* ── Modals ─────────────────────────────────────────────────────────────── */
 .modal-bg {
-  position:fixed; inset:0; background:rgba(0,0,0,0.65);
+  position:fixed; inset:0; background:rgba(0,0,0,0.5);
   display:none; align-items:center; justify-content:center;
   z-index:500; padding:16px;
 }
@@ -992,7 +1219,7 @@ nav { flex:1; padding:4px 0; }
 /* Profile page (full in-column view) ─────────────────────────────────── */
 .prof-page { flex:1; overflow-y:auto; }
 
-/* Cover photo */
+/* Cover photo -- X uses 200px on desktop */
 .prof-cover {
   height:200px; position:relative; overflow:hidden; flex-shrink:0;
   background:linear-gradient(135deg,rgba(124,77,255,0.55),rgba(179,136,255,0.25),rgba(43,134,197,0.15));
@@ -1005,10 +1232,10 @@ nav { flex:1; padding:4px 0; }
 /* Avatar row — sits below cover, overlapping it */
 .prof-avatar-row {
   display:flex; align-items:flex-end; justify-content:space-between;
-  padding:0 16px; margin-top:-52px; margin-bottom:12px; position:relative;
+  padding:0 16px; margin-top:-40px; margin-bottom:12px; position:relative;
 }
 .prof-page-avatar {
-  width:104px; height:104px; border-radius:50%;
+  width:96px; height:96px; border-radius:50%;
   border:4px solid var(--bg-dark); object-fit:cover;
   background:var(--bg-card); flex-shrink:0;
   position:relative; z-index:2;
@@ -1115,11 +1342,11 @@ nav { flex:1; padding:4px 0; }
 
   <!-- Left sidebar -->
   <div id="sidebar-left">
-    <div class="logo-wrap" onclick="pulse.goHome()">
+    <div class="logo-wrap" id="logo-wrap">
       <div class="logo-img-wrap">
-        <img src="image1.jpeg" alt="DeFiX">
+        <img src="image1.jpeg" alt="Say It DeFi">
       </div>
-      <span class="site-name">DeFiX</span>
+      <span class="site-name">Say It DeFi</span>
     </div>
 
     <nav>
@@ -1138,6 +1365,12 @@ nav { flex:1; padding:4px 0; }
           <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M19.993 9.042C19.48 5.017 16.054 2 11.998 2s-7.482 3.017-7.995 7.042L2.991 17H7.5c.265 2.266 2.187 4 4.498 4s4.233-1.734 4.499-4h4.51l-1.014-7.958zM12 19c-1.206 0-2.234-.686-2.755-1.682L12 17l2.755.318C14.234 18.314 13.206 19 12 19zm-8.28-4l.837-6.967C4.984 5.765 8.079 4 11.998 4c3.92 0 7.015 1.765 7.441 4.033L20.28 15H3.72z"/></svg>
         </span><span class="nav-label">Notifications</span>
         <span class="notif-badge" id="notif-badge"></span>
+      </button>
+      <!-- My Channel nav button — hidden until wallet connected -->
+      <button class="nav-btn" id="nav-mychannel" style="display:none">
+        <span class="nav-icon">
+          <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M17.863 13.44c1.477 1.58 2.366 3.8 2.632 6.46l.11 1.1H3.395l.11-1.1c.266-2.66 1.155-4.88 2.632-6.46C7.627 11.85 9.648 11 12 11s4.373.85 5.863 2.44zM12 2C9.791 2 8 3.79 8 6s1.791 4 4 4 4-1.79 4-4-1.791-4-4-4z"/></svg>
+        </span><span class="nav-label">My Channel</span>
       </button>
       <button class="nav-btn" id="nav-channels">
         <span class="nav-icon">
@@ -1186,25 +1419,22 @@ nav { flex:1; padding:4px 0; }
 
     <button id="nav-post-btn">Post</button>
 
-    <div id="account-pill" style="display:none">
-      <img src="image1.jpeg" id="ap-avatar" alt="">
-      <div id="ap-info">
-        <span id="ap-name">My Wallet</span>
-        <span id="ap-addr"></span>
+    <div class="sidebar-footer">
+      <div id="account-pill" style="display:none">
+        <img src="image1.jpeg" id="ap-avatar" alt="">
+        <div id="ap-info">
+          <span id="ap-name">My Wallet</span>
+          <span id="ap-addr"></span>
+        </div>
+        <span id="ap-dots" title="Click to disconnect">•••</span>
       </div>
-      <span id="ap-dots" title="Click to disconnect">•••</span>
+      <button id="connect-btn">Connect Wallet</button>
     </div>
-    <button id="connect-btn">Connect Wallet</button>
   </div>
 
   <!-- Main feed -->
   <div id="main">
     <button id="new-banner">✦ New posts — click to load</button>
-
-    <div id="feed-header">
-      <span id="feed-title">DeFiX</span>
-      <button id="refresh-btn" title="Refresh">↺</button>
-    </div>
 
     <div id="feed-tabs">
       <button class="feed-tab active" id="tab-foryou">For You</button>
@@ -1226,7 +1456,6 @@ nav { flex:1; padding:4px 0; }
     <div id="compose-area">
       <img src="image1.jpeg" class="compose-avatar" id="compose-avatar" alt="">
       <div class="compose-body">
-        <button id="audience-btn">🌐 Everyone ▾</button>
         <textarea id="compose-text" placeholder="What's happening on Pulse?"></textarea>
         <div id="compose-toolbar">
           <div class="compose-icons">
@@ -1267,38 +1496,39 @@ nav { flex:1; padding:4px 0; }
     <div class="sb-search">
       <div class="search-wrap">
         <span class="search-icon">🔎</span>
-        <input type="text" id="search-input" placeholder="Search DeFiX">
+        <input type="text" id="search-input" placeholder="Search Say It DeFi">
       </div>
     </div>
 
-    <!-- What's happening — top liked posts placeholder -->
-    <div class="sb-card">
+    <!-- What's happening — dynamic trending hashtags + pinned partners -->
+    <div class="sb-card" id="sb-trending">
       <div class="sb-card-title">What's happening</div>
-      <div class="sb-card-row" onclick="pulse.filterByTag('DeFiX')" style="cursor:pointer">
-        <div style="flex:1">
-          <span class="trend-label">Trending on PulseChain</span>
-          <span class="trend-name">#DeFiX</span>
-          <span class="trend-count">On-chain social</span>
+      <div id="sb-trending-list">
+        <!-- Dynamic trending hashtags inserted by renderTrending().
+             Pinned partner rows always shown at the bottom. -->
+        <div class="sb-card-row" id="sb-wave-row" style="cursor:pointer">
+          <div style="flex:1">
+            <span class="trend-label">Featured partner</span>
+            <span class="trend-name">Wave on Pulse 📻</span>
+            <span class="trend-count">Live free speech radio</span>
+          </div>
+          <span style="font-size:20px;align-self:center">🎙️</span>
         </div>
-        <span style="font-size:20px;align-self:center">📈</span>
-      </div>
-      <div class="sb-card-row" onclick="pulse.goWave()" style="cursor:pointer">
-        <div style="flex:1">
-          <span class="trend-label">Featured partner</span>
-          <span class="trend-name">Wave on Pulse 📻</span>
-          <span class="trend-count">Live free speech radio</span>
+        <div class="sb-card-row" style="cursor:pointer" onclick="window.open('https://pulsechain.com','_blank')">
+          <div style="flex:1">
+            <span class="trend-label">Powered by</span>
+            <span class="trend-name">PulseChain ⚡</span>
+            <span class="trend-count">Chain ID 369</span>
+          </div>
+          <span style="font-size:20px;align-self:center">🔗</span>
         </div>
-        <span style="font-size:20px;align-self:center">🎙️</span>
       </div>
-      <div class="sb-card-row" style="cursor:pointer" onclick="window.open('https://pulsechain.com','_blank')">
-        <div style="flex:1">
-          <span class="trend-label">Powered by</span>
-          <span class="trend-name">PulseChain ⚡</span>
-          <span class="trend-count">Chain ID 369</span>
-        </div>
-        <span style="font-size:20px;align-self:center">🔗</span>
-      </div>
-      <button class="sb-show-more" id="wave-btn">Open Wave on Pulse →</button>
+    </div>
+
+    <!-- Who to follow — derived from active addresses in current feed -->
+    <div class="sb-card" id="sb-w2f-card" style="display:none">
+      <div class="sb-card-title">Who to follow</div>
+      <div id="sb-w2f-list"><!-- populated by renderWhoToFollow() --></div>
     </div>
 
     <!-- Wave on Pulse animated card -->
@@ -1331,21 +1561,21 @@ nav { flex:1; padding:4px 0; }
       </div>
     </div>
 
-    <!-- DeFiX channel card -->
+    <!-- Say It DeFi channel card -->
     <div class="sb-card" style="overflow:visible">
       <div class="defix-inner" id="defix-card-btn" role="button" tabindex="0"
-        aria-label="Open DeFiX channel">
+        aria-label="Open Say It DeFi channel">
         <div class="defix-top">
           <div class="defix-brand">
             <div class="defix-icon">⚡</div>
             <div>
-              <div class="defix-name">DeFiX Channel</div>
+              <div class="defix-name">Say It DeFi Channel</div>
               <div class="defix-sub">Official updates & tech</div>
             </div>
           </div>
           <div class="defix-tag">📡 View</div>
         </div>
-        <div class="defix-desc">Technical updates, announcements and discussions about DeFiX — the decentralized X.</div>
+        <div class="defix-desc">Technical updates, announcements and discussions about Say It DeFi — uncensorable social on PulseChain.</div>
       </div>
     </div>
 
@@ -1368,18 +1598,20 @@ nav { flex:1; padding:4px 0; }
     <!-- Footer links -->
     <div class="sb-footer">
       <div class="sb-footer-row">
-        <a href="https://github.com/HyperLightCoder/DeFiX/blob/main/README.md"
+        <a href="https://github.com/HyperLightCoder/Pulse-Underground/blob/main/README.md"
           target="_blank" rel="noopener noreferrer">About</a>
         <a href="https://pulsechain.com"
           target="_blank" rel="noopener noreferrer">PulseChain</a>
         <a href="https://waveonpulse.com"
-          target="_blank" rel="noopener noreferrer">Wave</a>
-        <a href="https://github.com/HyperLightCoder/DeFiX"
+          target="_blank" rel="noopener noreferrer">Wave on Pulse</a>
+        <a href="https://github.com/HyperLightCoder/Pulse-Underground"
           target="_blank" rel="noopener noreferrer">GitHub</a>
         <a href="https://x.com/PLSUnderground"
-          target="_blank" rel="noopener noreferrer">𝕏 @PLSUnderground</a>
+          target="_blank" rel="noopener noreferrer">
+          <svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align:middle;margin-right:2px"><path fill="currentColor" d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.253 5.622 5.912-5.622zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+          @PLSUnderground</a>
       </div>
-      <div class="sb-copyright">© 2025 DeFiX — Decentralized X on PulseChain</div>
+      <div class="sb-copyright">© 2025 Say It DeFi — Uncensorable social on PulseChain</div>
     </div>
   </div>
 </div>
@@ -1401,6 +1633,9 @@ nav { flex:1; padding:4px 0; }
   </button>
   <button class="mn-btn" data-mn="channels">
     <span class="mn-icon"><svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M1.998 5.5c0-1.381 1.119-2.5 2.5-2.5h15c1.381 0 2.5 1.119 2.5 2.5v13c0 1.381-1.119 2.5-2.5 2.5h-15c-1.381 0-2.5-1.119-2.5-2.5v-13zm2.5-.5a.5.5 0 00-.5.5v2.764l8 3.638 8-3.638V5.5a.5.5 0 00-.5-.5h-15zM19.998 10.236l-8 3.636-8-3.636V18.5a.5.5 0 00.5.5h15a.5.5 0 00.5-.5v-8.264z"/></svg></span>Channels
+  </button>
+  <button class="mn-btn" id="mn-mychannel" data-mn="mychannel" style="display:none">
+    <span class="mn-icon"><svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M17.863 13.44c1.477 1.58 2.366 3.8 2.632 6.46l.11 1.1H3.395l.11-1.1c.266-2.66 1.155-4.88 2.632-6.46C7.627 11.85 9.648 11 12 11s4.373.85 5.863 2.44zM12 2C9.791 2 8 3.79 8 6s1.791 4 4 4 4-1.79 4-4-1.791-4-4-4z"/></svg></span>My Channel
   </button>
   <button class="mn-btn" data-mn="profile">
     <span class="mn-icon"><svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 11c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zm0-6C9.239 5 7 7.239 7 10s2.239 5 5 5 5-2.239 5-5-2.239-5-5-5zM5.651 19h12.698c-.337-1.8-1.023-2.891-1.929-3.4-1.285-.736-3.574-1.1-4.42-1.1-.845 0-3.135.364-4.42 1.1-.906.509-1.592 1.6-1.929 3.4z"/></svg></span>Profile
@@ -1501,6 +1736,22 @@ nav { flex:1; padding:4px 0; }
   </div>
 </div>
 
+<!-- Share card modal -->
+<div class="modal-bg" id="share-modal">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-head">
+      <span class="modal-title">Share Post</span>
+      <button class="modal-close" id="close-share-modal">✕</button>
+    </div>
+    <canvas id="share-canvas" style="width:100%;border-radius:12px;display:block;background:#16181c;margin-bottom:12px"></canvas>
+    <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+      <button class="btn-pri" id="share-copy-img-btn">📋 Copy Image</button>
+      <button class="btn-pri" id="share-native-btn" style="display:none">📤 Share…</button>
+      <button class="btn-ghost" id="share-copy-link-btn">🔗 Copy Link</button>
+    </div>
+  </div>
+</div>
+
 <!-- Reply modal -->
 <div class="modal-bg" id="reply-modal">
   <div class="modal">
@@ -1561,17 +1812,30 @@ nav { flex:1; padding:4px 0; }
   </div>
 </div>
 
+<!-- Profile popup card — appears on click of post-name/post-avatar -->
+<div class="profile-popup" id="profile-popup" role="dialog" aria-label="Profile preview"></div>
+
 <script>
 'use strict';
 const ethers = window.ethers;
 
 /* ── Constants ────────────────────────────────────────────────────────── */
 const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
+/* SW_CACHE_VER: bump this string whenever you deploy a new version.
+   The service worker uses it to invalidate cached files.
+   Format: date + build number, e.g. '20250526-1' */
+const SW_CACHE_VER = '20260525-1';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
+/* MAX_PREVIEW: chars shown before "Show more" truncation in feed */
 const MAX_PREVIEW    = 500;
+/* POSTS_TARGET: stop fetching once we've added this many new posts in one
+   pagination pass. Higher = denser scroll, more API calls. */
 const POSTS_TARGET   = 20;
+/* MAX_PAGES: hard cap on API pages scanned per fetchPosts() call. Each
+   page = 50 txs, so 40 pages = 2000 txs max. Beyond this, the user gets
+   a manual "Load more" button to continue. */
 const MAX_PAGES      = 40;
 const POLL_FIRST_MS  = 30_000;
 const POLL_MS        = 120_000;
@@ -1585,6 +1849,7 @@ const BOOKMARK_PREFIX = 'BOOKMARK:';
 const FOLLOW_PREFIX   = 'FOLLOW:';
 const UNFOLLOW_PREFIX = 'UNFOLLOW:';
 const SETTINGS_KEY    = 'defixSettings';
+const MUTE_KEY        = 'defixMuted';   /* JSON array of muted addresses */
 const CHANNELS_KEY    = 'defixChannelsScan';
 
 const ERC721_ABI = [
@@ -1596,11 +1861,28 @@ const ERC721_ABI = [
 const utils = {
   _t: null,
   toast(msg, ms = 3000) {
+    /* Queue toasts so rapid-fire actions (like + repost) show both messages
+       rather than the second one immediately stomping the first. */
+    this._toastQueue = this._toastQueue || [];
+    this._toastBusy  = this._toastBusy  || false;
+    this._toastQueue.push({ msg, ms });
+    if (!this._toastBusy) this._drainToastQueue();
+  },
+  _drainToastQueue() {
+    if (!this._toastQueue?.length) { this._toastBusy = false; return; }
+    this._toastBusy = true;
+    const { msg, ms } = this._toastQueue.shift();
     const el = document.getElementById('toast');
+    if (!el) { this._drainToastQueue(); return; }
     el.textContent = msg;
     el.style.display = 'block';
-    clearTimeout(this._t);
-    this._t = setTimeout(() => { el.style.display = 'none'; }, ms);
+    /* After this toast, wait briefly then show the next (or hide). */
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => {
+      el.style.display = 'none';
+      /* Short gap between queued toasts so the user sees the transition */
+      setTimeout(() => this._drainToastQueue(), 200);
+    }, ms);
   },
   loading(show, label = 'Publishing…') {
     document.getElementById('loading-overlay').classList.toggle('on', show);
@@ -1728,11 +2010,49 @@ const utils = {
     let t;
     return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
   },
+  /* throttle: fires at most once per `ms`. Used for scroll-style events
+     where you want continuous updates during the action, not just a final
+     trailing call. The trailing setTimeout guarantees the LAST event is
+     processed even if it lands inside the cooldown window. */
+  throttle(fn, ms) {
+    let last = 0, pending = null;
+    return (...a) => {
+      const now = Date.now();
+      const remaining = ms - (now - last);
+      if (remaining <= 0) {
+        if (pending) { clearTimeout(pending); pending = null; }
+        last = now;
+        fn(...a);
+      } else if (!pending) {
+        pending = setTimeout(() => {
+          last = Date.now();
+          pending = null;
+          fn(...a);
+        }, remaining);
+      }
+    };
+  },
   autoGrow(el) {
     el.style.height = 'auto';
     el.style.height = Math.min(el.scrollHeight, 400) + 'px';
   },
-  copyToClipboard(text, label = 'Copied to clipboard!') {
+  /* Check if an img URL is too large to render safely.
+     Loads a test Image element and checks naturalWidth*naturalHeight*4 bytes.
+     Returns true if safe, false if oversized. Timeout: 5s. */
+  async checkImageSize(url, maxBytes = 8_000_000) {
+    return new Promise(resolve => {
+      const img = new Image();
+      const timer = setTimeout(() => { img.src = ''; resolve(true); }, 5000);
+      img.onload = () => {
+        clearTimeout(timer);
+        const bytes = img.naturalWidth * img.naturalHeight * 4;
+        resolve(bytes <= maxBytes);
+      };
+      img.onerror = () => { clearTimeout(timer); resolve(true); };
+      img.src = url;
+    });
+  },
+  copyToClipboard(text, label = 'Copied!') {
     navigator.clipboard?.writeText(text).then(() => this.toast(label)).catch(() => this.toast('Copy failed'));
   },
   updateCharCount(el, countEl) {
@@ -1759,15 +2079,29 @@ class Cache {
   constructor() {
     this._db    = null;
     this._ready = new Promise((res, rej) => {
-      const req = indexedDB.open('DeFiX', 1);
+      const req = indexedDB.open('DeFiX', 2);
       req.onupgradeneeded = e => {
-        const db = e.target.result;
+        const db  = e.target.result;
+        const old = e.oldVersion; /* 0 = fresh install, 1 = prior version */
+        /* v1 stores -- create if missing (handles fresh installs) */
         if (!db.objectStoreNames.contains('posts'))
           db.createObjectStore('posts', { keyPath: 'txHash' });
         if (!db.objectStoreNames.contains('profiles'))
           db.createObjectStore('profiles', { keyPath: 'address' });
         if (!db.objectStoreNames.contains('channels'))
           db.createObjectStore('channels', { keyPath: 'address' });
+        /* v2: muted addresses store (persistent across sessions) */
+        if (old < 2 && !db.objectStoreNames.contains('muted'))
+          db.createObjectStore('muted', { keyPath: 'address' });
+        /* v2: migrations log (self-documenting; future versions can query it) */
+        if (!db.objectStoreNames.contains('migrations')) {
+          const ms = db.createObjectStore('migrations', { keyPath: 'version' });
+          /* Record v1→v2 migration */
+          ms.transaction.oncomplete = () => {
+            const tx = db.transaction('migrations', 'readwrite');
+            tx.objectStore('migrations').put({ version: 2, ts: Date.now(), note: 'Added muted store' });
+          };
+        }
       };
       req.onsuccess = () => { this._db = req.result; res(); };
       req.onerror   = () => rej(req.error);
@@ -1787,6 +2121,29 @@ class Cache {
       const tx = this._db.transaction('posts','readwrite');
       posts.forEach(p => tx.objectStore('posts').put(p));
       tx.oncomplete = res;
+      tx.onerror    = () => rej(tx.error);
+    });
+  }
+  async getMuted() {
+    await this._ready;
+    if (!this._db.objectStoreNames.contains('muted')) return [];
+    return new Promise((res, rej) => {
+      const req = this._db.transaction('muted','readonly')
+        .objectStore('muted').getAll();
+      req.onsuccess = () => res((req.result || []).map(r => r.address));
+      req.onerror   = () => rej(req.error);
+    });
+  }
+  async saveMuted(addresses) {
+    await this._ready;
+    if (!this._db.objectStoreNames.contains('muted')) return;
+    const tx = this._db.transaction('muted', 'readwrite');
+    const store = tx.objectStore('muted');
+    /* Clear and re-write — muted list is small, full replace is fine */
+    store.clear();
+    addresses.forEach(addr => store.put({ address: addr.toLowerCase() }));
+    return new Promise((res, rej) => {
+      tx.oncomplete = () => res();
       tx.onerror    = () => rej(tx.error);
     });
   }
@@ -1861,7 +2218,7 @@ class Cache {
   }
 }
 
-/* ── DeFiX ─────────────────────────────────────────────────── */
+/* ── Say It DeFi ────────────────────────────────────────────── */
 class DeFiX {
   constructor() {
     this.state = {
@@ -1875,6 +2232,9 @@ class DeFiX {
       likes:      new Set(),   /* txHashes this user has liked */
       bookmarks:  new Set(),   /* txHashes this user has bookmarked */
       following:  new Set(),   /* addresses this user follows */
+      /* muted: loaded from IDB in init() after cache is ready; seeded
+         with localStorage fallback for backwards compat */
+      muted:      new Set(JSON.parse(localStorage.getItem(MUTE_KEY)||'[]')),
       /* channel history */
       channelHistory: [],      /* [{address, label, lastActivity, preview, postCount}] */
       /* settings */
@@ -1887,10 +2247,18 @@ class DeFiX {
     this.pollTimer     = null;
     this._profInFlight = 0;
     this._profQueue    = [];
+    /* Monotonic token bumped whenever we want to invalidate in-flight fetches
+       (channel switch, refresh). The async fetch loop checks this against
+       its locally captured token and aborts if they differ. Prevents stale
+       fetches from overwriting fresh state. */
+    this._fetchToken   = 0;
     this._walletReg    = false;
     this._postMap      = new Map();
     this.g             = id => document.getElementById(id);
-    this._debouncedRender = utils.debounce(() => this.renderFeed(), 150);
+    /* Profile-triggered re-renders: instead of rebuilding the entire feed,
+       patch only the avatar+name elements for the address that just loaded.
+       Full re-renders still happen for structural changes (new posts, filters). */
+    this._debouncedRender = utils.debounce(() => this._patchProfilesInFeed(), 120);
     this._draftSave       = utils.debounce(() => this._saveDraft(), 500);
   }
 
@@ -1898,35 +2266,92 @@ class DeFiX {
     this.wireListeners();
     this.updateChLabel();
     await this.cache.pruneIfStale();
+    /* Migrate muted list from localStorage to IDB if needed */
+    try {
+      const idbMuted = await this.cache.getMuted();
+      if (idbMuted.length > 0) {
+        /* IDB has data — use it as the source of truth */
+        this.state.muted = new Set(idbMuted);
+      } else if (this.state.muted.size > 0) {
+        /* localStorage has data but IDB doesn't — migrate */
+        await this.cache.saveMuted([...this.state.muted]);
+      }
+    } catch (err) { console.warn('Muted IDB load:', err); }
     this._restoreDraft();
     await this.loadCached();
     await this.tryAutoReconnect();
     await this.fetchPosts(true);
+    this._initComposePlaceholderRotation();
+    this._refreshSidebarPanels();
+    /* Resume polling immediately when tab becomes visible — picks up
+       anything that landed on-chain while the user was away. */
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) this.pollNew();
+    });
     setTimeout(() => { this.pollNew(); this.startPolling(); }, POLL_FIRST_MS);
   }
 
+  /* Per-channel draft storage — keyed by channel address so switching
+     channels preserves each channel's draft independently. Falls back
+     to DRAFT_KEY for backwards compat with any saved drafts. */
+  _draftKey() {
+    const ch = this.state.channel || 'global';
+    return `${DRAFT_KEY}:${ch}`;
+  }
   _saveDraft() {
     const v = this.g('compose-text').value;
-    v.trim() ? localStorage.setItem(DRAFT_KEY, v) : localStorage.removeItem(DRAFT_KEY);
+    const key = this._draftKey();
+    if (v.trim()) {
+      localStorage.setItem(key, v);
+    } else {
+      localStorage.removeItem(key);
+      localStorage.removeItem(DRAFT_KEY); /* clean up legacy key too */
+    }
   }
   _restoreDraft() {
-    const draft = localStorage.getItem(DRAFT_KEY);
+    /* Try per-channel key first, then fall back to legacy global key */
+    const draft = localStorage.getItem(this._draftKey())
+                || localStorage.getItem(DRAFT_KEY)
+                || '';
     if (!draft) return;
     this.g('compose-text').value = draft;
     utils.autoGrow(this.g('compose-text'));
     utils.updateCharCount(this.g('compose-text'), null);
   }
-  _clearDraft() { localStorage.removeItem(DRAFT_KEY); }
+  _clearDraft() {
+    localStorage.removeItem(this._draftKey());
+    localStorage.removeItem(DRAFT_KEY); /* clean up any legacy key */
+  }
 
   wireListeners() {
     const g = this.g.bind(this);
+    /* Safe wire: silently skips if element doesn't exist.
+       Prevents "Cannot set properties of null" crashes when HTML
+       and JS get out of sync during development or future HTML changes. */
+    const w = (id, event, fn) => {
+      const el = g(id);
+      if (el) el[event] = fn;
+    };
 
+    g('logo-wrap').onclick     = () => this.goHome();
+    w('sb-wave-row', 'onclick', () => this.goWave());
     g('connect-btn').onclick   = () => this.toggleWallet();
     g('nav-post-btn').onclick  = () => this.openComposeModal();
     g('mobile-fab').onclick    = () => this.openComposeModal();
 
-    g('tab-foryou').onclick   = () => this.setFeedTab('foryou');
-    g('tab-following').onclick = () => this.setFeedTab('following');
+    /* Tapping the active tab refreshes feed -- matches X/Twitter */
+    g('tab-foryou').onclick = () => {
+      if (document.getElementById('tab-foryou').classList.contains('active')) {
+        this.refreshFeed(); return;
+      }
+      this.setFeedTab('foryou');
+    };
+    g('tab-following').onclick = () => {
+      if (document.getElementById('tab-following').classList.contains('active')) {
+        this.refreshFeed(); return;
+      }
+      this.setFeedTab('following');
+    };
 
     g('compose-text').addEventListener('focus', () => {
       g('compose-area').classList.add('focused');
@@ -1953,6 +2378,7 @@ class DeFiX {
     g('nav-explore').onclick   = () => this.goExplore();
     g('nav-notifs').onclick    = () => this.goNotifications();
     g('nav-channels').onclick  = () => this.goChannels();
+    w('nav-mychannel', 'onclick', () => this.goSelf());
     g('nav-bookmarks').onclick = () => this.goBookmarks();
     g('nav-profile').onclick   = () => this.openProfileModal();
     g('nav-more').onclick      = e => { e.stopPropagation(); this.toggleMoreMenu(); };
@@ -1961,11 +2387,12 @@ class DeFiX {
     document.querySelectorAll('[data-mn]').forEach(b => {
       b.onclick = () => {
         const t = b.dataset.mn;
-        if (t === 'home')     this.goHome();
-        if (t === 'explore')  this.goExplore();
-        if (t === 'notifs')   this.goNotifications();
-        if (t === 'channels') this.goChannels();
-        if (t === 'profile')  this.openProfileModal();
+        if (t === 'home')      this.goHome();
+        if (t === 'explore')   this.goExplore();
+        if (t === 'notifs')    this.goNotifications();
+        if (t === 'channels')  this.goChannels();
+        if (t === 'mychannel') this.goSelf();
+        if (t === 'profile')   this.openProfileModal();
       };
     });
 
@@ -1993,10 +2420,116 @@ class DeFiX {
       if (mention) { e.stopPropagation(); this.g('custom-input').value = mention.dataset.addr; this.goCustom(); return; }
       const handle = e.target.closest('.post-handle');
       if (handle) { e.stopPropagation(); utils.copyToClipboard(handle.dataset.addr, 'Address copied!'); return; }
+      /* Click on poster's display name or avatar → profile popup card.
+         Avatar click is also a popup trigger (matches Twitter behavior
+         on touch, where hover doesn't exist). */
+      const name   = e.target.closest('.post-name');
+      const avatar = e.target.closest('.post-avatar');
+      if (name || avatar) {
+        e.stopPropagation();
+        const item = e.target.closest('.post-item');
+        const post = item ? this._postMap.get(item.dataset.txhash) : null;
+        if (post?.reporter) this.showProfilePopup(post.reporter, name || avatar);
+        return;
+      }
       this.onFeedClick(e, inModal);
     };
 
     g('feed').addEventListener('click', e => handlePostClick(e, false));
+
+    /* ── Hover popup (desktop only) ──────────────────────────────────
+       Uses mouseover/mouseout on the feed so we don't attach N listeners.
+       400ms hover delay matches Twitter. Cleared immediately on mouseout
+       unless the mouse moved into the popup itself. */
+    let _hoverTimer = null;
+    let _hoverAddr  = null;
+    const isTouch = () => window.matchMedia('(hover: none)').matches;
+
+    const onFeedMouseover = e => {
+      if (isTouch()) return;
+      const trigger = e.target.closest('.post-name, .post-avatar');
+      if (!trigger) return;
+      const item = e.target.closest('.post-item');
+      const post = item ? this._postMap.get(item.dataset.txhash) : null;
+      if (!post?.reporter) return;
+      const addr = post.reporter.toLowerCase();
+      /* If already showing for this address, don't re-trigger */
+      if (this.g('profile-popup')?.classList.contains('open') &&
+          this.g('profile-popup').dataset.addr === addr) return;
+      /* Debounce: cancel any pending show, restart timer */
+      clearTimeout(_hoverTimer);
+      _hoverAddr = addr;
+      _hoverTimer = setTimeout(() => {
+        if (_hoverAddr === addr) this.showProfilePopup(addr, trigger, 'hover');
+      }, 400);
+    };
+
+    const onFeedMouseout = e => {
+      if (isTouch()) return;
+      /* Did the mouse leave toward the popup? If so, keep it open. */
+      const popup = this.g('profile-popup');
+      if (popup?.contains(e.relatedTarget)) return;
+      clearTimeout(_hoverTimer);
+      _hoverAddr = null;
+      /* Small grace window — if mouse re-enters popup within 150ms,
+         we leave it open. This prevents flicker when gap between
+         trigger and popup is crossed. */
+      if (popup?.classList.contains('open')) {
+        const closeTimer = setTimeout(() => {
+          /* Only auto-close if mouse is outside BOTH trigger and popup */
+          if (!popup.matches(':hover') && !popup.contains(document.activeElement)) {
+            this.hideProfilePopup();
+          }
+        }, 150);
+        popup._pendingClose = closeTimer;
+      }
+    };
+
+    /* Single permanent capture-phase click listener for popup dismissal.
+       Runs before any other click handler. If popup is open:
+         - Click inside popup -> handled by popup (action or navigate)
+         - Click outside popup -> close popup, then let event continue
+       We NEVER stopPropagation for outside clicks — that's what was
+       causing the left sidebar to lose click ability. When dismiss fired
+       via a leaked listener and called stopPropagation, sidebar buttons
+       never got the event. */
+    document.addEventListener('click', e => {
+      const popup = this.g('profile-popup');
+      if (!popup?.classList.contains('open')) return;
+      if (popup.contains(e.target)) {
+        /* Inside popup: handle follow/unfollow action */
+        const btn = e.target.closest('[data-pp-action]');
+        if (btn) {
+          e.stopPropagation();
+          const addr = popup.dataset.addr;
+          this.toggleFollowAddr(addr, null);
+          setTimeout(() => {
+            if (popup.classList.contains('open') && popup.dataset.addr === addr) {
+              const postCount = this.state.posts.filter(
+                p => p.reporter?.toLowerCase() === addr &&
+                     (!p.postType || p.postType === 'post')).length;
+              popup.innerHTML = this._profilePopupHTML(addr,
+                this.state.profCache[addr] ||
+                (addr === this.state.signerAddr ? this.state.profile : {}), postCount);
+            }
+          }, 500);
+          return;
+        }
+        /* Click on popup body -> open profile page */
+        const addr = popup.dataset.addr;
+        this.hideProfilePopup();
+        this.goProfilePage(addr, addr === this.state.signerAddr);
+        return;
+      }
+      /* Outside popup: close it. Do NOT stopPropagation — allow the
+         click to reach its intended target (sidebar, buttons, etc). */
+      this.hideProfilePopup();
+      /* Note: we intentionally do NOT return or stopPropagation here.
+         The sidebar/feed elements get this click event normally. */
+    }, true /* capture phase: run before target handlers */);
+
+    g('feed').addEventListener('mouseover', onFeedMouseover);
+    g('feed').addEventListener('mouseout',  onFeedMouseout);
 
     g('cb-address').onclick = () => {
       const addr = g('cb-address').textContent;
@@ -2009,14 +2542,13 @@ class DeFiX {
       this.renderFeed();
     }, 250);
 
-    g('refresh-btn').onclick = () => this.refreshFeed();
     g('new-banner').onclick  = () => this.loadPending();
 
     g('ch-main').onclick = () => this.goHome();
     g('ch-self').onclick = () => this.goSelf();
     g('ch-go').onclick   = () => this.goCustom();
     g('custom-input').onkeydown = e => { if (e.key === 'Enter') this.goCustom(); };
-    g('wave-btn').onclick = () => this.goWave();
+    /* wave-btn removed from sidebar HTML — Wave is reachable via nav/sidebar card */
     const wcb = g('wave-card-btn');
     if (wcb) {
       wcb.onclick   = () => this.goWave();
@@ -2028,22 +2560,93 @@ class DeFiX {
       dcb.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') this.goDeFiX(); };
     }
 
-    window.addEventListener('scroll', utils.debounce(() => this.onScroll(), 150));
+    window.addEventListener('scroll', utils.throttle(() => this.onScroll(), 100), { passive: true });
 
     document.addEventListener('keydown', e => {
       const active = document.activeElement?.tagName;
       if (active === 'INPUT' || active === 'TEXTAREA') return;
-      if (e.key === 'n' || e.key === 'N') { e.preventDefault(); g('compose-text').focus(); g('compose-text').scrollIntoView({ behavior:'smooth', block:'center' }); }
-      if (e.key === '/') { e.preventDefault(); g('search-input').focus(); }
-      if (e.key === 'e' || e.key === 'E') { e.preventDefault(); this.openComposeModal(); }
+      /* ── Compose / nav shortcuts ── */
+      if (e.key === 'n' || e.key === 'N') {
+        e.preventDefault();
+        g('compose-text').focus();
+        g('compose-text').scrollIntoView({ behavior:'smooth', block:'center' });
+        return;
+      }
+      if (e.key === '/') { e.preventDefault(); g('search-input').focus(); return; }
+      if (e.key === 'e' || e.key === 'E') { e.preventDefault(); this.openComposeModal(); return; }
+      /* ── J/K post navigation ── */
+      if (e.key === 'j' || e.key === 'J' || e.key === 'k' || e.key === 'K') {
+        e.preventDefault();
+        const items = [...document.querySelectorAll('.post-item')];
+        if (!items.length) return;
+        const focused = document.querySelector('.post-item.kb-focus');
+        let idx = focused ? items.indexOf(focused) : -1;
+        if (e.key === 'j' || e.key === 'J') idx = Math.min(idx + 1, items.length - 1);
+        else                                  idx = Math.max(idx - 1, 0);
+        items.forEach(el => el.classList.remove('kb-focus'));
+        items[idx].classList.add('kb-focus');
+        items[idx].scrollIntoView({ behavior:'smooth', block:'nearest' });
+        this._kbFocusedPost = this._postMap.get(items[idx].dataset.txhash);
+        return;
+      }
+      /* ── Actions on focused post ── */
+      const post = this._kbFocusedPost;
+      if (post) {
+        if (e.key === 'Enter') { e.preventDefault(); this.openThread(post); return; }
+        if (e.key === 'l' || e.key === 'L') {
+          e.preventDefault();
+          const el = document.querySelector(`.post-item.kb-focus`);
+          if (el) this.toggleLike(post, el);
+          return;
+        }
+        if (e.key === 'r' || e.key === 'R') { e.preventDefault(); this.openReplyModal(post); return; }
+        if (e.key === 't' || e.key === 'T') { e.preventDefault(); this.openRepostModal(post); return; }
+        if (e.key === 'b' || e.key === 'B') {
+          e.preventDefault();
+          const el = document.querySelector(`.post-item.kb-focus`);
+          if (el) this.toggleBookmark(post, el);
+          return;
+        }
+        if (e.key === 'u' || e.key === 'U') {
+          e.preventDefault();
+          utils.copyToClipboard(`https://otter.pulsechain.com/tx/${post.txHash}`, 'Link copied!');
+          return;
+        }
+      }
+      /* ── Page navigation shortcuts ── */
+      if (e.key === 'g' && !e.shiftKey) {
+        /* g+h home, g+n notifications, g+p profile etc — wait for 2nd key */
+        this._gPressed = true;
+        setTimeout(() => { this._gPressed = false; }, 1500);
+        return;
+      }
+      if (this._gPressed) {
+        this._gPressed = false;
+        if (e.key === 'h') { e.preventDefault(); this.goHome(); return; }
+        if (e.key === 'n') { e.preventDefault(); this.goNotifications(); return; }
+        if (e.key === 'p') { e.preventDefault(); this.openProfileModal(); return; }
+        if (e.key === 's') { e.preventDefault(); this.goSelf(); return; }
+        if (e.key === 'b') { e.preventDefault(); this.goBookmarks(); return; }
+      }
       if (e.key === 'Escape') {
+        /* Close popup first — it's higher in the UI stack than modals. */
+        if (this.g('profile-popup')?.classList.contains('open')) {
+          this.hideProfilePopup();
+          return;
+        }
+        /* Clear J/K focus */
+        if (document.querySelector('.post-item.kb-focus')) {
+          document.querySelectorAll('.post-item.kb-focus').forEach(el => el.classList.remove('kb-focus'));
+          this._kbFocusedPost = null;
+          return;
+        }
         ['compose-modal','profile-modal','reply-modal','repost-modal','media-modal'].forEach(id => {
           if (g(id).classList.contains('open')) this.closeModal(id);
         });
       }
     });
 
-    ['compose-modal','profile-modal','reply-modal','repost-modal','media-modal'].forEach(id => {
+    ['compose-modal','profile-modal','reply-modal','repost-modal','media-modal','share-modal'].forEach(id => {
       g(id).addEventListener('click', e => { if (e.target === g(id)) this.closeModal(id); });
     });
 
@@ -2058,7 +2661,12 @@ class DeFiX {
       const v = g('pe-cover').value.trim();
       const prev = g('pe-cover-preview');
       if (v) {
-        prev.style.backgroundImage = `url(${v})`;
+        /* CSS.escape() turns embedded quotes and parens into harmless
+           escapes — prevents background-image-as-injection if a user
+           pastes a value like url("); content: ... */
+        const safeV = (typeof CSS !== 'undefined' && CSS.escape)
+          ? CSS.escape(v) : v.replace(/["'()\\]/g, '');
+        prev.style.backgroundImage = `url("${safeV}")`;
         prev.style.backgroundSize  = 'cover';
         prev.style.backgroundPosition = 'center';
         prev.classList.add('has-cover');
@@ -2074,6 +2682,7 @@ class DeFiX {
     };
     g('fetch-nft-btn').onclick = () => this.fetchNFTImage();
 
+    w('close-share-modal', 'onclick', () => this.closeModal('share-modal'));
     g('close-reply').onclick      = () => this.closeModal('reply-modal');
     g('cancel-reply-btn').onclick = () => this.closeModal('reply-modal');
     g('post-reply-btn').onclick   = () => this.postReply();
@@ -2148,7 +2757,13 @@ class DeFiX {
       this.toggleBookmark(post, item);
     } else if (action === 'share') {
       e.stopPropagation();
-      utils.copyToClipboard(`https://otter.pulsechain.com/tx/${post.txHash}`, 'Link copied!');
+      this.openShareCard(post);
+    } else if (action === 'mute') {
+      e.stopPropagation();
+      this.muteAddress(post.reporter);
+    } else if (action === 'menu') {
+      e.stopPropagation();
+      this.openPostMenu(post, e.currentTarget || e.target.closest('.post-menu-btn'));
     } else if (!action && !inModal && !e.target.closest('a') && !e.target.closest('button')) {
       this.openThread(post);
     }
@@ -2165,15 +2780,77 @@ class DeFiX {
         this.g('tab-following').classList.remove('active');
         return;
       }
-      /* Filter current feed to only posts from followed addresses */
       this.state.searchTerm = '';
       this._followingFilter = true;
+      /* Show what we have immediately, then fetch fresh posts from followed
+         addresses in parallel (up to 5 concurrent). */
       this.renderFeed();
+      this._fetchFollowingFeed();
     } else {
       this._followingFilter = false;
       this.state.searchTerm = '';
       this.g('search-input').value = '';
       this.renderFeed();
+    }
+  }
+
+  async _fetchFollowingFeed() {
+    const addrs = [...this.state.following].slice(0, 20); /* cap at 20 to avoid flooding */
+    if (!addrs.length) return;
+    const known = new Set(this.state.posts.map(p => p.txHash));
+    let newPosts = [];
+    /* Fetch page 1 from each followed address -- 5 at a time */
+    const BATCH = 5;
+    for (let i = 0; i < addrs.length; i += BATCH) {
+      const batch = addrs.slice(i, i + BATCH);
+      const results = await Promise.allSettled(
+        batch.map(addr => this.apiFetch(addr, 1))
+      );
+      results.forEach((res, j) => {
+        if (res.status !== 'fulfilled') return;
+        const addr = batch[j];
+        res.value.forEach(tx => {
+          const hash = tx.hash?.toLowerCase();
+          if (!hash || known.has(hash)) return;
+          if (!tx.input || tx.input === '0x') return;
+          try {
+            const text = ethers.utils.toUtf8String(tx.input).trim();
+            if (text.startsWith(PROFILE_PREFIX)) return;
+            const isReaction = text.startsWith(LIKE_PREFIX) ||
+              text.startsWith(BOOKMARK_PREFIX) || text.startsWith(FOLLOW_PREFIX);
+            if (isReaction) return;
+            const m = text.match(/^REPLY_TO:(0x[a-f0-9]{64})\n\n/i);
+            const display = m ? text.slice(m[0].length).trim() : text;
+            if (!display) return;
+            known.add(hash);
+            newPosts.push({
+              content: text, display,
+              parentTx: m ? m[1].toLowerCase() : null,
+              repostOf: null, reactionTarget: null,
+              direction: null, postType: 'post',
+              reporter: tx.from?.toLowerCase(),
+              to: tx.to?.toLowerCase() ?? null,
+              timestamp: tx.timeStamp
+                ? new Date(Number(tx.timeStamp)*1000).toISOString()
+                : new Date().toISOString(),
+              txHash: hash,
+              channel: tx.to?.toLowerCase(),
+              mode: 'main',
+              blockNumber: tx.blockNumber ? Number(tx.blockNumber) : null,
+            });
+          } catch { /* skip */ }
+        });
+      });
+    }
+    if (!newPosts.length) return;
+    /* Merge with existing posts and re-render */
+    this.state.posts = [...this.state.posts, ...newPosts]
+      .sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
+    await this.cache.savePosts(newPosts);
+    /* Only update display if still on following tab */
+    if (this._followingFilter) {
+      this.renderFeed();
+      utils.toast(`Loaded ${newPosts.length} new post${newPosts.length>1?'s':''} from follows`);
     }
   }
 
@@ -2213,10 +2890,15 @@ class DeFiX {
     this.setNav('nav-home','home');
     this.state.mode    = 'main';
     this.state.channel = MAIN_CHANNEL;
-    this.g('feed-title').textContent       = 'DeFiX';
+    /* Home: tabs are the sticky top element, no title header */
+    this.g('feed-tabs').style.display      = 'flex';
+    this.g('feed-tabs').classList.add('tabs-sticky');
     this.g('compose-area').style.display   = 'flex';
     this.g('channel-banner').style.display = 'none';
-    this.g('feed-tabs').style.display      = 'flex';
+    this._pendingPageHeader = null;
+    /* Clear feed immediately so previous page's content doesn't flash */
+    const homeF = this.g('feed');
+    if (homeF) homeF.innerHTML = '';
     this.setChActive('ch-main');
     this.updateChLabel();
     await this.resetAndFetch();
@@ -2230,17 +2912,21 @@ class DeFiX {
   async goNotifications() {
     if (!this.signer) { utils.toast('Connect wallet to view Notifications'); return; }
     this.setNav('nav-notifs','notifs');
-    this.g('feed-title').textContent       = '🔔 Notifications';
+    this.g('feed-tabs').classList.remove('tabs-sticky');
+    this.g('feed-tabs').style.display      = 'none';
     this.g('compose-area').style.display   = 'none';
     this.g('channel-banner').style.display = 'none';
-    this.g('feed-tabs').style.display      = 'none';
+    /* Inject sticky header at top of feed */
+    this._pendingPageHeader = this._makePageHeader({
+      title: 'Notifications', noBack: true });
     this.g('new-banner').style.display     = 'none';
     this.g('loading-more').style.display   = 'none';
     this.state.mode = 'notifications';
     localStorage.setItem(LAST_CHECK_KEY, Date.now().toString());
     this.clearNotifBadge();
 
-    this.g('feed').innerHTML = `<div class="prof-empty"><span>⏳</span><h3>Loading notifications…</h3></div>`;
+    this.g('feed').innerHTML = this._applyPageHeader() +
+      `<div class="prof-empty"><span>⏳</span><h3>Loading notifications…</h3></div>`;
 
     try {
       const allNotifs = [];
@@ -2355,10 +3041,15 @@ class DeFiX {
 
   async goSelf() {
     if (!this.signer) { utils.toast('Connect wallet to view your channel'); return; }
-    this.setNav(null, null);
+    this.setNav('nav-mychannel', null);
     this.state.mode    = 'self';
     this.state.channel = this.state.signerAddr;
-    this.g('feed-title').textContent     = '📡 My Channel';
+    this.g('feed-tabs').classList.remove('tabs-sticky');
+    this.g('feed-tabs').style.display = 'none';
+    const selfTitle = this.state.profile.username || 'My Channel';
+    const selfHandle = this.state.signerAddr ? '@' + this.trunc(this.state.signerAddr) : '';
+    this._pendingPageHeader = this._makePageHeader({
+      title: selfTitle, subtitle: selfHandle, noBack: true });
     this.g('compose-area').style.display = 'flex';
     this.setChActive('ch-self');
     this.updateChLabel();
@@ -2372,7 +3063,10 @@ class DeFiX {
     this.setNav(null, null);
     this.state.mode    = 'custom';
     this.state.channel = raw;
-    this.g('feed-title').textContent     = `📬 ${this.trunc(raw)}`;
+    this.g('feed-tabs').classList.remove('tabs-sticky');
+    this.g('feed-tabs').style.display = 'none';
+    this._pendingPageHeader = this._makePageHeader({
+      title: this.trunc(raw), subtitle: raw, noBack: false });
     this.g('compose-area').style.display = 'flex';
     this.setChActive(null);
     this.updateChLabel();
@@ -2386,7 +3080,10 @@ class DeFiX {
     this.setNav(null, null);
     this.state.mode    = 'wave';
     this.state.channel = WAVE_ADDRESS;
-    this.g('feed-title').textContent     = '📻 Wave on Pulse';
+    this.g('feed-tabs').classList.remove('tabs-sticky');
+    this.g('feed-tabs').style.display = 'none';
+    this._pendingPageHeader = this._makePageHeader({
+      title: 'Wave on Pulse', subtitle: 'Free speech radio on PulseChain', noBack: false });
     this.g('compose-area').style.display = 'none';
     this.setChActive(null);
     this.updateChLabel();
@@ -2399,7 +3096,10 @@ class DeFiX {
     this.state.mode    = 'custom';
     this.state.channel = DEFIX_CHANNEL;
     this.g('custom-input').value         = DEFIX_CHANNEL;
-    this.g('feed-title').textContent     = '⚡ DeFiX Channel';
+    this.g('feed-tabs').classList.remove('tabs-sticky');
+    this.g('feed-tabs').style.display = 'none';
+    this._pendingPageHeader = this._makePageHeader({
+      title: 'Say It DeFi Channel', subtitle: 'Official channel', noBack: false });
     this.g('compose-area').style.display = 'flex';
     this.g('feed-tabs').style.display    = 'none';
     this.setChActive(null);
@@ -2411,40 +3111,140 @@ class DeFiX {
   /* ── New navigation methods ─────────────────────────────────────────── */
   goExplore() {
     this.setNav('nav-explore','explore');
-    this.g('feed-title').textContent     = '🔭 Explore';
-    this.g('compose-area').style.display = 'none';
+    this.state.mode = 'explore';
+    this.g('feed-tabs').classList.remove('tabs-sticky');
+    this.g('feed-tabs').style.display      = 'none';
+    this.g('compose-area').style.display   = 'none';
     this.g('channel-banner').style.display = 'none';
-    this.g('feed-tabs').style.display    = 'none';
-    this.g('feed').innerHTML = `
-      <div class="placeholder-view">
-        <span class="ph-icon">🔭</span>
-        <h2>Explore is coming</h2>
-        <p>Trending hashtags, top channels, and active addresses on PulseChain will appear here.</p>
-        <span class="ph-soon">Coming soon</span>
+    this._pendingPageHeader = this._makePageHeader({ title: 'Explore', noBack: true });
+    this.g('loading-more').style.display   = 'none';
+    const _exploreHeader = this._applyPageHeader();
+    this._renderExplorePage(_exploreHeader);
+  }
+
+  _renderExplorePage(_headerHTML = '') {
+    const posts = this.state.posts;
+    /* ── Trending hashtags ── */
+    const tagCounts = new Map();
+    posts.slice(0, 500).forEach(p => {
+      if (!p.display) return;
+      (p.display.match(/#[A-Za-z0-9_]{2,30}/g) || []).forEach(t => {
+        const k = t.toLowerCase();
+        tagCounts.set(k, (tagCounts.get(k)||0) + 1);
+      });
+    });
+    const topTags = [...tagCounts.entries()]
+      .filter(([,n]) => n >= 2)
+      .sort((a,b) => b[1]-a[1])
+      .slice(0, 10);
+
+    /* ── Most active addresses (by post count in feed) ── */
+    const addrCounts = new Map();
+    posts.filter(p => !p.postType || p.postType === 'post').forEach(p => {
+      const r = p.reporter?.toLowerCase();
+      if (r) addrCounts.set(r, (addrCounts.get(r)||0) + 1);
+    });
+    const topAddrs = [...addrCounts.entries()]
+      .sort((a,b) => b[1]-a[1])
+      .slice(0, 8);
+
+    /* ── Channel history ── */
+    const recentChannels = (this.state.channelHistory || []).slice(0, 6);
+
+    const tagHTML = topTags.length
+      ? topTags.map(([tag, count], i) => {
+          const display = tag.replace(/^#/, '');
+          return `<div class="explore-row" onclick="pulse.filterByTag('${utils.safe(display)}')">
+            <div class="explore-rank">${i+1}</div>
+            <div class="explore-content">
+              <div class="explore-label">Trending on PulseChain</div>
+              <div class="explore-name">#${utils.safe(display)}</div>
+              <div class="explore-meta">${count} post${count>1?'s':''}</div>
+            </div>
+            <div class="explore-arrow">→</div>
+          </div>`;
+        }).join('')
+      : '<div style="padding:16px;color:var(--muted)">Load the feed first to see trending hashtags.</div>';
+
+    const addrHTML = topAddrs.length
+      ? topAddrs.map(([addr, count]) => {
+          const prof = this.state.profCache[addr];
+          const name = prof?.username ? utils.safe(prof.username) : this.trunc(addr);
+          const pic  = utils.safe(prof?.picUrl || 'image1.jpeg');
+          return `<div class="explore-row" onclick="pulse.goProfilePage('${utils.safe(addr)}', ${addr===this.state.signerAddr})">
+            <img src="${pic}" class="explore-avatar" onerror="this.src='image1.jpeg'">
+            <div class="explore-content">
+              <div class="explore-name">${name}</div>
+              <div class="explore-meta">${count} post${count>1?'s':''} in feed</div>
+            </div>
+            <div class="explore-arrow">→</div>
+          </div>`;
+        }).join('')
+      : '<div style="padding:16px;color:var(--muted)">Load the feed first to see active posters.</div>';
+
+    const chHTML = recentChannels.length
+      ? recentChannels.map(ch => {
+          const prof = this.state.profCache[ch.address];
+          const name = prof?.username || ch.label || this.trunc(ch.address);
+          const pic  = utils.safe(prof?.picUrl || ch.picUrl || 'image1.jpeg');
+          return `<div class="explore-row" onclick="pulse.g('custom-input').value='${utils.safe(ch.address)}';pulse.goCustom()">
+            <img src="${pic}" class="explore-avatar" onerror="this.src='image1.jpeg'">
+            <div class="explore-content">
+              <div class="explore-name">${utils.safe(name)}</div>
+              <div class="explore-meta">${this.trunc(ch.address)}</div>
+            </div>
+            <div class="explore-arrow">→</div>
+          </div>`;
+        }).join('')
+      : '<div style="padding:16px;color:var(--muted)">Visit some channels to see them here.</div>';
+
+    this.g('feed').innerHTML = _headerHTML + `
+      <div class="explore-page">
+        <div class="explore-section">
+          <div class="explore-section-title">📈 Trending</div>
+          ${tagHTML}
+        </div>
+        <div class="explore-section">
+          <div class="explore-section-title">🏆 Most Active</div>
+          ${addrHTML}
+        </div>
+        ${recentChannels.length ? `<div class="explore-section">
+          <div class="explore-section-title">📡 Recent Channels</div>
+          ${chHTML}
+        </div>` : ''}
+        <div style="padding:16px;text-align:center">
+          <button class="settings-btn" onclick="pulse.goHome();setTimeout(()=>pulse._renderExplorePage(),3000)">
+            ↺ Refresh from feed
+          </button>
+        </div>
       </div>`;
-    this.g('loading-more').style.display = 'none';
   }
 
   goBookmarks() {
     if (!this.signer) { utils.toast('Connect wallet to view Bookmarks'); return; }
     this.setNav('nav-bookmarks', null);
-    this.g('feed-title').textContent     = '🔖 Bookmarks';
+    this.g('feed-tabs').classList.remove('tabs-sticky');
+    const bkUser = this.state.profile.username
+      ? '@' + utils.safe(this.state.profile.username)
+      : (this.state.signerAddr ? '@' + this.trunc(this.state.signerAddr) : '');
+    this._pendingPageHeader = this._makePageHeader({
+      title: 'Bookmarks', subtitle: bkUser, noBack: true });
     this.g('compose-area').style.display = 'none';
     this.g('channel-banner').style.display = 'none';
     this.g('feed-tabs').style.display    = 'none';
     this.g('loading-more').style.display = 'none';
+    const bkHeader = this._applyPageHeader();
     if (this.state.bookmarks.size === 0) {
-      this.g('feed').innerHTML = `
+      this.g('feed').innerHTML = bkHeader + `
         <div class="placeholder-view">
           <span class="ph-icon">🔖</span>
           <h2>No bookmarks yet</h2>
-          <p>Save posts by clicking the bookmark icon. Your bookmarks are stored privately on-chain and only visible to you.</p>
+          <p>Save posts by clicking the bookmark icon.</p>
         </div>`;
     } else {
-      /* filter feed to bookmarked posts */
       const bookmarked = this.state.posts.filter(p => this.state.bookmarks.has(p.txHash));
       if (!bookmarked.length) {
-        this.g('feed').innerHTML = `<div class="placeholder-view"><span class="ph-icon">🔖</span><h2>Bookmarks loading…</h2><p>Syncing your saved posts from the chain.</p></div>`;
+        this.g('feed').innerHTML = bkHeader + `<div class="placeholder-view"><span class="ph-icon">🔖</span><h2>Bookmarks loading…</h2><p>Syncing your saved posts from the chain.</p></div>`;
       } else {
         const frag = document.createDocumentFragment();
         bookmarked.forEach(post => {
@@ -2455,7 +3255,7 @@ class DeFiX {
           el.innerHTML = this.postHTML(post, false, null);
           frag.appendChild(el);
         });
-        this.g('feed').innerHTML = '';
+        this.g('feed').innerHTML = bkHeader;
         this.g('feed').appendChild(frag);
       }
     }
@@ -2463,7 +3263,8 @@ class DeFiX {
 
   async goChannels() {
     this.setNav('nav-channels','channels');
-    this.g('feed-title').textContent     = '💬 Channels';
+    this.g('feed-tabs').classList.remove('tabs-sticky');
+    this._pendingPageHeader = this._makePageHeader({ title: 'Channels', noBack: true });
     this.g('compose-area').style.display = 'none';
     this.g('channel-banner').style.display = 'none';
     this.g('feed-tabs').style.display    = 'none';
@@ -2473,7 +3274,8 @@ class DeFiX {
     /* Load cached immediately */
     const cached = await this.cache.getChannels();
     this.state.channelHistory = cached;
-    this.renderChannelHistory();
+    const chHeader = this._applyPageHeader();
+    this.renderChannelHistory(chHeader);
 
     /* If nothing cached, trigger a rescan from chain */
     if (cached.length === 0 && this.state.signerAddr) {
@@ -2483,12 +3285,15 @@ class DeFiX {
 
   goSettings() {
     this.setNav(null, null);
-    this.g('feed-title').textContent     = '⚙️ Settings';
-    this.g('compose-area').style.display = 'none';
+    this.state.mode = 'settings';
+    this.g('compose-area').style.display   = 'none';
     this.g('channel-banner').style.display = 'none';
-    this.g('feed-tabs').style.display    = 'none';
-    this.g('loading-more').style.display = 'none';
-    this.g('feed').innerHTML = this._settingsHTML();
+    this.g('feed-tabs').style.display      = 'none';
+    this.g('feed-tabs').classList.remove('tabs-sticky');
+    this.g('loading-more').style.display   = 'none';
+    this._pendingPageHeader = this._makePageHeader({ title: 'Settings', noBack: true });
+    const headerHTML = this._applyPageHeader();
+    this.g('feed').innerHTML = headerHTML + this._settingsHTML();
     this._wireSettingsListeners();
   }
 
@@ -2578,7 +3383,7 @@ class DeFiX {
     utils.toast('Channel history updated ✓');
   }
 
-  renderChannelHistory() {
+  renderChannelHistory(headerHTML = '') {
     const feed = this.g('feed');
     const history = this.state.channelHistory;
 
@@ -2626,7 +3431,7 @@ class DeFiX {
       html += `</div>`;
     }
 
-    feed.innerHTML = html;
+    feed.innerHTML = headerHTML + html;
 
     /* Wire the new channel input */
     const inp = this.g('ch-new-input');
@@ -2735,9 +3540,9 @@ class DeFiX {
       <div class="settings-section">
         <div class="settings-section-title">About</div>
         <div class="settings-about-logo">
-          <img src="image1.jpeg" alt="DeFiX">
+          <img src="image1.jpeg" alt="Say It DeFi">
           <div>
-            <strong>DeFiX</strong>
+            <strong>Say It DeFi</strong>
             <span>Decentralized X — on-chain social on PulseChain</span>
           </div>
         </div>
@@ -2748,7 +3553,7 @@ class DeFiX {
           No server, no backend, no ads.
         </div>
         <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
-          <a href="https://github.com/HyperLightCoder/DeFiX" target="_blank"
+          <a href="https://github.com/HyperLightCoder/Pulse-Underground" target="_blank"
             class="settings-btn" style="text-decoration:none;display:inline-block">GitHub ↗</a>
           <a href="https://pulsechain.com" target="_blank"
             class="settings-btn" style="text-decoration:none;display:inline-block">PulseChain ↗</a>
@@ -2802,6 +3607,8 @@ class DeFiX {
   }
 
   setNav(desktopId, mobileKey) {
+    this.hideProfilePopup?.();
+    this._threadBackOverride = false;
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.mn-btn').forEach(b => b.classList.remove('active'));
     if (desktopId) this.g(desktopId)?.classList.add('active');
@@ -2853,10 +3660,21 @@ class DeFiX {
   }
 
   renderBanner(profile, address) {
-    this.g('cb-avatar').src         = profile?.picUrl || 'image1.jpeg';
-    this.g('cb-name').textContent   = profile?.username || this.trunc(address);
-    this.g('cb-bio').textContent    = profile?.bio  || '';
+    this.g('cb-avatar').src          = profile?.picUrl || 'image1.jpeg';
+    this.g('cb-name').textContent    = profile?.username || this.trunc(address);
+    this.g('cb-bio').textContent     = profile?.bio  || '';
     this.g('cb-address').textContent = address || '';
+    /* Show profile cover image in the banner if available */
+    const coverEl = document.querySelector('#channel-banner .cb-cover');
+    if (coverEl) {
+      if (profile?.coverUrl) {
+        coverEl.style.background = `url('${profile.coverUrl.replace(/'/g,"\\'")}') center/cover no-repeat`;
+      } else {
+        /* Reset to default gradient if no cover */
+        coverEl.style.background = '';
+        coverEl.classList.remove('has-custom-cover');
+      }
+    }
   }
 
   async checkNotifBadge() {
@@ -2898,7 +3716,9 @@ class DeFiX {
   _registerWalletListeners() {
     if (this._walletReg) return;
     this._walletReg = true;
-    window.ethereum.on('accountsChanged', accounts => {
+    const eth = this._getEthereum();
+    if (!eth || typeof eth.on !== 'function') return;
+    eth.on('accountsChanged', accounts => {
       if (accounts.length === 0) this.disconnect();
       else if (accounts[0].toLowerCase() !== this.state.signerAddr) {
         utils.toast('Account changed — reconnecting…');
@@ -2906,7 +3726,7 @@ class DeFiX {
         setTimeout(() => this.connect(), 500);
       }
     });
-    window.ethereum.on('chainChanged', chainId => {
+    eth.on('chainChanged', chainId => {
       if (parseInt(chainId, 16) !== PULSE_CHAIN_ID) {
         utils.toast('Wrong network — please switch to PulseChain');
         this.disconnect();
@@ -2914,10 +3734,23 @@ class DeFiX {
     });
   }
 
+  /* Safely get the current ethereum provider. Some browser extensions
+     (evmAsk, Brave Wallet) conflict with MetaMask by trying to redefine
+     window.ethereum after it's already been set as non-configurable.
+     We cache a reference at first access and use that throughout. */
+  _getEthereum() {
+    if (!this._cachedEthereum) {
+      try { this._cachedEthereum = window.ethereum; }
+      catch { this._cachedEthereum = null; }
+    }
+    return this._cachedEthereum;
+  }
+
   async tryAutoReconnect() {
-    if (!window.ethereum) return;
+    const eth = this._getEthereum();
+    if (!eth) return;
     try {
-      const prov = new ethers.providers.Web3Provider(window.ethereum);
+      const prov = new ethers.providers.Web3Provider(eth);
       const accs = await prov.listAccounts();
       if (accs.length && localStorage.getItem('defixConnected') === '1') {
         this.signer = prov.getSigner();
@@ -2931,11 +3764,12 @@ class DeFiX {
   async toggleWallet() { this.signer ? this.disconnect() : await this.connect(); }
 
   async connect() {
-    if (!window.ethereum) { utils.toast('MetaMask not detected'); return; }
+    const eth = this._getEthereum();
+    if (!eth) { utils.toast('MetaMask / wallet not detected'); return; }
     try {
-      const prov = new ethers.providers.Web3Provider(window.ethereum);
+      const prov = new ethers.providers.Web3Provider(eth);
       if ((await prov.getNetwork()).chainId !== PULSE_CHAIN_ID) {
-        await window.ethereum.request({ method:'wallet_switchEthereumChain', params:[{ chainId:'0x171' }] });
+        await eth.request({ method:'wallet_switchEthereumChain', params:[{ chainId:'0x171' }] });
       }
       await prov.send('eth_requestAccounts', []);
       this.signer = prov.getSigner();
@@ -2944,7 +3778,16 @@ class DeFiX {
       this._registerWalletListeners();
       await this.afterConnect();
       utils.toast('Wallet connected ✓');
-    } catch (err) { utils.toast('Connect failed: ' + (err.message || err)); }
+    } catch (err) {
+      /* Extension conflict errors look like "Cannot redefine property" —
+         they come from third-party extensions, not from our code. */
+      const msg = err.message || String(err);
+      if (msg.includes('redefine') || msg.includes('defineProperty')) {
+        utils.toast('Wallet extension conflict detected. Try disabling other wallet extensions and reload.');
+      } else {
+        utils.toast('Connect failed: ' + msg);
+      }
+    }
   }
 
   async afterConnect() {
@@ -2953,6 +3796,9 @@ class DeFiX {
     this.g('connect-btn').style.display  = 'none';
     this.g('ap-addr').textContent        = this.trunc(addr);
     this.g('ch-self').style.display      = 'block';
+    this.g('nav-mychannel').style.display = '';       /* desktop My Channel btn */
+    const mnMy = document.getElementById('mn-mychannel');
+    if (mnMy) mnMy.style.display = '';               /* mobile My Channel btn */
     const cached = await this.cache.getProfile(addr);
     if (cached) this.applyProfile(cached);
     /* Load profile + reactions in parallel */
@@ -3016,6 +3862,9 @@ class DeFiX {
     this.g('connect-btn').style.display  = 'block';
     this.g('compose-avatar').src         = 'image1.jpeg';
     this.g('ch-self').style.display      = 'none';
+    this.g('nav-mychannel').style.display = 'none';    /* desktop */
+    const mnMyHide = document.getElementById('mn-mychannel');
+    if (mnMyHide) mnMyHide.style.display = 'none';   /* mobile */
     this.g('ap-avatar').src          = 'image1.jpeg';
     this.g('ap-name').textContent    = 'My Wallet';
     this.g('ap-addr').textContent    = '';
@@ -3027,60 +3876,124 @@ class DeFiX {
 
   async fetchMyProfile() {
     if (!this.state.signerAddr) return;
+    /* Scan every page of this wallet's tx history until we either find the
+       PROFILE_DATA self-send or exhaust all pages. Profile-save txs are
+       self-sends (from === to === signerAddr) so they only appear once in
+       history; on an active wallet it could be many pages deep. */
     try {
-      const raw = await this.apiFetch(this.state.signerAddr, 1);
-      for (const tx of raw) {
-        if (tx.from?.toLowerCase() !== this.state.signerAddr) continue;
-        if (tx.to?.toLowerCase()   !== this.state.signerAddr) continue;
-        try {
-          const text = ethers.utils.toUtf8String(tx.input).trim();
-          if (!text.startsWith(PROFILE_PREFIX)) continue;
-          const data = JSON.parse(text.slice(PROFILE_PREFIX.length).trim());
-          this.applyProfile(data);
-          await this.cache.saveProfile({ address: this.state.signerAddr, ...data });
-          /* If the profile page is open for this user, refresh the header in-place */
-          if (this.state.mode === 'profile' && this.state.channel === this.state.signerAddr) {
-            const nameEl = document.getElementById('prof-display-name');
-            const handleEl = document.getElementById('prof-handle-addr');
-            const avatarEl = document.getElementById('prof-page-avatar');
-            if (nameEl)   nameEl.textContent = data.username || this.trunc(this.state.signerAddr);
-            if (avatarEl) avatarEl.src = data.picUrl || 'image1.jpeg';
-            /* Bio — update if element exists */
-            const bioEl = document.querySelector('.prof-bio');
-            if (bioEl && data.bio) bioEl.textContent = data.bio;
-          }
-          return;
-        } catch { continue; }
-      }
-    } catch (err) { console.warn('Profile fetch error', err); }
-  }
-
-  async fetchOtherProfile(address) {
-    if (!address || address in this.state.profCache) return;
-    this.state.profCache[address] = null;
-    const work = async () => {
-      this._profInFlight++;
-      try {
-        const db = await this.cache.getProfile(address);
-        if (db) {
-          this.state.profCache[address] = { username: db.username||'', picUrl: db.picUrl||'image1.jpeg' };
-          this._debouncedRender(); return;
-        }
-        const raw = await this.apiFetch(address, 1);
+      for (let page = 1; ; page++) {
+        let raw;
+        try { raw = await this.apiFetch(this.state.signerAddr, page); }
+        catch (err) { console.warn('fetchMyProfile API error (p' + page + '):', err); break; }
+        if (!raw || !raw.length) break; /* end of tx history */
         for (const tx of raw) {
-          if (tx.from?.toLowerCase() !== address || tx.to?.toLowerCase() !== address) continue;
+          if (tx.from?.toLowerCase() !== this.state.signerAddr) continue;
+          if (tx.to?.toLowerCase()   !== this.state.signerAddr) continue;
           try {
             const text = ethers.utils.toUtf8String(tx.input).trim();
             if (!text.startsWith(PROFILE_PREFIX)) continue;
             const data = JSON.parse(text.slice(PROFILE_PREFIX.length).trim());
-            this.state.profCache[address] = { username: data.username||'', picUrl: data.picUrl||'image1.jpeg' };
-            await this.cache.saveProfile({ address, ...data });
-            this._debouncedRender(); return;
+            this.applyProfile(data);
+            await this.cache.saveProfile({ address: this.state.signerAddr, ...data });
+            /* Profile found — update the open profile page header in-place
+               without a full re-render (preserves the already-loaded feed). */
+            if (this.state.mode === 'profile' &&
+                this.state.channel === this.state.signerAddr) {
+              const nameEl   = document.getElementById('prof-display-name');
+              const avatarEl = document.getElementById('prof-page-avatar');
+              if (nameEl)   nameEl.textContent = data.username || this.trunc(this.state.signerAddr);
+              if (avatarEl) avatarEl.src = data.picUrl || 'image1.jpeg';
+              const bioEl = document.querySelector('.prof-bio');
+              if (bioEl && data.bio) bioEl.textContent = data.bio;
+              const coverEl = document.querySelector('.prof-cover');
+              if (coverEl && data.coverUrl)
+                coverEl.style.background = `url('${data.coverUrl}') center/cover no-repeat`;
+            }
+            /* Update My Channel page-header title if user is on that page */
+            if (this.state.mode === 'self' && data.username) {
+              const hdrTitle = this.g('feed')?.querySelector('.page-header-title');
+              if (hdrTitle && (hdrTitle.textContent === 'My Channel' || !hdrTitle.textContent)) {
+                hdrTitle.textContent = data.username;
+              }
+            }
+            return; /* found — stop */
           } catch { continue; }
         }
-        this.state.profCache[address] = { username:'', picUrl:'image1.jpeg' };
+        if (raw.length < 50) break; /* last page — stop regardless */
+      }
+    } catch (err) { console.warn('fetchMyProfile error:', err); }
+  }
+
+  async fetchOtherProfile(address) {
+    if (!address || address in this.state.profCache) return;
+    /* Mark in-progress immediately — prevents duplicate concurrent fetches. */
+    this.state.profCache[address] = null;
+    const work = async () => {
+      this._profInFlight++;
+      try {
+        /* 1. Try IndexedDB cache first — fast, no API call needed. */
+        const db = await this.cache.getProfile(address);
+        if (db) {
+          /* Store ALL available fields — popup and profile page need bio,
+             coverUrl, location, website — not just username + picUrl. */
+          this.state.profCache[address] = {
+            username: db.username  || '',
+            picUrl:   db.picUrl    || 'image1.jpeg',
+            bio:      db.bio       || '',
+            coverUrl: db.coverUrl  || '',
+            location: db.location  || '',
+            website:  db.website   || '',
+          };
+          this._debouncedRender();
+          return;
+        }
+        /* 2. Scan the FULL tx history of this address until we find
+              a PROFILE_DATA self-send or run out of pages.
+              - profInFlight cap (3 concurrent) prevents API flooding.
+              - _debouncedRender() fires immediately on find, so the UI
+                updates progressively — user sees names/avatars appear
+                as each profile is located rather than waiting for all.
+              - Cached permanently in IndexedDB so subsequent sessions
+                are instant regardless of how deep the scan went. */
+        for (let page = 1; ; page++) {
+          let raw;
+          try { raw = await this.apiFetch(address, page); }
+          catch (err) {
+            console.warn(`fetchOtherProfile(${this.trunc(address)}) API err p${page}:`, err);
+            break;
+          }
+          if (!raw || !raw.length) break; /* end of tx history */
+          let found = false;
+          for (const tx of raw) {
+            if (tx.from?.toLowerCase() !== address ||
+                tx.to?.toLowerCase()   !== address) continue;
+            try {
+              const text = ethers.utils.toUtf8String(tx.input).trim();
+              if (!text.startsWith(PROFILE_PREFIX)) continue;
+              const data = JSON.parse(text.slice(PROFILE_PREFIX.length).trim());
+              this.state.profCache[address] = {
+                username: data.username || '',
+                picUrl:   data.picUrl   || 'image1.jpeg',
+                bio:      data.bio      || '',
+                coverUrl: data.coverUrl || '',
+                location: data.location || '',
+                website:  data.website  || '',
+              };
+              await this.cache.saveProfile({ address, ...data });
+              this._debouncedRender();
+              found = true;
+              break;
+            } catch { continue; }
+          }
+          if (found) return;
+          if (raw.length < 50) break; /* last page — stop */
+        }
+        /* No profile found — store empty placeholder so we don't re-scan. */
+        this.state.profCache[address] = { username:'', picUrl:'image1.jpeg',
+                                          bio:'', coverUrl:'', location:'', website:'' };
       } catch {
-        this.state.profCache[address] = { username:'', picUrl:'image1.jpeg' };
+        this.state.profCache[address] = { username:'', picUrl:'image1.jpeg',
+                                          bio:'', coverUrl:'', location:'', website:'' };
       } finally {
         this._profInFlight--;
         this._drainProfileQueue();
@@ -3091,8 +4004,13 @@ class DeFiX {
   }
 
   _drainProfileQueue() {
-    while (this._profInFlight < 3 && this._profQueue.length > 0)
-      this._profQueue.shift()();
+    /* Wrap synchronous invocation: if work() throws before its inner async
+       runs (e.g. cache reference goes null mid-shutdown), we still keep
+       draining the queue instead of deadlocking _profInFlight. */
+    while (this._profInFlight < 3 && this._profQueue.length > 0) {
+      const work = this._profQueue.shift();
+      try { work(); } catch (err) { console.warn('Profile drain error:', err); }
+    }
   }
 
   applyProfile(data) {
@@ -3131,17 +4049,25 @@ class DeFiX {
     this.g('new-banner').style.display     = 'none';
     this.g('loading-more').style.display   = 'none';
     /* Set a real title so the header isn't blank */
-    this.g('feed-title').textContent = isOwn ? 'Profile' : 'Profile';
+    /* page header via _makePageHeader handles the title now */
 
-    /* For own profile: use state.profile if populated, otherwise try cache */
+    /* Profile data resolution:
+       - Own profile: always start with state.profile (may be partial — has
+         picUrl + bio even without username). Then try cache. Always render
+         what we have; trigger a fresh on-chain fetch in the background. */
     let prof;
     if (isOwn) {
-      prof = this.state.profile?.username ? this.state.profile : null;
-      if (!prof) {
-        /* Cache fallback — state.profile may not be populated yet */
-        const cached = await this.cache.getProfile(address);
-        if (cached) { this.applyProfile(cached); prof = this.state.profile; }
-        else prof = this.state.profile; /* use default — fetchMyProfile will refresh */
+      /* state.profile is initialized at construction so always truthy. Use
+         whatever fields are populated rather than gate-keeping on username. */
+      prof = this.state.profile || {};
+      const hasAnyData = !!(prof.username || prof.bio || prof.coverUrl ||
+                            (prof.picUrl && prof.picUrl !== 'image1.jpeg'));
+      if (!hasAnyData) {
+        /* Try IndexedDB cache fallback */
+        try {
+          const cached = await this.cache.getProfile(address);
+          if (cached) { this.applyProfile(cached); prof = this.state.profile; }
+        } catch (err) { console.warn('Profile cache miss:', err); }
       }
     } else {
       prof = this.state.profCache[address] || null;
@@ -3152,14 +4078,74 @@ class DeFiX {
     }
     if (!prof) prof = {};
 
-    this.g('feed').innerHTML = this._profilePageHTML(address, prof, isOwn);
+    /* Initialize profile-page pagination state. This is what enables
+       infinite scroll on profile pages — see _onProfileScroll. */
+    this._profilePageState = {
+      address: address.toLowerCase(),
+      isOwn,
+      tab: 'posts',
+      pagesScanned: 0,
+      loading: false,
+      hasMore: true,
+      rawTxs: [],
+      visibleTxHashes: new Set(),
+    };
+
+    this.g('feed-tabs').classList.remove('tabs-sticky');
+    /* Profile header: back arrow | Name + N posts | search icon (Twitter pattern) */
+    const postCount = this.state.posts.filter(
+      p => p.reporter?.toLowerCase() === address.toLowerCase() &&
+           (!p.postType || p.postType === 'post')).length;
+    const profHeaderHTML = this._makePageHeader({
+      title: prof.username || this.trunc(address),
+      subtitle: postCount > 0 ? `${postCount} post${postCount !== 1 ? 's' : ''}` : '',
+      back: true,
+      searchAddr: address,
+    });
+    this.g('feed').innerHTML = profHeaderHTML + this._profilePageHTML(address, prof, isOwn);
     this._wireProfilePageListeners(address, isOwn);
-    /* Scan more pages for own profile; kick off fresh profile fetch if needed */
-    const maxPages = isOwn ? 8 : 4;
+
+    /* Scan more pages for own profile — they likely have many reaction
+       txs (likes, follows) interleaved with actual posts. */
+    const maxPages = isOwn ? 10 : 6;
     this.loadProfileTab(address, isOwn, 'posts', maxPages);
-    /* If profile data looked empty, refresh from chain in background */
-    if (isOwn && !this.state.profile?.username) {
-      this.fetchMyProfile();
+
+    /* Background-refresh own profile from chain. When it lands, re-render
+       the page header in-place. */
+    if (isOwn) {
+      this.fetchMyProfile().then(() => {
+        if (this.state.mode === 'profile' && this.state.channel === address) {
+          /* Re-render header section only — preserves the loaded feed below */
+          const feed = this.g('feed');
+          if (feed && feed.querySelector('.prof-page')) {
+            /* Save current tab + scroll position */
+            const currentTab = feed.querySelector('.prof-tab.active')?.dataset.ptab || 'posts';
+            const profFeed   = feed.querySelector('.prof-feed');
+            const savedHTML  = profFeed ? profFeed.innerHTML : '';
+            /* Rebuild header + profile page, preserving loaded tab content */
+            const newProfHeaderHTML = this._makePageHeader({
+              title: this.state.profile.username || this.trunc(address),
+              subtitle: '',
+              back: true,
+              searchAddr: address,
+            });
+            feed.innerHTML = newProfHeaderHTML + this._profilePageHTML(address, this.state.profile, isOwn);
+            this._wireProfilePageListeners(address, isOwn);
+            /* Wire back button */
+            const hdrBack = feed.querySelector('.page-header-back');
+            if (hdrBack) hdrBack.onclick = () => this._navBack();
+            /* Restore active tab + previously-rendered feed content */
+            const restoredTab = feed.querySelector(`.prof-tab[data-ptab="${currentTab}"]`);
+            if (restoredTab) {
+              feed.querySelectorAll('.prof-tab').forEach(t => t.classList.remove('active'));
+              restoredTab.classList.add('active');
+            }
+            if (savedHTML && feed.querySelector('.prof-feed')) {
+              feed.querySelector('.prof-feed').innerHTML = savedHTML;
+            }
+          }
+        }
+      });
     }
   }
 
@@ -3233,12 +4219,27 @@ class DeFiX {
   }
 
   _wireProfilePageListeners(address, isOwn) {
+    /* Follow/Unfollow button on the full profile page header. */
+    const fbtn = document.getElementById('prof-follow-btn');
+    if (fbtn && !isOwn) {
+      fbtn.onclick = (e) => {
+        e.stopPropagation();
+        this.toggleFollowAddr(address, fbtn);
+      };
+    }
     /* Tab switching */
     const maxPages = isOwn ? 8 : 4;
     document.querySelectorAll('.prof-tab').forEach(btn => {
       btn.onclick = () => {
         document.querySelectorAll('.prof-tab').forEach(t => t.classList.remove('active'));
         btn.classList.add('active');
+        /* Update pagination state's current tab so fetchProfileMore filters
+           correctly. Reset visibleTxHashes since the new tab has a different
+           filtered set of the same raw txs. */
+        if (this._profilePageState) {
+          this._profilePageState.tab = btn.dataset.ptab;
+          this._profilePageState.visibleTxHashes = new Set();
+        }
         this.loadProfileTab(address, isOwn, btn.dataset.ptab, maxPages);
       };
     });
@@ -3470,6 +4471,12 @@ class DeFiX {
       });
       feedEl.innerHTML = '';
       feedEl.appendChild(frag);
+      /* Seed pagination state so infinite scroll won't re-show these posts. */
+      if (this._profilePageState) {
+        this._profilePageState.tab = tab;
+        this._profilePageState.pagesScanned = Math.max(this._profilePageState.pagesScanned, maxPages);
+        this._profilePageState.visibleTxHashes = new Set(posts.map(p => p.txHash));
+      }
 
     } catch (err) {
       feedEl.innerHTML = `<div class="prof-empty"><span>⚠️</span><h3>Error loading tab</h3><p>${utils.safe(err.message)}</p></div>`;
@@ -3508,7 +4515,7 @@ class DeFiX {
     /* Cover preview */
     const prev = g('pe-cover-preview');
     if (p.coverUrl) {
-      prev.style.backgroundImage    = `url(${p.coverUrl})`;
+      prev.style.backgroundImage    = `url("${(typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(p.coverUrl) : p.coverUrl.replace(/["'()\\]/g, '')}")`;
       prev.style.backgroundSize     = 'cover';
       prev.style.backgroundPosition = 'center';
       prev.classList.add('has-cover');
@@ -3539,10 +4546,16 @@ class DeFiX {
       utils.toast('Cover photo must be an https:// URL'); return;
     }
     if (picUrl) {
-      const ok = await new Promise(r => {
+      /* Check image loads AND is not excessively large (> 8MB of pixels) */
+      const loadOk = await new Promise(r => {
         const img = new Image(); img.onload = ()=>r(true); img.onerror = ()=>r(false); img.src = picUrl;
       });
-      if (!ok) { picUrl = ''; utils.toast('Profile image could not load — using default'); }
+      if (!loadOk) {
+        picUrl = ''; utils.toast('Profile image could not load -- using default');
+      } else {
+        const sizeOk = await utils.checkImageSize(picUrl);
+        if (!sizeOk) { picUrl = ''; utils.toast('Profile image is too large (> 8 MB) -- using default'); }
+      }
     }
     picUrl = picUrl || 'image1.jpeg';
 
@@ -3550,6 +4563,18 @@ class DeFiX {
     const data = { username, picUrl, coverUrl, bio, location, website, joinedTs };
     this.applyProfile(data);
     await this.cache.saveProfile({ address: this.state.signerAddr, ...data });
+    /* Keep profCache in sync so the popup reflects the new profile immediately
+       without waiting for the next fetchOtherProfile scan. */
+    if (this.state.signerAddr) {
+      this.state.profCache[this.state.signerAddr] = {
+        username: data.username || '',
+        picUrl:   data.picUrl   || 'image1.jpeg',
+        bio:      data.bio      || '',
+        coverUrl: data.coverUrl || '',
+        location: data.location || '',
+        website:  data.website  || '',
+      };
+    }
     const ok = await this.publish(PROFILE_PREFIX + JSON.stringify(data), null, this.state.signerAddr);
     if (ok) {
       this.closeModal('profile-modal');
@@ -3604,11 +4629,19 @@ class DeFiX {
     const backup  = s.backupApiUrl || '';
     const qs = `?module=account&action=txlist&address=${address}&offset=50&page=${page}&sort=desc`;
 
+    /* 15s timeout per attempt prevents a hung PulseScan from indefinitely
+       holding state.loading=true and breaking the rest of the UI. */
     const tryFetch = async url => {
-      const res = await fetch(url + qs);
-      if (!res.ok) throw new Error(`API ${res.status}`);
-      const data = await res.json();
-      return (data.status === '1' && Array.isArray(data.result)) ? data.result : [];
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 15000);
+      try {
+        const res = await fetch(url + qs, { signal: ctrl.signal });
+        if (!res.ok) throw new Error(`API ${res.status}`);
+        const data = await res.json();
+        return (data.status === '1' && Array.isArray(data.result)) ? data.result : [];
+      } finally {
+        clearTimeout(timer);
+      }
     };
 
     try {
@@ -3637,18 +4670,32 @@ class DeFiX {
   async fetchPosts(reset = false) {
     if (this.state.loading) return;
     this.state.loading = true;
+    /* Capture token at entry. If a channel switch / refresh bumps it during
+       our await, we abort writes to prevent cross-channel post leakage. */
+    const myToken = this._fetchToken;
     if (reset) { this.state.nextPage = 1; this.state.hasMore = true; }
-    this.g('loading-more').style.display = 'block';
+    const loadingEl = this.g('loading-more');
+    loadingEl.style.display = 'block';
+    loadingEl.textContent   = 'Scanning the chain…';
 
     let found = 0, pages = 0;
     try {
       while (found < POSTS_TARGET && this.state.hasMore && pages < MAX_PAGES) {
         let raw;
         try { raw = await this.fetchOnePage(this.state.nextPage); }
-        catch (err) { utils.toast('Fetch error — ' + err.message); break; }
+        catch (err) {
+          /* Don't toast on aborted fetches — they're intentional. */
+          if (myToken === this._fetchToken) utils.toast('Fetch error — ' + err.message);
+          break;
+        }
+        /* Stale fetch — channel changed mid-flight. Abandon silently. */
+        if (myToken !== this._fetchToken) return;
         this.state.nextPage++;
         pages++;
-        this.state.hasMore = raw.length === 50;
+        /* End-of-history is "API returned fewer than the page size" — robust
+           against a single 49-result page that the old equality check would
+           misread as "definitive end". */
+        if (raw.length < 50) this.state.hasMore = false;
         const parsed = this.parseTxs(raw);
         if (parsed.length > 0) {
           const known  = new Set(this.state.posts.map(p => p.txHash));
@@ -3657,16 +4704,30 @@ class DeFiX {
             this.state.posts = [...this.state.posts, ...unique]
               .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
             await this.cache.savePosts(unique);
+            if (myToken !== this._fetchToken) return;
             found += unique.length;
             this.renderFeed();
+            this._refreshSidebarPanels();
           }
         }
         if (this.state.mode === 'notifications') break;
       }
-      if (this.state.posts.length === 0) this.renderFeed();
+      /* MAX_PAGES cap with more history likely available: surface a manual
+         "Load more" button so the user can keep going on dense channels
+         instead of silently stalling. */
+      if (pages >= MAX_PAGES && this.state.hasMore && myToken === this._fetchToken) {
+        loadingEl.innerHTML =
+          `<button class="settings-btn" style="margin:8px auto;display:block" ` +
+          `onclick="pulse.fetchPosts(false)">Load more from chain</button>`;
+        loadingEl.style.display = 'block';
+        return;
+      }
+      if (this.state.posts.length === 0 && myToken === this._fetchToken) this.renderFeed();
     } finally {
-      this.state.loading = false;
-      this.g('loading-more').style.display = 'none';
+      if (myToken === this._fetchToken) this.state.loading = false;
+      /* Only hide the loader if we left it as text — don't clobber the
+         "Load more" button we may have installed. */
+      if (loadingEl.textContent === 'Scanning the chain…') loadingEl.style.display = 'none';
     }
   }
 
@@ -3737,6 +4798,9 @@ class DeFiX {
           ? new Date(Number(tx.timeStamp) * 1000).toISOString()
           : new Date().toISOString(),
         txHash: tx.hash.toLowerCase(), channel, mode,
+        /* Block number used as a Twitter-style "view count" proxy.
+           Shows chain confirmation depth as a useful on-chain signal. */
+        blockNumber: tx.blockNumber ? Number(tx.blockNumber) : null,
       });
       return acc;
     }, []);
@@ -3746,20 +4810,27 @@ class DeFiX {
   stopPolling()   { clearInterval(this.pollTimer); }
 
   async pollNew() {
+    /* Skip on pages where the "Show N posts" banner makes no sense —
+       user is on a specific channel, not the main timeline. */
+    if (this._noBannerModes.has(this.state.mode)) return;
     if (!this.state.channel || this.state.loading) return;
+    /* Skip polling when tab is hidden — saves bandwidth and rate limit.
+       visibilitychange handler in init() resumes immediately on tab focus. */
+    if (typeof document !== 'undefined' && document.hidden) return;
     const latestTs = this.state.posts[0] ? new Date(this.state.posts[0].timestamp) : new Date(0);
     try {
       const raw       = await this.fetchOnePage(1);
-      const inFeed    = new Set(this.state.posts.map(p => p.txHash));
+      /* Reuse _postMap rather than rebuilding a Set every poll cycle.
+         _postMap is the canonical post lookup, kept in sync by renderFeed. */
       const inPending = new Set(this.state.pending.map(p => p.txHash));
       const fresh = this.parseTxs(raw).filter(p =>
-        new Date(p.timestamp) > latestTs && !inFeed.has(p.txHash) && !inPending.has(p.txHash)
+        new Date(p.timestamp) > latestTs && !this._postMap.has(p.txHash) && !inPending.has(p.txHash)
       );
       if (fresh.length) {
         this.state.pending = [...fresh, ...this.state.pending];
         const n = this.state.pending.length;
         const btn = this.g('new-banner');
-        btn.textContent   = `✦ ${n} new post${n > 1 ? 's' : ''} — tap to load`;
+        btn.textContent   = `Show ${n} post${n > 1 ? 's' : ''}`;
         btn.style.display = 'block';
       }
       if (this.state.signerAddr) this.checkNotifBadge();
@@ -3771,33 +4842,58 @@ class DeFiX {
     this.state.pending = [];
     this.g('new-banner').style.display = 'none';
     this.renderFeed();
+    /* X-style: snap to top after inserting new posts */
+    window.scrollTo({ top: 0, behavior: 'smooth' });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   async refreshFeed() {
-    const btn = this.g('refresh-btn');
-    btn.textContent  = '↻';
-    this.state.posts = [];
-    this.state.pending   = [];
-    this.state.nextPage  = 1;
-    this.state.hasMore   = true;
-    this.g('new-banner').style.display = 'none';
-    await this.fetchPosts(true);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    btn.textContent = '↺';
-  }
-
-  async resetAndFetch() {
-    this.stopPolling();
+    /* Bump token to cancel any in-flight fetch from before refresh. */
+    this._fetchToken++;
     this.state.posts     = [];
     this.state.pending   = [];
     this.state.nextPage  = 1;
     this.state.hasMore   = true;
+    /* Match resetAndFetch — refresh should give the user a clean slate,
+       not preserve a stale search filter or expanded posts. */
+    this.state.expanded.clear();
+    this.state.activeTag  = null;
+    this.state.searchTerm = '';
+    const search = this.g('search-input');
+    if (search) search.value = '';
+    this.g('new-banner').style.display = 'none';
+    /* Loading flag may have been left true by a fetch we just cancelled. */
+    this.state.loading = false;
+    await this.fetchPosts(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+  }
+
+  async resetAndFetch() {
+    this.stopPolling();
+    /* Save current draft before channel switch, then restore the new
+       channel's draft after the channel address changes. */
+    this._saveDraft();
+    this._fetchToken++;
+    this.state.loading   = false;
+    this.state.posts     = [];
+    this.state.pending   = [];
+    this.state.nextPage  = 1;
+    this.state.hasMore   = true;
+    /* Clear feed DOM immediately so old channel's posts don't flash
+       while new channel's posts are loading. */
+    const feedEl = this.g('feed');
+    if (feedEl && !this._selfManagedModes.has(this.state.mode)) {
+      feedEl.innerHTML = '';
+    }
     this.state.expanded.clear();
     this.state.activeTag  = null;
     this.state.searchTerm = '';
     this.g('search-input').value = '';
     this.g('new-banner').style.display = 'none';
+    /* Restore draft for the new channel (set by caller before resetAndFetch) */
+    this.g('compose-text').value = '';
+    this._restoreDraft();
     await this.loadCached();
     await this.fetchPosts(true);
     if (this.state.mode !== 'notifications') this.startPolling();
@@ -3816,9 +4912,19 @@ class DeFiX {
   }
 
   renderFeed() {
-    /* These modes manage #feed themselves — don't overwrite them */
-    const selfManaged = ['profile', 'thread', 'notifications', 'channels', 'explore', 'bookmarks', 'settings'];
-    if (selfManaged.includes(this.state.mode)) return;
+    queueMicrotask(() => this._refreshSidebarPanels());
+    const selfManaged = this._selfManagedModes;
+    /* Inject pending page-header BEFORE the self-managed bail.
+       Self-managed pages (Notifications, Explore, etc.) call
+       feed.innerHTML = header + content in their own render functions.
+       Non-self-managed pages (My Channel, Wave, Custom, Main) get the
+       header prepended here to their feed DOM. */
+    if (this._pendingPageHeader && !this.g('feed')?.querySelector('.page-header')) {
+      const feed = this.g('feed');
+      if (feed) feed.insertAdjacentHTML('afterbegin', this._pendingPageHeader);
+      this._pendingPageHeader = null;
+    }
+    if (selfManaged.has(this.state.mode)) return;
 
     const feed = this.g('feed');
     const term = this.state.searchTerm;
@@ -3851,7 +4957,11 @@ class DeFiX {
         repostMap.set(p.repostOf, (repostMap.get(p.repostOf) || 0) + 1);
     });
 
-    /* Only render actual posts — filter out reactions/follows */
+    /* Filter muted addresses */
+    if (this.state.muted.size > 0) {
+      list = list.filter(p => !this.state.muted.has(p.reporter?.toLowerCase()));
+    }
+    /* Only render actual posts -- filter out reactions/follows */
     const displayList = list.filter(p =>
       !p.postType || p.postType === 'post' || p.postType === 'repost'
     );
@@ -3889,17 +4999,25 @@ class DeFiX {
     const isOwn    = post.reporter === this.state.signerAddr;
     const expanded = this.state.expanded.has(post.txHash);
 
-    let picUrl, displayName;
+    let picUrl, displayName, hasProfile;
     if (isOwn) {
       picUrl      = this.state.profile.picUrl || 'image1.jpeg';
       displayName = this.state.profile.username
         ? utils.safe(this.state.profile.username)
         : this.trunc(post.reporter);
+      hasProfile  = !!this.state.profile.username;
     } else {
       const c = this.state.profCache[post.reporter];
       picUrl      = c?.picUrl  || 'image1.jpeg';
       displayName = c?.username ? utils.safe(c.username) : this.trunc(post.reporter);
+      hasProfile  = !!c?.username;
     }
+    /* On-chain "verified" — small ✓ next to names that have published a
+       PROFILE_DATA on-chain transaction. Free differentiator over Twitter:
+       no payment, no gatekeeper, just chain proof of identity. */
+    const verifiedBadge = hasProfile
+      ? '<span class="verified-icon" title="On-chain profile verified"><svg viewBox="0 0 22 22" width="14" height="14" style="vertical-align:-2px"><path fill="#1d9bf0" d="M20.396 11c-.018-.646-.215-1.275-.57-1.816-.354-.54-.852-.972-1.438-1.246.223-.607.27-1.264.14-1.897-.131-.634-.437-1.218-.882-1.687-.47-.445-1.053-.75-1.687-.882-.633-.13-1.29-.083-1.897.14-.273-.587-.704-1.086-1.245-1.44S11.647 1.62 11 1.604c-.646.017-1.273.213-1.813.568s-.969.854-1.24 1.44c-.608-.223-1.267-.272-1.902-.14-.635.13-1.22.436-1.69.882-.445.47-.749 1.055-.878 1.688-.13.633-.08 1.29.144 1.896-.587.274-1.087.705-1.443 1.245-.356.54-.555 1.17-.574 1.817.02.647.218 1.276.574 1.817.356.54.856.972 1.443 1.245-.224.606-.274 1.263-.144 1.896.13.634.433 1.218.877 1.688.47.443 1.054.747 1.687.878.633.132 1.29.084 1.897-.136.274.586.705 1.084 1.246 1.439.54.354 1.17.551 1.816.569.647-.016 1.276-.213 1.817-.567s.972-.854 1.245-1.44c.604.239 1.266.296 1.903.164.636-.132 1.22-.447 1.68-.907.46-.46.776-1.044.908-1.681s.075-1.299-.165-1.903c.586-.274 1.084-.705 1.439-1.246.354-.54.551-1.17.569-1.816zM9.662 14.85l-3.429-3.428 1.293-1.302 2.072 2.072 4.4-4.794 1.347 1.246z"/></svg></span>'
+      : '';
 
     const textToRender = (!inModal && !expanded && post.display.length > MAX_PREVIEW)
       ? post.display.slice(0, MAX_PREVIEW) + '…'
@@ -3958,13 +5076,18 @@ class DeFiX {
     const isLiked      = this.state.likes.has(post.txHash);
     const isBookmarked = this.state.bookmarks.has(post.txHash);
 
+    const isMuted = this.isMuted(post.reporter);
     return `
       <div class="post-hdr">
         <img src="${utils.safe(picUrl)}" class="post-avatar" alt=""
           loading="lazy" onerror="this.src='image1.jpeg'">
+        <button class="post-menu-btn" data-action="menu" title="More options"
+          aria-label="More options">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M3 12c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zm9 2c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm7 0c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2z"/></svg>
+        </button>
         <div class="post-col">
           <div class="post-meta-row">
-            <span class="post-name">${displayName}</span>
+            <span class="post-name">${displayName}</span>${verifiedBadge}
             <span class="post-dot">·</span>
             <span class="post-handle" data-addr="${utils.safe(post.reporter)}"
               title="Click to copy address">@${this.trunc(post.reporter)}</span>
@@ -3983,6 +5106,7 @@ class DeFiX {
           ${needsMore ? `<button class="read-more-btn" data-action="expand">Show more ↓</button>` : ''}
           ${imgHtml ? `<div class="post-images">${imgHtml}</div>` : ''}
           <div class="post-actions">
+            <div class="post-actions-left">
             <button class="act-btn act-reply" data-action="reply" title="Reply">
               <span class="act-icon"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M1.751 10c0-4.42 3.584-8 8.005-8h4.366c4.49 0 8.129 3.64 8.129 8.13 0 2.96-1.607 5.68-4.196 7.11l-8.054 4.46v-3.69h-.067c-4.49.1-8.183-3.51-8.183-8.01zm8.005-6c-3.317 0-6.005 2.69-6.005 6 0 3.37 2.77 6.08 6.138 6.01l.351-.01h1.761v2.3l5.087-2.81c1.951-1.08 3.163-3.13 3.163-5.36 0-3.39-2.744-6.13-6.129-6.13H9.756z"/></svg></span>
               <span class="act-count">${rcLabel}</span>
@@ -3999,6 +5123,14 @@ class DeFiX {
               </span>
               <span class="act-count">${lcLabel}</span>
             </button>
+            ${post.blockNumber
+              ? `<span class="act-views" title="Block #${post.blockNumber}">
+                  <span class="act-icon"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg></span>
+                  <span class="act-count">${(post.blockNumber).toLocaleString()}</span>
+                </span>`
+              : ''}
+            </div><!-- /.post-actions-left -->
+            <div class="post-actions-right">
             <button class="act-btn act-bookmark ${isBookmarked ? 'bookmarked' : ''}" data-action="bookmark" title="${isBookmarked ? 'Remove bookmark' : 'Bookmark'}">
               <span class="act-icon">
                 ${isBookmarked
@@ -4006,16 +5138,14 @@ class DeFiX {
                   : `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5zM6.5 4c-.276 0-.5.22-.5.5v14.56l6-4.29 6 4.29V4.5c0-.28-.224-.5-.5-.5h-11z"/></svg>`}
               </span>
             </button>
-            <button class="act-btn act-share" data-action="share" title="Copy link">
-              <span class="act-icon"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2.59l5.7 5.7-1.41 1.42L13 6.41V16h-2V6.41l-3.3 3.3-1.41-1.42L12 2.59zM21 15l-.02 3.51c0 1.38-1.12 2.49-2.5 2.49H5.5C4.11 21 3 19.88 3 18.5V15h2v3.5c0 .28.22.5.5.5h12.98c.28 0 .5-.22.5-.5L19 15h2z"/></svg></span>
-            </button>
             <a href="https://otter.pulsechain.com/tx/${utils.safe(post.txHash)}"
-              target="_blank" class="otter-link" onclick="event.stopPropagation()">
-              <span class="act-icon" title="View on OtterScan">
-                <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M18.36 5.64c-1.95-1.96-5.11-1.96-7.07 0L9.88 7.05 8.46 5.64l1.42-1.42c2.73-2.73 7.16-2.73 9.9 0 2.73 2.74 2.73 7.17 0 9.9l-1.42 1.42-1.41-1.42 1.41-1.41c1.96-1.96 1.96-5.12 0-7.07zm-2.12 3.53l-7.07 7.07-1.41-1.41 7.07-7.07 1.41 1.41zm-12.02.71l1.42-1.42 1.41 1.42-1.41 1.41c-1.96 1.96-1.96 5.12 0 7.07 1.95 1.96 5.11 1.96 7.07 0l1.41-1.41 1.42 1.41-1.42 1.42c-2.73 2.73-7.16 2.73-9.9 0-2.73-2.74-2.73-7.17 0-9.9z"/></svg>
+              target="_blank" class="otter-link" title="Share / View on OtterScan" onclick="event.stopPropagation()">
+              <span class="act-icon">
+                <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2.59l5.7 5.7-1.41 1.42L13 6.41V16h-2V6.41l-3.3 3.3-1.41-1.42L12 2.59zM21 15l-.02 3.51c0 1.38-1.12 2.49-2.5 2.49H5.5C4.11 21 3 19.88 3 18.5V15h2v3.5c0 .28.22.5.5.5h12.98c.28 0 .5-.22.5-.5L19 15h2z"/></svg>
               </span>
             </a>
-          </div>
+            </div><!-- /.post-actions-right -->
+          </div><!-- /.post-actions -->
         </div>
       </div>`;
   }
@@ -4199,32 +5329,99 @@ class DeFiX {
     this.g('feed-tabs').style.display      = 'none';
     this.g('new-banner').style.display     = 'none';
     this.g('loading-more').style.display   = 'none';
-    this.g('feed-title').textContent       = 'Post';
-
-    /* Back button in header */
-    const existingBack = document.getElementById('thread-back-btn');
-    if (!existingBack) {
-      const backBtn = document.createElement('button');
-      backBtn.id = 'thread-back-btn';
-      backBtn.style.cssText = `background:transparent;border:none;color:var(--text);
-        font-size:20px;cursor:pointer;padding:4px 8px;border-radius:50%;
-        transition:background 0.18s;display:flex;align-items:center;gap:6px;
-        font-weight:700;font-size:15px;`;
-      backBtn.innerHTML = '← Back';
-      backBtn.onmouseenter = () => backBtn.style.background = 'rgba(255,255,255,0.06)';
-      backBtn.onmouseleave = () => backBtn.style.background = 'transparent';
-      backBtn.onclick = () => this._threadBack();
-      this.g('feed-header').insertBefore(backBtn, this.g('feed-header').firstChild);
-    }
+    /* Thread page header: back arrow + "Post" title, exactly like X */
+    this._pendingPageHeader = this._makePageHeader({
+      title: 'Post',
+      back: true,
+    });
+    /* Override back action to restore previous view, not history.back() */
+    this._threadBackOverride = true;
 
     this.state.threadPost = post;
     this._renderThreadPage(post);
     this.fetchThreadReplies(post);
+    /* If this post is a reply, fetch and render its ancestors above it */
+    if (post.parentTx) this._fetchThreadAncestors(post);
+  }
+
+  /* Walk the parentTx chain upward from the focused post, showing up to
+     5 ancestors above it. Each hop requires an OtterScan API call.
+     Appends ancestor posts ABOVE the thread-orig-item. */
+  async _fetchThreadAncestors(post) {
+    const MAX_HOPS = 5;
+    let current = post;
+    const ancestors = [];
+    for (let hop = 0; hop < MAX_HOPS && current.parentTx; hop++) {
+      /* Check in-memory postMap first */
+      let parent = this._postMap.get(current.parentTx);
+      if (!parent) {
+        /* Try to find it via OtterScan tx lookup */
+        try {
+          const raw = await this.apiFetch(post.to || this.state.channel, 1);
+          parent = null;
+          for (const tx of raw) {
+            if (tx.hash?.toLowerCase() === current.parentTx) {
+              try {
+                const text = ethers.utils.toUtf8String(tx.input).trim();
+                if (!text || text.startsWith(PROFILE_PREFIX)) continue;
+                const m = text.match(/^REPLY_TO:(0x[a-f0-9]{64})\n\n/i);
+                parent = {
+                  content: text,
+                  display: m ? text.slice(m[0].length).trim() : text,
+                  parentTx: m ? m[1].toLowerCase() : null,
+                  reporter: tx.from?.toLowerCase(),
+                  to: tx.to?.toLowerCase(),
+                  timestamp: tx.timeStamp
+                    ? new Date(Number(tx.timeStamp)*1000).toISOString()
+                    : new Date().toISOString(),
+                  txHash: tx.hash.toLowerCase(),
+                  mode: 'thread', channel: tx.to?.toLowerCase(),
+                  postType: 'post', direction: null,
+                  repostOf: null, reactionTarget: null, blockNumber: tx.blockNumber ? Number(tx.blockNumber) : null,
+                };
+                this._postMap.set(parent.txHash, parent);
+              } catch { /* skip */ }
+              break;
+            }
+          }
+        } catch { break; }
+      }
+      if (!parent) break;
+      ancestors.unshift(parent);
+      if (parent.reporter && parent.reporter !== this.state.signerAddr)
+        this.fetchOtherProfile(parent.reporter);
+      current = parent;
+    }
+    if (!ancestors.length) return;
+    /* Render ancestors above the focal post */
+    const orig = this.g('feed')?.querySelector('.thread-orig-item');
+    if (!orig) return;
+    const frag = document.createDocumentFragment();
+    ancestors.forEach((anc, i) => {
+      const el = document.createElement('div');
+      el.className = 'post-item thread-ancestor-item';
+      el.dataset.txhash = anc.txHash;
+      el.style.cssText = 'opacity:0.85;border-bottom:1px solid var(--border);position:relative;';
+      el.innerHTML = this.postHTML(anc, true, null, null);
+      /* Connecting line between ancestors */
+      if (i < ancestors.length - 1) {
+        el.style.paddingBottom = '0';
+        el.insertAdjacentHTML('beforeend',
+          '<div style="width:2px;height:16px;background:var(--border);margin:0 auto 0 30px;"></div>');
+      }
+      el.addEventListener('click', e => this.onFeedClick(e, true));
+      frag.appendChild(el);
+    });
+    /* Insert a label */
+    const label = document.createElement('div');
+    label.style.cssText = 'padding:8px 16px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--border);';
+    label.textContent = `↑ ${ancestors.length} ancestor post${ancestors.length > 1 ? 's' : ''}`;
+    orig.parentNode.insertBefore(label, orig);
+    orig.parentNode.insertBefore(frag, label);
   }
 
   _threadBack() {
-    const btn = document.getElementById('thread-back-btn');
-    if (btn) btn.remove();
+    this._threadBackOverride = false;
     /* Restore previous view */
     const prev = this._prevMode || 'main';
     if (prev === 'main')         this.goHome();
@@ -4254,7 +5451,8 @@ class DeFiX {
       repliesHTML += `<div class="post-item thread-reply-item" data-txhash="${utils.safe(r.txHash)}">${this.postHTML(r, true, null, null)}</div>`;
     });
 
-    this.g('feed').innerHTML = `
+    const threadHeader = this._applyPageHeader();
+    this.g('feed').innerHTML = threadHeader + `
       <div class="thread-page">
         <div class="post-item thread-orig-item" data-txhash="${utils.safe(post.txHash)}"
           style="cursor:default;border-bottom:2px solid var(--border)">
@@ -4266,7 +5464,7 @@ class DeFiX {
         <div id="thread-loading-page" style="display:none;padding:16px;text-align:center;color:var(--muted);font-size:14px">
           ⟳ Fetching replies from chain…
         </div>
-        <div class="thread-compose">
+        <div class="thread-compose" style="border-top:1px solid var(--border);margin-top:0">
           <img src="${utils.safe(this.state.profile.picUrl || 'image1.jpeg')}"
             class="compose-avatar" onerror="this.src='image1.jpeg'">
           <div style="flex:1">
@@ -4279,6 +5477,10 @@ class DeFiX {
           </div>
         </div>
       </div>`;
+
+    /* Wire back button to use _threadBack() (restores feed state correctly) */
+    const threadBackBtn = this.g('feed')?.querySelector('.page-header-back');
+    if (threadBackBtn) threadBackBtn.onclick = () => this._threadBack();
 
     /* Wire thread compose */
     const input = document.getElementById('thread-page-input');
@@ -4489,13 +5691,813 @@ class DeFiX {
     }
   }
 
+  /* Pages in this set render their own feed content (profile, thread,
+     etc.) and would silently swallow appended posts if infinite-scroll
+     fired on them. Keep this in sync with renderFeed()'s selfManaged list. */
+  /* Modes that replace the entire #feed DOM themselves — renderFeed must
+     NOT overwrite them with the standard post list. */
+  _selfManagedModes = new Set([
+    'notifications', 'profile', 'thread', 'channels',
+    'explore', 'bookmarks', 'settings'
+  ]);
+  /* Modes where pollNew's "Show N posts" banner makes no sense.
+     Superset of _selfManagedModes — includes wave/self/custom where
+     the user is on a specific channel feed that isn't the main timeline. */
+  _noBannerModes = new Set([
+    'notifications', 'profile', 'thread', 'channels',
+    'explore', 'bookmarks', 'settings', 'wave', 'self', 'custom'
+  ]);
+
   onScroll() {
-    if (this.state.mode === 'notifications') return;
-    if (this.state.hasMore && !this.state.loading) {
-      const near = window.innerHeight + window.scrollY >= document.body.offsetHeight - 400;
-      if (near) this.fetchPosts(false);
+    /* Profile page has its own pagination — route to dedicated handler. */
+    if (this.state.mode === 'profile') {
+      this._onProfileScroll();
+      return;
+    }
+    if (this._selfManagedModes.has(this.state.mode)) return;
+    if (!this.state.hasMore || this.state.loading) return;
+    /* documentElement.scrollHeight is the canonical scrollable height —
+       document.body.offsetHeight is wrong when sticky/fixed elements
+       contribute to layout. 600px lookahead = ~1 viewport of buffer
+       on a 720p screen, prefetching feels seamless. */
+    const doc = document.documentElement;
+    const bottom = window.scrollY + window.innerHeight;
+    if (bottom >= doc.scrollHeight - 600) this.fetchPosts(false);
+  }
+
+  /* __ Per-page sticky header __ */
+  /* Returns an HTML string for a sticky top-of-feed header bar.
+     opts: { title, subtitle, back: bool, searchAddr, noBack: bool } */
+  _makePageHeader(opts = {}) {
+    const backBtn = opts.noBack ? '' : `
+      <button class="page-header-back" onclick="pulse._navBack()"
+        aria-label="Back">
+        <svg viewBox="0 0 24 24" width="20" height="20">
+          <path fill="currentColor" d="M7.414 13l5.043 5.04-1.414 1.42L3.586 12l7.457-7.46 1.414 1.42L7.414 11H21v2H7.414z"/>
+        </svg>
+      </button>`;
+    const searchBtn = opts.searchAddr ? `
+      <button class="page-header-action" title="Search posts"
+        onclick="pulse.g('search-input').focus();pulse.g('search-input').scrollIntoView({behavior:'smooth'})">
+        <svg viewBox="0 0 24 24" width="20" height="20">
+          <path fill="currentColor" d="M10.25 3.75c-3.59 0-6.5 2.91-6.5 6.5s2.91 6.5 6.5 6.5c1.795 0 3.419-.726 4.596-1.904 1.178-1.177 1.904-2.801 1.904-4.596 0-3.59-2.91-6.5-6.5-6.5zm-8.5 6.5c0-4.694 3.806-8.5 8.5-8.5s8.5 3.806 8.5 8.5c0 1.986-.682 3.815-1.814 5.272l4.771 4.771-1.414 1.414-4.771-4.771A8.456 8.456 0 0110.25 18.75c-4.694 0-8.5-3.806-8.5-8.5z"/>
+        </svg>
+      </button>` : '';
+    const subtitle = opts.subtitle
+      ? `<div class="page-header-subtitle">${utils.safe(opts.subtitle)}</div>` : '';
+    return `<div class="page-header">
+      ${backBtn}
+      <div class="page-header-titles">
+        <div class="page-header-title">${utils.safe(opts.title || '')}</div>
+        ${subtitle}
+      </div>
+      ${searchBtn}
+    </div>`;
+  }
+
+  /* Prepend the pending page header to the feed if not already present.
+     Call at the start of any function that sets feed.innerHTML directly. */
+  _applyPageHeader() {
+    if (!this._pendingPageHeader) return '';
+    const h = this._pendingPageHeader;
+    this._pendingPageHeader = null;
+    return h;
+  }
+
+  /* Navigate back using app state rather than browser history.
+     history.back() is unreliable on GitHub Pages (SW inflates history.length).
+     We check if there's a meaningful previous state to restore. */
+  _navBack() {
+    /* Thread page has explicit state saved in _prevMode */
+    if (this._threadBackOverride) {
+      this._threadBack();
+      return;
+    }
+    /* Profile/other pages: try real history first, fall back to Home */
+    if (window.history.length > 2) {
+      window.history.back();
+    } else {
+      this.goHome();
     }
   }
+
+  /* __ Post context menu __ */
+  openPostMenu(post, anchorEl) {
+    /* Close any existing menu */
+    const existing = document.querySelector('.post-menu-dropdown.open');
+    if (existing) existing.remove();
+
+    const isOwn = post.reporter === this.state.signerAddr;
+    const isMuted = this.isMuted(post.reporter);
+    const handle = '@' + this.trunc(post.reporter);
+
+    const menu = document.createElement('div');
+    menu.className = 'post-menu-dropdown open';
+
+    const items = [
+      /* Mute / unmute */
+      isMuted
+        ? { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18 6.41L16.59 5 12 9.59 7.41 5 6 6.41 10.59 11 6 15.59 7.41 17 12 12.41 16.59 17 18 15.59 13.41 11z"/></svg>',
+            label: `Unmute ${handle}`, action: () => this.unmuteAddress(post.reporter), danger: false }
+        : { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18 11v2h4v-2h-4zm-2 6.61c.96.71 2.21 1.65 3.2 2.39.4-.53.8-1.07 1.2-1.6-.99-.74-2.24-1.68-3.2-2.4-.4.54-.8 1.08-1.2 1.61zM20.4 5.6c-.4-.53-.8-1.07-1.2-1.6-.99.74-2.24 1.68-3.2 2.4.4.53.8 1.07 1.2 1.6.96-.72 2.21-1.65 3.2-2.4zM4 9c-1.1 0-2 .9-2 2v2c0 1.1.9 2 2 2h1l5 5V4L5 9H4zm11.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>',
+            label: `Mute ${handle}`, action: () => this.muteAddress(post.reporter), danger: false },
+      /* Copy link */
+      { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.48-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>',
+        label: 'Copy post link', action: () => utils.copyToClipboard(`https://otter.pulsechain.com/tx/${post.txHash}`, 'Link copied!'), danger: false },
+      /* View on OtterScan */
+      { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18.36 5.64c-1.95-1.96-5.11-1.96-7.07 0L9.88 7.05 8.46 5.64l1.42-1.42c2.73-2.73 7.16-2.73 9.9 0 2.73 2.74 2.73 7.17 0 9.9l-1.42 1.42-1.41-1.42 1.41-1.41c1.96-1.96 1.96-5.12 0-7.07zm-2.12 3.53l-7.07 7.07-1.41-1.41 7.07-7.07 1.41 1.41zm-12.02.71l1.42-1.42 1.41 1.42-1.41 1.41c-1.96 1.96-1.96 5.12 0 7.07 1.95 1.96 5.11 1.96 7.07 0l1.41-1.41 1.42 1.41-1.42 1.42c-2.73 2.73-7.16 2.73-9.9 0-2.73-2.74-2.73-7.17 0-9.9z"/></svg>',
+        label: 'View on OtterScan', action: () => window.open(`https://otter.pulsechain.com/tx/${post.txHash}`, '_blank'), danger: false },
+    ];
+    /* Own posts get a note about on-chain permanence */
+    if (isOwn) {
+      items.push({ icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>',
+        label: 'Posts are permanent on-chain', action: () => utils.toast('On-chain posts are permanent by design.'), danger: false });
+    }
+
+    items.forEach(({ icon, label, action, danger }) => {
+      const el = document.createElement('div');
+      el.className = 'post-menu-item' + (danger ? ' danger' : '');
+      el.innerHTML = `${icon}<span>${utils.safe(label)}</span>`;
+      el.onclick = e2 => {
+        e2.stopPropagation();
+        menu.remove();
+        action();
+      };
+      menu.appendChild(el);
+    });
+
+    /* Append to DOM first so offsetWidth/Height are measurable */
+    document.body.appendChild(menu);
+    const rect   = anchorEl ? anchorEl.getBoundingClientRect()
+      : { left: window.innerWidth - 240, bottom: 60, top: 40, right: window.innerWidth - 8 };
+    const mw     = menu.offsetWidth  || 240;
+    const mh     = menu.offsetHeight || 200;
+    /* Align menu's right edge with the anchor's right edge (like Twitter) */
+    let left = (rect.right ?? rect.left + 34) - mw;
+    let top  = rect.bottom + 4;
+    /* Clamp horizontally */
+    if (left < 8) left = 8;
+    if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
+    /* Flip above if would overflow below */
+    if (top + mh > window.innerHeight - 8) top = rect.top - mh - 4;
+    if (top < 8) top = 8;
+    menu.style.left = left + 'px';
+    menu.style.top  = top  + 'px';
+
+    /* Close on outside click */
+    const close = e2 => {
+      if (!menu.contains(e2.target)) {
+        menu.remove();
+        document.removeEventListener('click', close, true);
+      }
+    };
+    setTimeout(() => document.addEventListener('click', close, true), 0);
+  }
+
+  /* __ Profile patch: update avatars + names in-place after profile fetch __
+     Called by _debouncedRender (triggered by fetchOtherProfile completions).
+     Walks existing post-item elements and patches only changed avatar/name
+     nodes — no innerHTML rebuild, no reflow of the whole feed.
+     Falls back to full renderFeed if the post list has changed. */
+  _patchProfilesInFeed() {
+    const feed = this.g('feed');
+    if (!feed) return;
+    /* If feed structure doesn't match current state (new posts, different
+       mode), fall back to a full render scheduled in idle time. */
+    const items = feed.querySelectorAll('.post-item[data-txhash]');
+    if (items.length === 0) { this.renderFeed(); return; }
+    /* Quick hash-list check: if the displayed posts differ from state.posts,
+       do a full render. If they match, just patch the DOM. */
+    const displayedHashes = [...items].map(el => el.dataset.txhash);
+    const stateHashes = this.state.posts
+      .filter(p => !p.postType || p.postType === 'post' || p.postType === 'repost')
+      .slice(0, displayedHashes.length)
+      .map(p => p.txHash);
+    const listsMatch = displayedHashes.length === stateHashes.length &&
+      displayedHashes.every((h, i) => h === stateHashes[i]);
+    if (!listsMatch) {
+      /* Post list changed — need full render, but defer to idle time so
+         it doesn't block the thread that triggered us. */
+      if (typeof requestIdleCallback !== 'undefined') {
+        requestIdleCallback(() => this.renderFeed(), { timeout: 2000 });
+      } else {
+        setTimeout(() => this.renderFeed(), 0);
+      }
+      return;
+    }
+    /* Patch avatars and names in-place. O(n) DOM walk but no innerHTML. */
+    items.forEach(item => {
+      const hash = item.dataset.txhash;
+      const post = this._postMap.get(hash);
+      if (!post) return;
+      const addr = post.reporter;
+      if (!addr || addr === this.state.signerAddr) return;
+      const prof = this.state.profCache[addr];
+      if (!prof || (!prof.username && prof.picUrl === 'image1.jpeg')) return;
+      /* Patch avatar */
+      const avatar = item.querySelector('.post-avatar');
+      if (avatar && prof.picUrl && prof.picUrl !== 'image1.jpeg' &&
+          avatar.src.endsWith('image1.jpeg')) {
+        avatar.src = prof.picUrl;
+      }
+      /* Patch display name */
+      const nameEl = item.querySelector('.post-name');
+      if (nameEl && prof.username) {
+        const safe = utils.safe(prof.username);
+        if (nameEl.textContent !== safe && nameEl.textContent.includes('...')) {
+          nameEl.textContent = safe;
+        }
+      }
+    });
+    /* Also refresh sidebar panels (cheap) */
+    this._refreshSidebarPanels();
+  }
+
+  /* ── Sidebar: dynamic trending + who-to-follow ────────────────────────
+     Called from fetchPosts() after new posts land and from feed re-renders.
+     Cheap: all data comes from in-memory state.posts and state.profCache. */
+  _refreshSidebarPanels() {
+    try { this.renderTrending(); } catch (err) { console.warn('Trending render:', err); }
+    try { this.renderWhoToFollow(); } catch (err) { console.warn('W2F render:', err); }
+  }
+
+  renderTrending() {
+    const list = this.g('sb-trending-list');
+    if (!list) return;
+    /* Scan up to ~200 most recent posts. Match #tag patterns (alphanumeric
+       + underscore), lowercase for grouping, count occurrences. */
+    const counts = new Map();
+    const sample = this.state.posts.slice(0, 200);
+    sample.forEach(p => {
+      if (!p.display) return;
+      const tags = p.display.match(/#[A-Za-z0-9_]{2,30}/g);
+      if (!tags) return;
+      tags.forEach(t => {
+        const key = t.toLowerCase();
+        counts.set(key, (counts.get(key) || 0) + 1);
+      });
+    });
+    /* Top 5 by count, drop singletons — a tag mentioned once isn't a trend. */
+    const top = [...counts.entries()]
+      .filter(([_, n]) => n >= 2)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5);
+
+    /* Preserve pinned partner rows already in the DOM. */
+    const pinned = [...list.querySelectorAll('.sb-card-row')]
+      .filter(r => r.querySelector('.trend-label')?.textContent?.match(/partner|powered/i));
+
+    const trendHTML = top.map(([tag, count]) => {
+      const display = tag.replace(/^#/, '');
+      return `<div class="sb-card-row" onclick="pulse.filterByTag('${utils.safe(display)}')" style="cursor:pointer">
+        <div style="flex:1">
+          <span class="trend-label">Trending on PulseChain</span>
+          <span class="trend-name">#${utils.safe(display)}</span>
+          <span class="trend-count">${count} post${count > 1 ? 's' : ''}</span>
+        </div>
+        <span style="font-size:20px;align-self:center">📈</span>
+      </div>`;
+    }).join('');
+
+    /* Fallback when nothing trends yet — keeps the card from looking empty. */
+    const fallback = (top.length === 0)
+      ? `<div class="sb-card-row" onclick="pulse.filterByTag('PulseChain')" style="cursor:pointer">
+          <div style="flex:1">
+            <span class="trend-label">Trending on PulseChain</span>
+            <span class="trend-name">#PulseChain</span>
+            <span class="trend-count">Join the conversation</span>
+          </div>
+          <span style="font-size:20px;align-self:center">⚡</span>
+        </div>`
+      : '';
+
+    list.innerHTML = trendHTML + fallback + pinned.map(p => p.outerHTML).join('');
+  }
+
+  renderWhoToFollow() {
+    const list = this.g('sb-w2f-list');
+    const card = this.g('sb-w2f-card');
+    if (!list || !card) return;
+    if (!this.state.signerAddr) { card.style.display = 'none'; return; }
+
+    /* Count post frequency by reporter, excluding self and already-followed. */
+    const counts = new Map();
+    this.state.posts.slice(0, 200).forEach(p => {
+      const r = p.reporter?.toLowerCase();
+      if (!r || r === this.state.signerAddr) return;
+      if (this.state.following.has(r)) return;
+      counts.set(r, (counts.get(r) || 0) + 1);
+    });
+    /* Prefer addresses we have profile info for — nicer cards, real names. */
+    const candidates = [...counts.entries()]
+      .sort((a, b) => {
+        const aHasProfile = this.state.profCache[a[0]]?.username ? 1 : 0;
+        const bHasProfile = this.state.profCache[b[0]]?.username ? 1 : 0;
+        if (aHasProfile !== bHasProfile) return bHasProfile - aHasProfile;
+        return b[1] - a[1];
+      })
+      .slice(0, 3);
+
+    if (candidates.length === 0) { card.style.display = 'none'; return; }
+    card.style.display = '';
+    list.innerHTML = candidates.map(([addr]) => {
+      const c = this.state.profCache[addr];
+      const name = c?.username ? utils.safe(c.username) : this.trunc(addr);
+      const pic  = c?.picUrl || 'image1.jpeg';
+      return `<div class="sb-card-row" style="cursor:pointer" onclick="pulse.goProfilePage('${utils.safe(addr)}', false)">
+        <img src="${utils.safe(pic)}" class="w2f-avatar" onerror="this.src='image1.jpeg'"
+          alt="" style="width:40px;height:40px;border-radius:50%;margin-right:10px;flex-shrink:0">
+        <div style="flex:1;min-width:0">
+          <span class="trend-name" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</span>
+          <span class="trend-count">${this.trunc(addr)}</span>
+        </div>
+        <button class="w2f-follow-btn" onclick="event.stopPropagation();pulse.toggleFollowAddr('${utils.safe(addr)}',this)"
+          style="padding:6px 14px;border-radius:9999px;background:var(--text);color:var(--bg);
+                 font-weight:700;font-size:13px;border:0;cursor:pointer;flex-shrink:0">Follow</button>
+      </div>`;
+    }).join('');
+  }
+
+  /* Toggle follow/unfollow for an address. Emits FOLLOW: or UNFOLLOW:
+     tx to your own address (self-send pattern). Updates state.following
+     optimistically; reverts on tx failure. Called from:
+       - Who-to-follow sidebar card
+       - Profile popup card  (Follow / Following button)
+       - Full profile page   (prof-follow-btn)
+     The optional `btn` updates UI in-place when given. */
+  toggleFollowAddr(addr, btn) {
+    addr = addr.toLowerCase();
+    if (!this.signer) { utils.toast('Connect wallet to follow'); return; }
+    if (addr === this.state.signerAddr) {
+      utils.toast("You can't follow yourself"); return;
+    }
+    if (typeof this.publish !== 'function') return;
+
+    const wasFollowing = this.state.following.has(addr);
+    const prefix       = wasFollowing ? UNFOLLOW_PREFIX : FOLLOW_PREFIX;
+    /* Optimistic update — flips state and any visible buttons immediately. */
+    if (wasFollowing) this.state.following.delete(addr);
+    else              this.state.following.add(addr);
+    if (btn) {
+      btn.textContent = wasFollowing ? 'Follow' : 'Following';
+      btn.disabled    = true;
+      btn.style.opacity = '0.6';
+    }
+
+    this.publish(`${prefix}${addr}`, null, this.state.signerAddr).then(ok => {
+      if (!ok) {
+        /* Revert optimistic update on tx failure. */
+        if (wasFollowing) this.state.following.add(addr);
+        else              this.state.following.delete(addr);
+        if (btn) {
+          btn.textContent = wasFollowing ? 'Following' : 'Follow';
+          btn.style.opacity = '1';
+          btn.disabled = false;
+        }
+        return;
+      }
+      /* Success — refresh affected UI regions. */
+      if (btn) { btn.style.opacity = '1'; btn.disabled = false; }
+      setTimeout(() => {
+        this.renderWhoToFollow();
+        /* If the full profile page is open for this user, flip its button. */
+        const profBtn = document.getElementById('prof-follow-btn');
+        if (profBtn && this.state.mode === 'profile' &&
+            this.state.channel?.toLowerCase() === addr) {
+          if (this.state.following.has(addr)) {
+            profBtn.textContent = 'Following';
+            profBtn.className = 'prof-following-btn';
+            profBtn.id = 'prof-follow-btn';
+          } else {
+            profBtn.textContent = 'Follow';
+            profBtn.className = 'prof-follow-btn';
+            profBtn.id = 'prof-follow-btn';
+          }
+        }
+      }, 1500);
+    });
+  }
+
+  /* Rotating compose placeholder — light Twitter polish. Only rotates when
+     the textarea is empty AND unfocused, so we never disturb a user typing. */
+  _initComposePlaceholderRotation() {
+    const placeholders = [
+      "What's happening on Pulse?",
+      "What's on your mind?",
+      "Drop something uncensorable…",
+      "Speak freely — the chain remembers.",
+      "Post to the underground.",
+    ];
+    const targets = ['compose-text', 'modal-compose-text'].map(id => this.g(id)).filter(Boolean);
+    if (targets.length === 0) return;
+    let idx = 0;
+    setInterval(() => {
+      idx = (idx + 1) % placeholders.length;
+      targets.forEach(el => {
+        if (!el.value && document.activeElement !== el) {
+          el.placeholder = placeholders[idx];
+        }
+      });
+    }, 8000);
+  }
+
+  /* ── Profile page: infinite scroll ───────────────────────────────────
+     Triggered from the global scroll listener when mode === 'profile'.
+     Keeps fetching more pages from the chain and appending matching posts
+     until we hit the end of history or fail. */
+  async _onProfileScroll() {
+    const st = this._profilePageState;
+    if (!st || st.loading || !st.hasMore) return;
+    if (this.state.mode !== 'profile') return;
+    /* Trigger when within ~600px of the bottom — same threshold as the main feed */
+    const doc = document.documentElement;
+    if (window.scrollY + window.innerHeight < doc.scrollHeight - 600) return;
+    await this.fetchProfileMore();
+  }
+
+  async fetchProfileMore() {
+    const st = this._profilePageState;
+    if (!st || st.loading || !st.hasMore) return;
+    st.loading = true;
+    const feedEl = document.getElementById('prof-feed');
+    /* Show a small loading footer at the bottom of the profile feed */
+    let footer = feedEl?.querySelector('.prof-loading-more');
+    if (feedEl && !footer) {
+      footer = document.createElement('div');
+      footer.className = 'prof-loading-more';
+      footer.style.cssText = 'padding:24px;text-align:center;color:var(--muted);font-size:14px';
+      footer.textContent = 'Loading more posts…';
+      feedEl.appendChild(footer);
+    }
+    try {
+      /* Scan the next batch of 4 pages */
+      const startPage = st.pagesScanned + 1;
+      const endPage   = startPage + 3;
+      let batch = [];
+      for (let p = startPage; p <= endPage; p++) {
+        let raw;
+        try { raw = await this.apiFetch(st.address, p); }
+        catch (err) { console.warn('Profile fetch error:', err); st.hasMore = false; break; }
+        if (raw.length === 0) { st.hasMore = false; break; }
+        batch.push(...raw);
+        if (raw.length < 50) { st.hasMore = false; break; }
+      }
+      st.pagesScanned = endPage;
+      st.rawTxs.push(...batch);
+      /* Filter for current tab and append */
+      const tab = st.tab;
+      const newPosts = this._filterProfileTxs(batch, tab, st.address);
+      const fresh = newPosts.filter(p => !st.visibleTxHashes.has(p.txHash));
+      fresh.forEach(p => {
+        st.visibleTxHashes.add(p.txHash);
+        this._postMap.set(p.txHash, p);
+      });
+      if (fresh.length && feedEl) {
+        const frag = document.createDocumentFragment();
+        const replyMap = new Map();
+        fresh.forEach(p => { if (p.parentTx) replyMap.set(p.parentTx, (replyMap.get(p.parentTx)||0)+1); });
+        fresh.forEach(p => {
+          if (tab === 'media') {
+            /* For media tab, just append matching thumbs */
+            const resolveUrl = u => u.startsWith('ipfs://') ? 'https://ipfs.io/ipfs/' + u.slice(7)
+              : u.startsWith('arweave://') ? 'https://arweave.net/' + u.slice(10) : u;
+            const matches = [...p.display.matchAll(/https?:\/\/[^\s<>"{}|\\^[\]`]+|ipfs:\/\/\S+|arweave:\/\/\S+/g)];
+            matches.forEach(mm => {
+              const resolved = resolveUrl(mm[0]);
+              const img = document.createElement('img');
+              img.src = resolved;
+              img.className = 'prof-media-thumb';
+              img.loading = 'lazy';
+              img.onerror = function(){ this.style.display = 'none'; };
+              img.onclick = () => window.open('https://otter.pulsechain.com/tx/' + p.txHash, '_blank');
+              const grid = feedEl.querySelector('.prof-media-grid') || (() => {
+                const g = document.createElement('div');
+                g.className = 'prof-media-grid';
+                feedEl.insertBefore(g, footer);
+                return g;
+              })();
+              grid.appendChild(img);
+            });
+            return;
+          }
+          const el = document.createElement('div');
+          el.className = 'post-item';
+          el.dataset.txhash = p.txHash;
+          el.innerHTML = this.postHTML(p, false, replyMap, null);
+          frag.appendChild(el);
+          if (p.reporter !== this.state.signerAddr) this.fetchOtherProfile(p.reporter);
+        });
+        feedEl.insertBefore(frag, footer);
+      }
+      /* Update footer based on outcome */
+      if (footer) {
+        if (!st.hasMore) {
+          footer.textContent = '— End of profile —';
+          setTimeout(() => footer?.remove(), 5000);
+        } else {
+          footer.textContent = 'Loading more posts…';
+        }
+      }
+    } finally {
+      st.loading = false;
+    }
+  }
+
+  /* Pure tx filter — split out of loadProfileTab so fetchProfileMore can
+     reuse it without re-fetching. Returns parsed post objects. */
+  _filterProfileTxs(rawTxs, tab, address) {
+    const imgRe   = /\.(?:png|jpe?g|gif|webp|svg|bmp)(?:\?[^\s]*)?$/i;
+    const ipfsRe  = /^(ipfs:\/\/|https?:\/\/[^\/]*\/ipfs\/)/i;
+    const imgHosts = new Set(['imgur.com','i.imgur.com','i.ibb.co','postimg.cc',
+      'media.giphy.com','i.giphy.com','tenor.com','media.tenor.com',
+      'pbs.twimg.com','ipfs.io','gateway.pinata.cloud','cf-ipfs.com',
+      'cloudflare-ipfs.com','dweb.link']);
+    const isMediaUrl = url => {
+      if (imgRe.test(url)) return true;
+      if (ipfsRe.test(url)) return true;
+      if (url.includes('arweave.net/')) return true;
+      try { return imgHosts.has(new URL(url).hostname); } catch { return false; }
+    };
+    const addrLow = address.toLowerCase();
+    const posts = [];
+    rawTxs.forEach(tx => {
+      const from = tx.from?.toLowerCase();
+      const to   = tx.to?.toLowerCase();
+      if (from !== addrLow) return;
+      if (!tx.input || tx.input === '0x') return;
+      try {
+        const text = ethers.utils.toUtf8String(tx.input).trim();
+        if (text.startsWith(PROFILE_PREFIX)) return;
+        if (text.startsWith(LIKE_PREFIX) || text.startsWith(BOOKMARK_PREFIX) ||
+            text.startsWith(FOLLOW_PREFIX) || text.startsWith(UNFOLLOW_PREFIX)) return;
+        const isReply = text.startsWith(REPLY_PREFIX);
+        if (tab === 'posts'   &&  isReply) return;
+        if (tab === 'replies' && !isReply) return;
+        const m = text.match(/^REPLY_TO:(0x[a-f0-9]{64})\n\n/i);
+        const display = m ? text.slice(m[0].length).trim() : text;
+        if (!display) return;
+        if (tab === 'media') {
+          const urls = [...display.matchAll(/https?:\/\/[^\s<>"{}|\\^[\]`]+|ipfs:\/\/\S+|arweave:\/\/\S+/g)].map(m => m[0]);
+          const resolveUrl = u => u.startsWith('ipfs://') ? 'https://ipfs.io/ipfs/' + u.slice(7)
+            : u.startsWith('arweave://') ? 'https://arweave.net/' + u.slice(10) : u;
+          const hasImg = urls.some(u => isMediaUrl(resolveUrl(u)));
+          if (!hasImg) return;
+        }
+        posts.push({
+          content: text, display,
+          parentTx: m ? m[1].toLowerCase() : null,
+          direction: null,
+          reporter: from, to: to ?? null,
+          timestamp: tx.timeStamp
+            ? new Date(Number(tx.timeStamp)*1000).toISOString()
+            : new Date().toISOString(),
+          txHash: tx.hash.toLowerCase(),
+          channel: to, mode: 'profile',
+        });
+      } catch { /* skip */ }
+    });
+    return posts;
+  }
+
+  /* ── Profile popup card ─────────────────────────────────────────────
+     Twitter-style profile preview shown when user clicks a name or avatar
+     in the feed. Click on the popup body (not the Follow button) opens
+     the full profile page. Closes on outside click, ESC, scroll, or a
+     second click on the same anchor (toggle). */
+  async showProfilePopup(address, anchorEl, trigger = 'click') {
+    address = address.toLowerCase();
+    const popup = this.g('profile-popup');
+    if (!popup) return;
+    /* Click-toggle: clicking the same anchor again closes the popup.
+       Hover-open never toggles — moving away closes it instead. */
+    if (trigger === 'click' &&
+        popup.classList.contains('open') && popup.dataset.addr === address) {
+      this.hideProfilePopup();
+      return;
+    }
+    /* If hover is opening but click-popup is already showing something else,
+       don't clobber it — let click take priority. */
+    if (trigger === 'hover' && popup.classList.contains('open') &&
+        popup.dataset.addr !== address) return;
+    popup.dataset.addr = address;
+
+    /* Resolve profile data: own state, prof cache, then trigger fetch if missing. */
+    let prof = null;
+    if (address === this.state.signerAddr) {
+      prof = this.state.profile;
+    } else {
+      prof = this.state.profCache[address];
+      if (!prof || prof === null) {
+        /* Render placeholder, kick off fetch, refresh on completion. */
+        this.fetchOtherProfile(address).then(() => {
+          if (popup.classList.contains('open') && popup.dataset.addr === address) {
+            popup.innerHTML = this._profilePopupHTML(address, this.state.profCache[address] || {});
+          }
+        });
+      }
+    }
+
+    /* Count posts by this address in current feed for the "N posts" stat. */
+    const postCount = this.state.posts.filter(
+      p => p.reporter?.toLowerCase() === address && (!p.postType || p.postType === 'post')
+    ).length;
+
+    popup.innerHTML = this._profilePopupHTML(address, prof || {}, postCount);
+
+    /* Position popup near anchor — clamped to viewport. */
+    this._positionPopup(popup, anchorEl);
+    popup.classList.add('open');
+    requestAnimationFrame(() => popup.classList.add('visible'));
+
+    this._wirePopupDismiss();
+  }
+
+  _profilePopupHTML(address, prof, postCount = null) {
+    const isOwn = address === this.state.signerAddr;
+    const isFollowing = this.state.following.has(address);
+    const name = prof.username ? utils.safe(prof.username) : this.trunc(address);
+    const handle = '@' + this.trunc(address);
+    const pic = utils.safe(prof.picUrl || 'image1.jpeg');
+    const bio = prof.bio ? utils.safe(prof.bio) : '';
+    const hasProfile = !!prof.username;
+    const verifiedSvg = hasProfile
+      ? '<svg viewBox="0 0 22 22" width="15" height="15"><path fill="#1d9bf0" d="M20.396 11c-.018-.646-.215-1.275-.57-1.816-.354-.54-.852-.972-1.438-1.246.223-.607.27-1.264.14-1.897-.131-.634-.437-1.218-.882-1.687-.47-.445-1.053-.75-1.687-.882-.633-.13-1.29-.083-1.897.14-.273-.587-.704-1.086-1.245-1.44S11.647 1.62 11 1.604c-.646.017-1.273.213-1.813.568s-.969.854-1.24 1.44c-.608-.223-1.267-.272-1.902-.14-.635.13-1.22.436-1.69.882-.445.47-.749 1.055-.878 1.688-.13.633-.08 1.29.144 1.896-.587.274-1.087.705-1.443 1.245-.356.54-.555 1.17-.574 1.817.02.647.218 1.276.574 1.817.356.54.856.972 1.443 1.245-.224.606-.274 1.263-.144 1.896.13.634.433 1.218.877 1.688.47.443 1.054.747 1.687.878.633.132 1.29.084 1.897-.136.274.586.705 1.084 1.246 1.439.54.354 1.17.551 1.816.569.647-.016 1.276-.213 1.817-.567s.972-.854 1.245-1.44c.604.239 1.266.296 1.903.164.636-.132 1.22-.447 1.68-.907.46-.46.776-1.044.908-1.681s.075-1.299-.165-1.903c.586-.274 1.084-.705 1.439-1.246.354-.54.551-1.17.569-1.816zM9.662 14.85l-3.429-3.428 1.293-1.302 2.072 2.072 4.4-4.794 1.347 1.246z"/></svg>'
+      : '';
+
+    const followBtn = isOwn
+      ? ''
+      : isFollowing
+        ? `<button class="pp-follow-btn following" data-pp-action="unfollow"><span class="pp-following-label">Following</span></button>`
+        : `<button class="pp-follow-btn" data-pp-action="follow">Follow</button>`;
+
+    return `
+      <div class="pp-header">
+        <img src="${pic}" class="pp-avatar" alt="" onerror="this.src='image1.jpeg'">
+        ${followBtn}
+      </div>
+      <div class="pp-name">${name}${verifiedSvg ? `<span class="verified-icon">${verifiedSvg}</span>` : ''}</div>
+      <div class="pp-handle">${handle}</div>
+      ${bio ? `<div class="pp-bio">${bio}</div>` : ''}
+      ${postCount !== null
+        ? `<div class="pp-stats"><span><strong>${postCount}</strong> ${postCount === 1 ? 'post' : 'posts'} in view</span></div>`
+        : ''}
+      <div class="pp-view-hint">Click card to view profile →</div>
+    `;
+  }
+
+  _positionPopup(popup, anchor) {
+    const rect = anchor.getBoundingClientRect();
+    popup.style.display = 'block';
+    popup.style.visibility = 'hidden';
+    const pw = popup.offsetWidth || 320;
+    const ph = popup.offsetHeight || 200;
+    popup.style.visibility = '';
+
+    let left = rect.left;
+    let top  = rect.bottom + 8;
+    if (left + pw > window.innerWidth - 12) left = window.innerWidth - pw - 12;
+    if (left < 12) left = 12;
+    if (top + ph > window.innerHeight - 12) {
+      const flipped = rect.top - ph - 8;
+      top = flipped > 12 ? flipped : Math.max(12, window.innerHeight - ph - 12);
+    }
+    popup.style.left = left + 'px';
+    popup.style.top  = top  + 'px';
+  }
+
+  _wirePopupDismiss() {
+    /* Click handling is done by the permanent capture listener in wireListeners.
+       Here we only add ESC (keydown) and scroll — both are safe to attach once
+       per popup open since they call hideProfilePopup which is idempotent. */
+    if (this._popupHandlersAttached) return;
+    this._popupHandlersAttached = true;
+    const dismiss = e => {
+      if (e.type === 'keydown' && e.key === 'Escape') this.hideProfilePopup();
+      else if (e.type === 'scroll') this.hideProfilePopup();
+    };
+    this._popupDismiss = dismiss;
+    document.addEventListener('keydown', dismiss);
+    window.addEventListener('scroll', dismiss, { passive: true, once: false });
+  }
+
+  hideProfilePopup() {
+    const popup = this.g('profile-popup');
+    if (!popup || !popup.classList.contains('open')) return;
+    popup.classList.remove('visible');
+    /* Remove .open after transition so CSS opacity:0 plays */
+    setTimeout(() => popup.classList.remove('open'), 150);
+    /* Clean up ESC/scroll listener (click is handled by permanent listener) */
+    if (this._popupDismiss) {
+      document.removeEventListener('keydown', this._popupDismiss);
+      window.removeEventListener('scroll', this._popupDismiss);
+      this._popupDismiss = null;
+    }
+    this._popupHandlersAttached = false;
+    clearTimeout(popup._pendingClose);
+    popup._pendingClose = null;
+  }
+
+  /* ── Share card ─────────────────────────────────────────────────── */
+  openShareCard(post) {
+    const canvas  = this.g('share-canvas');
+    const modal   = this.g('share-modal');
+    const copyBtn = this.g('share-copy-img-btn');
+    const linkBtn = this.g('share-copy-link-btn');
+    const nativeBtn = this.g('share-native-btn');
+    if (!canvas || !modal) {
+      utils.copyToClipboard(`https://otter.pulsechain.com/tx/${post.txHash}`, 'Link copied!');
+      return;
+    }
+    const dpr = window.devicePixelRatio || 1;
+    const W = 480, H = 280;
+    canvas.width  = W * dpr; canvas.height = H * dpr;
+    canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.fillStyle = '#16181c'; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = '#2f3336'; ctx.lineWidth = 1;
+    ctx.strokeRect(0.5, 0.5, W-1, H-1);
+    const c = this.state.profCache[post.reporter];
+    const displayName = c?.username || this.trunc(post.reporter);
+    const text = (post.display || '').slice(0, 280);
+    const ts = this.relTime(post.timestamp);
+    const brand = '#7c4dff';
+    ctx.fillStyle = brand; ctx.fillRect(0, 0, 4, H);
+    ctx.fillStyle = '#e7e9ea';
+    ctx.font = 'bold 15px system-ui, sans-serif';
+    ctx.fillText(displayName, 24, 36);
+    ctx.fillStyle = '#71767b';
+    ctx.font = '13px system-ui, sans-serif';
+    ctx.fillText('@' + this.trunc(post.reporter), 24, 54);
+    ctx.fillStyle = '#2f3336'; ctx.fillRect(16, 64, W-32, 1);
+    ctx.fillStyle = '#e7e9ea';
+    ctx.font = '14px system-ui, sans-serif';
+    const words = text.split(' ');
+    let line = '', y = 88;
+    for (const word of words) {
+      const test = line + (line ? ' ' : '') + word;
+      if (ctx.measureText(test).width > W-48 && line) {
+        ctx.fillText(line, 24, y); line = word; y += 22;
+        if (y > H-60) { ctx.fillText(line+'…', 24, y); line=''; break; }
+      } else line = test;
+    }
+    if (line) ctx.fillText(line, 24, y);
+    ctx.fillStyle = '#1d1f23'; ctx.fillRect(0, H-48, W, 48);
+    ctx.fillStyle = '#71767b'; ctx.font = '12px system-ui, sans-serif';
+    ctx.fillText(ts + '  ·  PulseChain', 24, H-26);
+    ctx.fillStyle = brand; ctx.font = 'bold 12px system-ui, sans-serif';
+    ctx.fillText('Say It DeFi', W-100, H-26);
+    modal.classList.add('open');
+    copyBtn.onclick = async () => {
+      try {
+        canvas.toBlob(async blob => {
+          if (!blob) { utils.toast('Canvas error'); return; }
+          await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+          utils.toast('Image copied ✓');
+        }, 'image/png');
+      } catch { utils.toast('Copy not supported — try Share'); }
+    };
+    if (navigator.share && navigator.canShare) {
+      nativeBtn.style.display = '';
+      nativeBtn.onclick = async () => {
+        try {
+          const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+          const file = new File([blob], 'post.png', { type:'image/png' });
+          if (navigator.canShare({ files:[file] })) {
+            await navigator.share({ files:[file], title:'Post on Say It DeFi',
+              text: text.slice(0,100), url:`https://otter.pulsechain.com/tx/${post.txHash}` });
+          } else {
+            await navigator.share({ title:'Post on Say It DeFi',
+              url:`https://otter.pulsechain.com/tx/${post.txHash}` });
+          }
+        } catch(err) { if(err.name!=='AbortError') utils.toast('Share failed: '+err.message); }
+      };
+    }
+    linkBtn.onclick = () => utils.copyToClipboard(
+      `https://otter.pulsechain.com/tx/${post.txHash}`, 'Link copied!');
+  }
+
+  /* ── Mute / unmute ──────────────────────────────────────────────── */
+  muteAddress(addr) {
+    addr = addr.toLowerCase();
+    if (this.state.muted.has(addr)) { utils.toast('Already muted'); return; }
+    this.state.muted.add(addr);
+    const list = [...this.state.muted];
+    localStorage.setItem(MUTE_KEY, JSON.stringify(list));
+    this.cache.saveMuted(list).catch(err => console.warn('Mute IDB save:', err));
+    utils.toast(`Muted ${this.trunc(addr)}`);
+    this.renderFeed();
+  }
+  unmuteAddress(addr) {
+    addr = addr.toLowerCase();
+    this.state.muted.delete(addr);
+    const list = [...this.state.muted];
+    localStorage.setItem(MUTE_KEY, JSON.stringify(list));
+    this.cache.saveMuted(list).catch(err => console.warn('Unmute IDB save:', err));
+    utils.toast(`Unmuted ${this.trunc(addr)}`);
+    this.renderFeed();
+  }
+  isMuted(addr) { return this.state.muted.has(addr?.toLowerCase()); }
 
   trunc = a => (a && a.length > 10) ? `${a.slice(0,6)}...${a.slice(-4)}` : (a || '');
 
@@ -4509,9 +6511,45 @@ class DeFiX {
 }
 
 const pulse = new DeFiX();
+
+/* ── Service Worker — offline shell + fast repeat loads ──────────────
+   Registers sw.js which caches index.html and ethers.js for instant
+   load on repeat visits. API calls (PulseScan) bypass the cache.
+   To force a cache refresh after a new deploy:
+     1. Bump SW_CACHE_VER at the top of this file
+     2. Push to GitHub — the SW will detect the version mismatch
+        on next page load and fetch fresh assets automatically. */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js')
+      .then(reg => {
+        /* Pass the current cache version to the SW via postMessage
+           so it knows when to invalidate its cache. */
+        const sendVer = () => {
+          if (reg.active) reg.active.postMessage({ type: 'CACHE_VER', ver: SW_CACHE_VER });
+        };
+        if (reg.active) sendVer();
+        reg.addEventListener('updatefound', () => {
+          reg.installing?.addEventListener('statechange', e => {
+            if (e.target.state === 'activated') sendVer();
+          });
+        });
+        /* When the SW signals a new version is ready, show the user
+           a refresh banner so they get the update without a hard reload. */
+        navigator.serviceWorker.addEventListener('message', e => {
+          if (e.data?.type === 'NEW_VERSION_READY') {
+            utils.toast('↺ New version available — refresh to update');
+          }
+        });
+        console.log('[SW] Registered, scope:', reg.scope);
+      })
+      .catch(err => console.warn('[SW] Registration failed:', err));
+  });
+}
 pulse.init().catch(err => {
   console.error('Init error:', err);
-  utils.toast('Startup failed — see console');
+  if (err.stack) console.error('Stack:', err.stack);
+  utils.toast('Startup failed — reload and check console');
 });
 </script>
 </body>
