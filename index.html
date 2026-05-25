@@ -431,20 +431,19 @@ nav { flex:1; padding:4px 0; }
 /* Post actions */
 .post-actions {
   display:flex; align-items:center;
-  justify-content:space-between;
-  margin-top:4px; max-width:440px;
+  /* Full width of the post column — so Bookmark+Share reach the right edge */
+  width:100%; margin-top:4px;
 }
-/* Left group: Reply, Repost, Like, Views -- spread evenly */
+/* Left group: Reply, Repost, Like, Views — spread evenly */
 .post-actions-left {
   display:flex; align-items:center;
   flex:1; justify-content:space-between;
-  /* cap at 340px so icons don't spread too far on wide posts */
-  max-width:340px;
-  min-width:0;
+  max-width:360px; min-width:0;
 }
-/* Right group: Bookmark + OtterScan -- flush right, touching */
+/* Right group: Bookmark + Share — pinned to the right edge like Twitter */
 .post-actions-right {
-  display:flex; align-items:center; gap:0; margin-left:auto;
+  display:flex; align-items:center; gap:0;
+  margin-left:auto;  /* pushes the group to the far right */
 }
 .act-btn {
   display:flex; align-items:center; gap:2px;
@@ -2125,6 +2124,29 @@ class Cache {
       tx.onerror    = () => rej(tx.error);
     });
   }
+  async getMuted() {
+    await this._ready;
+    if (!this._db.objectStoreNames.contains('muted')) return [];
+    return new Promise((res, rej) => {
+      const req = this._db.transaction('muted','readonly')
+        .objectStore('muted').getAll();
+      req.onsuccess = () => res((req.result || []).map(r => r.address));
+      req.onerror   = () => rej(req.error);
+    });
+  }
+  async saveMuted(addresses) {
+    await this._ready;
+    if (!this._db.objectStoreNames.contains('muted')) return;
+    const tx = this._db.transaction('muted', 'readwrite');
+    const store = tx.objectStore('muted');
+    /* Clear and re-write — muted list is small, full replace is fine */
+    store.clear();
+    addresses.forEach(addr => store.put({ address: addr.toLowerCase() }));
+    return new Promise((res, rej) => {
+      tx.oncomplete = () => res();
+      tx.onerror    = () => rej(tx.error);
+    });
+  }
   async getProfile(address) {
     await this._ready;
     return new Promise((res, rej) => {
@@ -2210,6 +2232,8 @@ class DeFiX {
       likes:      new Set(),   /* txHashes this user has liked */
       bookmarks:  new Set(),   /* txHashes this user has bookmarked */
       following:  new Set(),   /* addresses this user follows */
+      /* muted: loaded from IDB in init() after cache is ready; seeded
+         with localStorage fallback for backwards compat */
       muted:      new Set(JSON.parse(localStorage.getItem(MUTE_KEY)||'[]')),
       /* channel history */
       channelHistory: [],      /* [{address, label, lastActivity, preview, postCount}] */
@@ -2242,6 +2266,17 @@ class DeFiX {
     this.wireListeners();
     this.updateChLabel();
     await this.cache.pruneIfStale();
+    /* Migrate muted list from localStorage to IDB if needed */
+    try {
+      const idbMuted = await this.cache.getMuted();
+      if (idbMuted.length > 0) {
+        /* IDB has data — use it as the source of truth */
+        this.state.muted = new Set(idbMuted);
+      } else if (this.state.muted.size > 0) {
+        /* localStorage has data but IDB doesn't — migrate */
+        await this.cache.saveMuted([...this.state.muted]);
+      }
+    } catch (err) { console.warn('Muted IDB load:', err); }
     this._restoreDraft();
     await this.loadCached();
     await this.tryAutoReconnect();
@@ -2860,8 +2895,10 @@ class DeFiX {
     this.g('feed-tabs').classList.add('tabs-sticky');
     this.g('compose-area').style.display   = 'flex';
     this.g('channel-banner').style.display = 'none';
-    /* Clear any pending page-header from a previous page */
     this._pendingPageHeader = null;
+    /* Clear feed immediately so previous page's content doesn't flash */
+    const homeF = this.g('feed');
+    if (homeF) homeF.innerHTML = '';
     this.setChActive('ch-main');
     this.updateChLabel();
     await this.resetAndFetch();
@@ -3196,18 +3233,18 @@ class DeFiX {
     this.g('channel-banner').style.display = 'none';
     this.g('feed-tabs').style.display    = 'none';
     this.g('loading-more').style.display = 'none';
+    const bkHeader = this._applyPageHeader();
     if (this.state.bookmarks.size === 0) {
-      this.g('feed').innerHTML = `
+      this.g('feed').innerHTML = bkHeader + `
         <div class="placeholder-view">
           <span class="ph-icon">🔖</span>
           <h2>No bookmarks yet</h2>
-          <p>Save posts by clicking the bookmark icon. Your bookmarks are stored privately on-chain and only visible to you.</p>
+          <p>Save posts by clicking the bookmark icon.</p>
         </div>`;
     } else {
-      /* filter feed to bookmarked posts */
       const bookmarked = this.state.posts.filter(p => this.state.bookmarks.has(p.txHash));
       if (!bookmarked.length) {
-        this.g('feed').innerHTML = `<div class="placeholder-view"><span class="ph-icon">🔖</span><h2>Bookmarks loading…</h2><p>Syncing your saved posts from the chain.</p></div>`;
+        this.g('feed').innerHTML = bkHeader + `<div class="placeholder-view"><span class="ph-icon">🔖</span><h2>Bookmarks loading…</h2><p>Syncing your saved posts from the chain.</p></div>`;
       } else {
         const frag = document.createDocumentFragment();
         bookmarked.forEach(post => {
@@ -3218,7 +3255,7 @@ class DeFiX {
           el.innerHTML = this.postHTML(post, false, null);
           frag.appendChild(el);
         });
-        this.g('feed').innerHTML = '';
+        this.g('feed').innerHTML = bkHeader;
         this.g('feed').appendChild(frag);
       }
     }
@@ -3237,7 +3274,8 @@ class DeFiX {
     /* Load cached immediately */
     const cached = await this.cache.getChannels();
     this.state.channelHistory = cached;
-    this.renderChannelHistory();
+    const chHeader = this._applyPageHeader();
+    this.renderChannelHistory(chHeader);
 
     /* If nothing cached, trigger a rescan from chain */
     if (cached.length === 0 && this.state.signerAddr) {
@@ -3345,7 +3383,7 @@ class DeFiX {
     utils.toast('Channel history updated ✓');
   }
 
-  renderChannelHistory() {
+  renderChannelHistory(headerHTML = '') {
     const feed = this.g('feed');
     const history = this.state.channelHistory;
 
@@ -3393,7 +3431,7 @@ class DeFiX {
       html += `</div>`;
     }
 
-    feed.innerHTML = html;
+    feed.innerHTML = headerHTML + html;
 
     /* Wire the new channel input */
     const inp = this.g('ch-new-input');
@@ -3569,9 +3607,8 @@ class DeFiX {
   }
 
   setNav(desktopId, mobileKey) {
-    /* Any navigation should dismiss the profile popup if it's open —
-       otherwise the popup lingers anchored to a now-stale post element. */
     this.hideProfilePopup?.();
+    this._threadBackOverride = false;
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.mn-btn').forEach(b => b.classList.remove('active'));
     if (desktopId) this.g(desktopId)?.classList.add('active');
@@ -4085,8 +4122,18 @@ class DeFiX {
             const currentTab = feed.querySelector('.prof-tab.active')?.dataset.ptab || 'posts';
             const profFeed   = feed.querySelector('.prof-feed');
             const savedHTML  = profFeed ? profFeed.innerHTML : '';
-            feed.innerHTML = this._profilePageHTML(address, this.state.profile, isOwn);
+            /* Rebuild header + profile page, preserving loaded tab content */
+            const newProfHeaderHTML = this._makePageHeader({
+              title: this.state.profile.username || this.trunc(address),
+              subtitle: '',
+              back: true,
+              searchAddr: address,
+            });
+            feed.innerHTML = newProfHeaderHTML + this._profilePageHTML(address, this.state.profile, isOwn);
             this._wireProfilePageListeners(address, isOwn);
+            /* Wire back button */
+            const hdrBack = feed.querySelector('.page-header-back');
+            if (hdrBack) hdrBack.onclick = () => this._navBack();
             /* Restore active tab + previously-rendered feed content */
             const restoredTab = feed.querySelector(`.prof-tab[data-ptab="${currentTab}"]`);
             if (restoredTab) {
@@ -5779,15 +5826,21 @@ class DeFiX {
       menu.appendChild(el);
     });
 
-    /* Position near the anchor button */
+    /* Append to DOM first so offsetWidth/Height are measurable */
     document.body.appendChild(menu);
-    const rect = anchorEl ? anchorEl.getBoundingClientRect() :
-      { left: window.innerWidth - 240, bottom: 60, top: 40 };
-    let left = rect.left - menu.offsetWidth + 34;
+    const rect   = anchorEl ? anchorEl.getBoundingClientRect()
+      : { left: window.innerWidth - 240, bottom: 60, top: 40, right: window.innerWidth - 8 };
+    const mw     = menu.offsetWidth  || 240;
+    const mh     = menu.offsetHeight || 200;
+    /* Align menu's right edge with the anchor's right edge (like Twitter) */
+    let left = (rect.right ?? rect.left + 34) - mw;
     let top  = rect.bottom + 4;
+    /* Clamp horizontally */
     if (left < 8) left = 8;
-    if (top + menu.offsetHeight > window.innerHeight - 8)
-      top = rect.top - menu.offsetHeight - 4;
+    if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
+    /* Flip above if would overflow below */
+    if (top + mh > window.innerHeight - 8) top = rect.top - mh - 4;
+    if (top < 8) top = 8;
     menu.style.left = left + 'px';
     menu.style.top  = top  + 'px';
 
@@ -6429,14 +6482,18 @@ class DeFiX {
     addr = addr.toLowerCase();
     if (this.state.muted.has(addr)) { utils.toast('Already muted'); return; }
     this.state.muted.add(addr);
-    localStorage.setItem(MUTE_KEY, JSON.stringify([...this.state.muted]));
-    utils.toast(`Muted ${this.trunc(addr)} — refresh to apply`);
+    const list = [...this.state.muted];
+    localStorage.setItem(MUTE_KEY, JSON.stringify(list));
+    this.cache.saveMuted(list).catch(err => console.warn('Mute IDB save:', err));
+    utils.toast(`Muted ${this.trunc(addr)}`);
     this.renderFeed();
   }
   unmuteAddress(addr) {
     addr = addr.toLowerCase();
     this.state.muted.delete(addr);
-    localStorage.setItem(MUTE_KEY, JSON.stringify([...this.state.muted]));
+    const list = [...this.state.muted];
+    localStorage.setItem(MUTE_KEY, JSON.stringify(list));
+    this.cache.saveMuted(list).catch(err => console.warn('Unmute IDB save:', err));
     utils.toast(`Unmuted ${this.trunc(addr)}`);
     this.renderFeed();
   }
