@@ -413,6 +413,51 @@ nav { flex:1; padding:4px 0; }
 .verified-icon { display:inline-flex; align-items:center; margin-left:3px; line-height:0; }
 .verified-icon svg { transition:transform 0.15s; }
 .verified-icon:hover svg { transform:scale(1.1); }
+
+/* ─ Profile hover/click popup card ─────────────────────────────────────
+   Appears on click of .post-name or .post-avatar in feed posts.
+   Click anywhere on the card (except the Follow button) opens full profile. */
+.profile-popup {
+  position:fixed; z-index:9999;
+  width:320px; max-width:calc(100vw - 24px);
+  background:var(--bg-card); border:1px solid var(--border);
+  border-radius:16px; padding:16px;
+  box-shadow:0 12px 32px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3);
+  display:none; opacity:0; transform:translateY(-4px);
+  transition:opacity 0.15s, transform 0.15s;
+  cursor:pointer;
+  font-size:14px;
+}
+.profile-popup.open { display:block; }
+.profile-popup.visible { opacity:1; transform:translateY(0); }
+.pp-header { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:10px; }
+.pp-avatar { width:60px; height:60px; border-radius:50%; object-fit:cover; flex-shrink:0; background:#222; }
+.pp-follow-btn {
+  background:var(--text); color:var(--bg);
+  border:0; border-radius:9999px;
+  padding:7px 18px; font-weight:700; font-size:13px;
+  cursor:pointer; flex-shrink:0;
+}
+.pp-follow-btn:hover { background:rgba(231,233,234,0.85); }
+.pp-follow-btn.following {
+  background:transparent; color:var(--text);
+  border:1px solid var(--border);
+}
+.pp-follow-btn.following:hover {
+  background:rgba(244,33,46,0.1); color:#f4212e;
+  border-color:#f4212e;
+}
+.pp-follow-btn.following:hover::before {
+  content:"Unfollow";
+}
+.pp-follow-btn.following:hover .pp-following-label { display:none; }
+.pp-name { font-weight:800; font-size:15px; color:var(--text); display:flex; align-items:center; gap:4px; }
+.pp-handle { color:var(--muted); font-size:13px; margin-top:1px; }
+.pp-bio { color:var(--text); font-size:14px; margin-top:10px; line-height:1.4; max-height:80px; overflow:hidden; }
+.pp-stats { display:flex; gap:14px; margin-top:10px; font-size:13px; color:var(--muted); }
+.pp-stats strong { color:var(--text); }
+.pp-view-hint { margin-top:10px; font-size:12px; color:var(--primary-lt); opacity:0.7; }
+.profile-popup:hover .pp-view-hint { opacity:1; }
 /* Who-to-follow row hover */
 #sb-w2f-list .sb-card-row { display:flex; align-items:center; gap:8px; padding:10px 14px; }
 #sb-w2f-list .w2f-follow-btn:hover { background:rgba(231,233,234,0.85); }
@@ -475,10 +520,34 @@ nav { flex:1; padding:4px 0; }
 .sb-card {
   background:var(--bg-card); border:1px solid var(--border);
   border-radius:16px; overflow:hidden;
+  /* Cap each card so a single tall card can't push others off-screen.
+     The inner list scrolls within these bounds. 70vh leaves room for
+     the search bar above and breathing room below. */
+  max-height:70vh;
+  display:flex; flex-direction:column;
 }
+/* Inner list inside any sb-card — flex grow + internal overflow */
+.sb-card > #sb-trending-list,
+.sb-card > #sb-w2f-list,
+.sb-card > .sb-card-scroll {
+  flex:1 1 auto; min-height:0;
+  overflow-y:auto;
+  scrollbar-width:thin;
+  scrollbar-color:var(--border) transparent;
+}
+.sb-card > #sb-trending-list::-webkit-scrollbar,
+.sb-card > #sb-w2f-list::-webkit-scrollbar,
+.sb-card > .sb-card-scroll::-webkit-scrollbar { width:4px; }
+.sb-card > #sb-trending-list::-webkit-scrollbar-thumb,
+.sb-card > #sb-w2f-list::-webkit-scrollbar-thumb,
+.sb-card > .sb-card-scroll::-webkit-scrollbar-thumb { background:var(--border); border-radius:4px; }
 .sb-card-title {
-  font-size:20px; font-weight:800;
+  /* clamp(min, fluid, max): min for tiny viewports, scales up to 20px on
+     large screens. Stops font-size from varying wildly across browsers
+     that interpret the user's default text-size differently. */
+  font-size:clamp(15px, 1.2vw + 8px, 20px); font-weight:800;
   padding:14px 16px 10px; color:var(--text);
+  flex-shrink:0; /* keep the title visible when the card scrolls */
 }
 .sb-card-row {
   display:flex; align-items:flex-start; gap:12px;
@@ -486,9 +555,9 @@ nav { flex:1; padding:4px 0; }
 }
 .sb-card-row:hover { background:rgba(255,255,255,0.03); }
 .sb-card-row + .sb-card-row { border-top:1px solid var(--border); }
-.trend-label { font-size:12px; color:var(--muted); display:block; }
-.trend-name  { font-size:15px; font-weight:700; margin:1px 0; display:block; }
-.trend-count { font-size:13px; color:var(--muted); display:block; }
+.trend-label { font-size:clamp(11px, 0.7vw + 6px, 13px); color:var(--muted); display:block; }
+.trend-name  { font-size:clamp(13px, 0.9vw + 7px, 16px); font-weight:700; margin:1px 0; display:block; }
+.trend-count { font-size:clamp(11px, 0.8vw + 6px, 14px); color:var(--muted); display:block; }
 .sb-show-more {
   display:block; width:100%; padding:14px 16px;
   background:transparent; border:none; border-top:1px solid var(--border);
@@ -1233,7 +1302,6 @@ nav { flex:1; padding:4px 0; }
     <div id="compose-area">
       <img src="image1.jpeg" class="compose-avatar" id="compose-avatar" alt="">
       <div class="compose-body">
-        <button id="audience-btn">🌐 Everyone ▾</button>
         <textarea id="compose-text" placeholder="What's happening on Pulse?"></textarea>
         <div id="compose-toolbar">
           <div class="compose-icons">
@@ -1569,6 +1637,9 @@ nav { flex:1; padding:4px 0; }
     </div>
   </div>
 </div>
+
+<!-- Profile popup card — appears on click of post-name/post-avatar -->
+<div class="profile-popup" id="profile-popup" role="dialog" aria-label="Profile preview"></div>
 
 <script>
 'use strict';
@@ -2042,6 +2113,18 @@ class DeFiX {
       if (mention) { e.stopPropagation(); this.g('custom-input').value = mention.dataset.addr; this.goCustom(); return; }
       const handle = e.target.closest('.post-handle');
       if (handle) { e.stopPropagation(); utils.copyToClipboard(handle.dataset.addr, 'Address copied!'); return; }
+      /* Click on poster's display name or avatar → profile popup card.
+         Avatar click is also a popup trigger (matches Twitter behavior
+         on touch, where hover doesn't exist). */
+      const name   = e.target.closest('.post-name');
+      const avatar = e.target.closest('.post-avatar');
+      if (name || avatar) {
+        e.stopPropagation();
+        const item = e.target.closest('.post-item');
+        const post = item ? this._postMap.get(item.dataset.txhash) : null;
+        if (post?.reporter) this.showProfilePopup(post.reporter, name || avatar);
+        return;
+      }
       this.onFeedClick(e, inModal);
     };
 
@@ -2086,6 +2169,11 @@ class DeFiX {
       if (e.key === '/') { e.preventDefault(); g('search-input').focus(); }
       if (e.key === 'e' || e.key === 'E') { e.preventDefault(); this.openComposeModal(); }
       if (e.key === 'Escape') {
+        /* Close popup first — it's higher in the UI stack than modals. */
+        if (this.g('profile-popup')?.classList.contains('open')) {
+          this.hideProfilePopup();
+          return;
+        }
         ['compose-modal','profile-modal','reply-modal','repost-modal','media-modal'].forEach(id => {
           if (g(id).classList.contains('open')) this.closeModal(id);
         });
@@ -2856,6 +2944,9 @@ class DeFiX {
   }
 
   setNav(desktopId, mobileKey) {
+    /* Any navigation should dismiss the profile popup if it's open —
+       otherwise the popup lingers anchored to a now-stale post element. */
+    this.hideProfilePopup?.();
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.mn-btn').forEach(b => b.classList.remove('active'));
     if (desktopId) this.g(desktopId)?.classList.add('active');
@@ -3192,15 +3283,23 @@ class DeFiX {
     /* Set a real title so the header isn't blank */
     this.g('feed-title').textContent = isOwn ? 'Profile' : 'Profile';
 
-    /* For own profile: use state.profile if populated, otherwise try cache */
+    /* Profile data resolution:
+       - Own profile: always start with state.profile (may be partial — has
+         picUrl + bio even without username). Then try cache. Always render
+         what we have; trigger a fresh on-chain fetch in the background. */
     let prof;
     if (isOwn) {
-      prof = this.state.profile?.username ? this.state.profile : null;
-      if (!prof) {
-        /* Cache fallback — state.profile may not be populated yet */
-        const cached = await this.cache.getProfile(address);
-        if (cached) { this.applyProfile(cached); prof = this.state.profile; }
-        else prof = this.state.profile; /* use default — fetchMyProfile will refresh */
+      /* state.profile is initialized at construction so always truthy. Use
+         whatever fields are populated rather than gate-keeping on username. */
+      prof = this.state.profile || {};
+      const hasAnyData = !!(prof.username || prof.bio || prof.coverUrl ||
+                            (prof.picUrl && prof.picUrl !== 'image1.jpeg'));
+      if (!hasAnyData) {
+        /* Try IndexedDB cache fallback */
+        try {
+          const cached = await this.cache.getProfile(address);
+          if (cached) { this.applyProfile(cached); prof = this.state.profile; }
+        } catch (err) { console.warn('Profile cache miss:', err); }
       }
     } else {
       prof = this.state.profCache[address] || null;
@@ -3211,14 +3310,53 @@ class DeFiX {
     }
     if (!prof) prof = {};
 
+    /* Initialize profile-page pagination state. This is what enables
+       infinite scroll on profile pages — see _onProfileScroll. */
+    this._profilePageState = {
+      address: address.toLowerCase(),
+      isOwn,
+      tab: 'posts',
+      pagesScanned: 0,
+      loading: false,
+      hasMore: true,
+      rawTxs: [],
+      visibleTxHashes: new Set(),
+    };
+
     this.g('feed').innerHTML = this._profilePageHTML(address, prof, isOwn);
     this._wireProfilePageListeners(address, isOwn);
-    /* Scan more pages for own profile; kick off fresh profile fetch if needed */
-    const maxPages = isOwn ? 8 : 4;
+
+    /* Scan more pages for own profile — they likely have many reaction
+       txs (likes, follows) interleaved with actual posts. */
+    const maxPages = isOwn ? 10 : 6;
     this.loadProfileTab(address, isOwn, 'posts', maxPages);
-    /* If profile data looked empty, refresh from chain in background */
-    if (isOwn && !this.state.profile?.username) {
-      this.fetchMyProfile();
+
+    /* Background-refresh own profile from chain. When it lands, re-render
+       the page header in-place. */
+    if (isOwn) {
+      this.fetchMyProfile().then(() => {
+        if (this.state.mode === 'profile' && this.state.channel === address) {
+          /* Re-render header section only — preserves the loaded feed below */
+          const feed = this.g('feed');
+          if (feed && feed.querySelector('.prof-page')) {
+            /* Save current tab + scroll position */
+            const currentTab = feed.querySelector('.prof-tab.active')?.dataset.ptab || 'posts';
+            const profFeed   = feed.querySelector('.prof-feed');
+            const savedHTML  = profFeed ? profFeed.innerHTML : '';
+            feed.innerHTML = this._profilePageHTML(address, this.state.profile, isOwn);
+            this._wireProfilePageListeners(address, isOwn);
+            /* Restore active tab + previously-rendered feed content */
+            const restoredTab = feed.querySelector(`.prof-tab[data-ptab="${currentTab}"]`);
+            if (restoredTab) {
+              feed.querySelectorAll('.prof-tab').forEach(t => t.classList.remove('active'));
+              restoredTab.classList.add('active');
+            }
+            if (savedHTML && feed.querySelector('.prof-feed')) {
+              feed.querySelector('.prof-feed').innerHTML = savedHTML;
+            }
+          }
+        }
+      });
     }
   }
 
@@ -3292,12 +3430,27 @@ class DeFiX {
   }
 
   _wireProfilePageListeners(address, isOwn) {
+    /* Follow/Unfollow button on the full profile page header. */
+    const fbtn = document.getElementById('prof-follow-btn');
+    if (fbtn && !isOwn) {
+      fbtn.onclick = (e) => {
+        e.stopPropagation();
+        this.toggleFollowAddr(address, fbtn);
+      };
+    }
     /* Tab switching */
     const maxPages = isOwn ? 8 : 4;
     document.querySelectorAll('.prof-tab').forEach(btn => {
       btn.onclick = () => {
         document.querySelectorAll('.prof-tab').forEach(t => t.classList.remove('active'));
         btn.classList.add('active');
+        /* Update pagination state's current tab so fetchProfileMore filters
+           correctly. Reset visibleTxHashes since the new tab has a different
+           filtered set of the same raw txs. */
+        if (this._profilePageState) {
+          this._profilePageState.tab = btn.dataset.ptab;
+          this._profilePageState.visibleTxHashes = new Set();
+        }
         this.loadProfileTab(address, isOwn, btn.dataset.ptab, maxPages);
       };
     });
@@ -3529,6 +3682,12 @@ class DeFiX {
       });
       feedEl.innerHTML = '';
       feedEl.appendChild(frag);
+      /* Seed pagination state so infinite scroll won't re-show these posts. */
+      if (this._profilePageState) {
+        this._profilePageState.tab = tab;
+        this._profilePageState.pagesScanned = Math.max(this._profilePageState.pagesScanned, maxPages);
+        this._profilePageState.visibleTxHashes = new Set(posts.map(p => p.txHash));
+      }
 
     } catch (err) {
       feedEl.innerHTML = `<div class="prof-empty"><span>⚠️</span><h3>Error loading tab</h3><p>${utils.safe(err.message)}</p></div>`;
@@ -3852,10 +4011,11 @@ class DeFiX {
     const latestTs = this.state.posts[0] ? new Date(this.state.posts[0].timestamp) : new Date(0);
     try {
       const raw       = await this.fetchOnePage(1);
-      const inFeed    = new Set(this.state.posts.map(p => p.txHash));
+      /* Reuse _postMap rather than rebuilding a Set every poll cycle.
+         _postMap is the canonical post lookup, kept in sync by renderFeed. */
       const inPending = new Set(this.state.pending.map(p => p.txHash));
       const fresh = this.parseTxs(raw).filter(p =>
-        new Date(p.timestamp) > latestTs && !inFeed.has(p.txHash) && !inPending.has(p.txHash)
+        new Date(p.timestamp) > latestTs && !this._postMap.has(p.txHash) && !inPending.has(p.txHash)
       );
       if (fresh.length) {
         this.state.pending = [...fresh, ...this.state.pending];
@@ -4628,6 +4788,11 @@ class DeFiX {
   ]);
 
   onScroll() {
+    /* Profile page has its own pagination — route to dedicated handler. */
+    if (this.state.mode === 'profile') {
+      this._onProfileScroll();
+      return;
+    }
     if (this._selfManagedModes.has(this.state.mode)) return;
     if (!this.state.hasMore || this.state.loading) return;
     /* documentElement.scrollHeight is the canonical scrollable height —
@@ -4744,19 +4909,64 @@ class DeFiX {
     }).join('');
   }
 
-  /* Follow from Who-to-follow card. Uses existing FOLLOW_PREFIX flow. */
+  /* Toggle follow/unfollow for an address. Emits FOLLOW: or UNFOLLOW:
+     tx to your own address (self-send pattern). Updates state.following
+     optimistically; reverts on tx failure. Called from:
+       - Who-to-follow sidebar card
+       - Profile popup card  (Follow / Following button)
+       - Full profile page   (prof-follow-btn)
+     The optional `btn` updates UI in-place when given. */
   toggleFollowAddr(addr, btn) {
     addr = addr.toLowerCase();
     if (!this.signer) { utils.toast('Connect wallet to follow'); return; }
-    if (typeof this.publish === 'function') {
-      this.publish(`${FOLLOW_PREFIX}${addr}`, null, this.state.signerAddr).then(ok => {
-        if (ok) {
-          this.state.following.add(addr);
-          if (btn) { btn.textContent = 'Following'; btn.disabled = true; btn.style.opacity = '0.6'; }
-          setTimeout(() => this.renderWhoToFollow(), 1500);
-        }
-      });
+    if (addr === this.state.signerAddr) {
+      utils.toast("You can't follow yourself"); return;
     }
+    if (typeof this.publish !== 'function') return;
+
+    const wasFollowing = this.state.following.has(addr);
+    const prefix       = wasFollowing ? UNFOLLOW_PREFIX : FOLLOW_PREFIX;
+    /* Optimistic update — flips state and any visible buttons immediately. */
+    if (wasFollowing) this.state.following.delete(addr);
+    else              this.state.following.add(addr);
+    if (btn) {
+      btn.textContent = wasFollowing ? 'Follow' : 'Following';
+      btn.disabled    = true;
+      btn.style.opacity = '0.6';
+    }
+
+    this.publish(`${prefix}${addr}`, null, this.state.signerAddr).then(ok => {
+      if (!ok) {
+        /* Revert optimistic update on tx failure. */
+        if (wasFollowing) this.state.following.add(addr);
+        else              this.state.following.delete(addr);
+        if (btn) {
+          btn.textContent = wasFollowing ? 'Following' : 'Follow';
+          btn.style.opacity = '1';
+          btn.disabled = false;
+        }
+        return;
+      }
+      /* Success — refresh affected UI regions. */
+      if (btn) { btn.style.opacity = '1'; btn.disabled = false; }
+      setTimeout(() => {
+        this.renderWhoToFollow();
+        /* If the full profile page is open for this user, flip its button. */
+        const profBtn = document.getElementById('prof-follow-btn');
+        if (profBtn && this.state.mode === 'profile' &&
+            this.state.channel?.toLowerCase() === addr) {
+          if (this.state.following.has(addr)) {
+            profBtn.textContent = 'Following';
+            profBtn.className = 'prof-following-btn';
+            profBtn.id = 'prof-follow-btn';
+          } else {
+            profBtn.textContent = 'Follow';
+            profBtn.className = 'prof-follow-btn';
+            profBtn.id = 'prof-follow-btn';
+          }
+        }
+      }, 1500);
+    });
   }
 
   /* Rotating compose placeholder — light Twitter polish. Only rotates when
@@ -4780,6 +4990,321 @@ class DeFiX {
         }
       });
     }, 8000);
+  }
+
+  /* ── Profile page: infinite scroll ───────────────────────────────────
+     Triggered from the global scroll listener when mode === 'profile'.
+     Keeps fetching more pages from the chain and appending matching posts
+     until we hit the end of history or fail. */
+  async _onProfileScroll() {
+    const st = this._profilePageState;
+    if (!st || st.loading || !st.hasMore) return;
+    if (this.state.mode !== 'profile') return;
+    /* Trigger when within ~600px of the bottom — same threshold as the main feed */
+    const doc = document.documentElement;
+    if (window.scrollY + window.innerHeight < doc.scrollHeight - 600) return;
+    await this.fetchProfileMore();
+  }
+
+  async fetchProfileMore() {
+    const st = this._profilePageState;
+    if (!st || st.loading || !st.hasMore) return;
+    st.loading = true;
+    const feedEl = document.getElementById('prof-feed');
+    /* Show a small loading footer at the bottom of the profile feed */
+    let footer = feedEl?.querySelector('.prof-loading-more');
+    if (feedEl && !footer) {
+      footer = document.createElement('div');
+      footer.className = 'prof-loading-more';
+      footer.style.cssText = 'padding:24px;text-align:center;color:var(--muted);font-size:14px';
+      footer.textContent = 'Loading more posts…';
+      feedEl.appendChild(footer);
+    }
+    try {
+      /* Scan the next batch of 4 pages */
+      const startPage = st.pagesScanned + 1;
+      const endPage   = startPage + 3;
+      let batch = [];
+      for (let p = startPage; p <= endPage; p++) {
+        let raw;
+        try { raw = await this.apiFetch(st.address, p); }
+        catch (err) { console.warn('Profile fetch error:', err); st.hasMore = false; break; }
+        if (raw.length === 0) { st.hasMore = false; break; }
+        batch.push(...raw);
+        if (raw.length < 50) { st.hasMore = false; break; }
+      }
+      st.pagesScanned = endPage;
+      st.rawTxs.push(...batch);
+      /* Filter for current tab and append */
+      const tab = st.tab;
+      const newPosts = this._filterProfileTxs(batch, tab, st.address);
+      const fresh = newPosts.filter(p => !st.visibleTxHashes.has(p.txHash));
+      fresh.forEach(p => {
+        st.visibleTxHashes.add(p.txHash);
+        this._postMap.set(p.txHash, p);
+      });
+      if (fresh.length && feedEl) {
+        const frag = document.createDocumentFragment();
+        const replyMap = new Map();
+        fresh.forEach(p => { if (p.parentTx) replyMap.set(p.parentTx, (replyMap.get(p.parentTx)||0)+1); });
+        fresh.forEach(p => {
+          if (tab === 'media') {
+            /* For media tab, just append matching thumbs */
+            const resolveUrl = u => u.startsWith('ipfs://') ? 'https://ipfs.io/ipfs/' + u.slice(7)
+              : u.startsWith('arweave://') ? 'https://arweave.net/' + u.slice(10) : u;
+            const matches = [...p.display.matchAll(/https?:\/\/[^\s<>"{}|\\^[\]`]+|ipfs:\/\/\S+|arweave:\/\/\S+/g)];
+            matches.forEach(mm => {
+              const resolved = resolveUrl(mm[0]);
+              const img = document.createElement('img');
+              img.src = resolved;
+              img.className = 'prof-media-thumb';
+              img.loading = 'lazy';
+              img.onerror = function(){ this.style.display = 'none'; };
+              img.onclick = () => window.open('https://otter.pulsechain.com/tx/' + p.txHash, '_blank');
+              const grid = feedEl.querySelector('.prof-media-grid') || (() => {
+                const g = document.createElement('div');
+                g.className = 'prof-media-grid';
+                feedEl.insertBefore(g, footer);
+                return g;
+              })();
+              grid.appendChild(img);
+            });
+            return;
+          }
+          const el = document.createElement('div');
+          el.className = 'post-item';
+          el.dataset.txhash = p.txHash;
+          el.innerHTML = this.postHTML(p, false, replyMap, null);
+          frag.appendChild(el);
+          if (p.reporter !== this.state.signerAddr) this.fetchOtherProfile(p.reporter);
+        });
+        feedEl.insertBefore(frag, footer);
+      }
+      /* Update footer based on outcome */
+      if (footer) {
+        if (!st.hasMore) {
+          footer.textContent = '— End of profile —';
+          setTimeout(() => footer?.remove(), 5000);
+        } else {
+          footer.textContent = 'Loading more posts…';
+        }
+      }
+    } finally {
+      st.loading = false;
+    }
+  }
+
+  /* Pure tx filter — split out of loadProfileTab so fetchProfileMore can
+     reuse it without re-fetching. Returns parsed post objects. */
+  _filterProfileTxs(rawTxs, tab, address) {
+    const imgRe   = /\.(?:png|jpe?g|gif|webp|svg|bmp)(?:\?[^\s]*)?$/i;
+    const ipfsRe  = /^(ipfs:\/\/|https?:\/\/[^\/]*\/ipfs\/)/i;
+    const imgHosts = new Set(['imgur.com','i.imgur.com','i.ibb.co','postimg.cc',
+      'media.giphy.com','i.giphy.com','tenor.com','media.tenor.com',
+      'pbs.twimg.com','ipfs.io','gateway.pinata.cloud','cf-ipfs.com',
+      'cloudflare-ipfs.com','dweb.link']);
+    const isMediaUrl = url => {
+      if (imgRe.test(url)) return true;
+      if (ipfsRe.test(url)) return true;
+      if (url.includes('arweave.net/')) return true;
+      try { return imgHosts.has(new URL(url).hostname); } catch { return false; }
+    };
+    const addrLow = address.toLowerCase();
+    const posts = [];
+    rawTxs.forEach(tx => {
+      const from = tx.from?.toLowerCase();
+      const to   = tx.to?.toLowerCase();
+      if (from !== addrLow) return;
+      if (!tx.input || tx.input === '0x') return;
+      try {
+        const text = ethers.utils.toUtf8String(tx.input).trim();
+        if (text.startsWith(PROFILE_PREFIX)) return;
+        if (text.startsWith(LIKE_PREFIX) || text.startsWith(BOOKMARK_PREFIX) ||
+            text.startsWith(FOLLOW_PREFIX) || text.startsWith(UNFOLLOW_PREFIX)) return;
+        const isReply = text.startsWith(REPLY_PREFIX);
+        if (tab === 'posts'   &&  isReply) return;
+        if (tab === 'replies' && !isReply) return;
+        const m = text.match(/^REPLY_TO:(0x[a-f0-9]{64})\n\n/i);
+        const display = m ? text.slice(m[0].length).trim() : text;
+        if (!display) return;
+        if (tab === 'media') {
+          const urls = [...display.matchAll(/https?:\/\/[^\s<>"{}|\\^[\]`]+|ipfs:\/\/\S+|arweave:\/\/\S+/g)].map(m => m[0]);
+          const resolveUrl = u => u.startsWith('ipfs://') ? 'https://ipfs.io/ipfs/' + u.slice(7)
+            : u.startsWith('arweave://') ? 'https://arweave.net/' + u.slice(10) : u;
+          const hasImg = urls.some(u => isMediaUrl(resolveUrl(u)));
+          if (!hasImg) return;
+        }
+        posts.push({
+          content: text, display,
+          parentTx: m ? m[1].toLowerCase() : null,
+          direction: null,
+          reporter: from, to: to ?? null,
+          timestamp: tx.timeStamp
+            ? new Date(Number(tx.timeStamp)*1000).toISOString()
+            : new Date().toISOString(),
+          txHash: tx.hash.toLowerCase(),
+          channel: to, mode: 'profile',
+        });
+      } catch { /* skip */ }
+    });
+    return posts;
+  }
+
+  /* ── Profile popup card ─────────────────────────────────────────────
+     Twitter-style profile preview shown when user clicks a name or avatar
+     in the feed. Click on the popup body (not the Follow button) opens
+     the full profile page. Closes on outside click, ESC, scroll, or a
+     second click on the same anchor (toggle). */
+  async showProfilePopup(address, anchorEl) {
+    address = address.toLowerCase();
+    const popup = this.g('profile-popup');
+    if (!popup) return;
+    /* Toggle: if popup is already open for this address, close it. */
+    if (popup.classList.contains('open') && popup.dataset.addr === address) {
+      this.hideProfilePopup();
+      return;
+    }
+    popup.dataset.addr = address;
+
+    /* Resolve profile data: own state, prof cache, then trigger fetch if missing. */
+    let prof = null;
+    if (address === this.state.signerAddr) {
+      prof = this.state.profile;
+    } else {
+      prof = this.state.profCache[address];
+      if (!prof || prof === null) {
+        /* Render placeholder, kick off fetch, refresh on completion. */
+        this.fetchOtherProfile(address).then(() => {
+          if (popup.classList.contains('open') && popup.dataset.addr === address) {
+            popup.innerHTML = this._profilePopupHTML(address, this.state.profCache[address] || {});
+          }
+        });
+      }
+    }
+
+    /* Count posts by this address in current feed for the "N posts" stat. */
+    const postCount = this.state.posts.filter(
+      p => p.reporter?.toLowerCase() === address && (!p.postType || p.postType === 'post')
+    ).length;
+
+    popup.innerHTML = this._profilePopupHTML(address, prof || {}, postCount);
+
+    /* Position popup near anchor — clamped to viewport. */
+    this._positionPopup(popup, anchorEl);
+    popup.classList.add('open');
+    requestAnimationFrame(() => popup.classList.add('visible'));
+
+    this._wirePopupDismiss();
+  }
+
+  _profilePopupHTML(address, prof, postCount = null) {
+    const isOwn = address === this.state.signerAddr;
+    const isFollowing = this.state.following.has(address);
+    const name = prof.username ? utils.safe(prof.username) : this.trunc(address);
+    const handle = '@' + this.trunc(address);
+    const pic = utils.safe(prof.picUrl || 'image1.jpeg');
+    const bio = prof.bio ? utils.safe(prof.bio) : '';
+    const hasProfile = !!prof.username;
+    const verifiedSvg = hasProfile
+      ? '<svg viewBox="0 0 22 22" width="15" height="15"><path fill="#1d9bf0" d="M20.396 11c-.018-.646-.215-1.275-.57-1.816-.354-.54-.852-.972-1.438-1.246.223-.607.27-1.264.14-1.897-.131-.634-.437-1.218-.882-1.687-.47-.445-1.053-.75-1.687-.882-.633-.13-1.29-.083-1.897.14-.273-.587-.704-1.086-1.245-1.44S11.647 1.62 11 1.604c-.646.017-1.273.213-1.813.568s-.969.854-1.24 1.44c-.608-.223-1.267-.272-1.902-.14-.635.13-1.22.436-1.69.882-.445.47-.749 1.055-.878 1.688-.13.633-.08 1.29.144 1.896-.587.274-1.087.705-1.443 1.245-.356.54-.555 1.17-.574 1.817.02.647.218 1.276.574 1.817.356.54.856.972 1.443 1.245-.224.606-.274 1.263-.144 1.896.13.634.433 1.218.877 1.688.47.443 1.054.747 1.687.878.633.132 1.29.084 1.897-.136.274.586.705 1.084 1.246 1.439.54.354 1.17.551 1.816.569.647-.016 1.276-.213 1.817-.567s.972-.854 1.245-1.44c.604.239 1.266.296 1.903.164.636-.132 1.22-.447 1.68-.907.46-.46.776-1.044.908-1.681s.075-1.299-.165-1.903c.586-.274 1.084-.705 1.439-1.246.354-.54.551-1.17.569-1.816zM9.662 14.85l-3.429-3.428 1.293-1.302 2.072 2.072 4.4-4.794 1.347 1.246z"/></svg>'
+      : '';
+
+    const followBtn = isOwn
+      ? ''
+      : isFollowing
+        ? `<button class="pp-follow-btn following" data-pp-action="unfollow"><span class="pp-following-label">Following</span></button>`
+        : `<button class="pp-follow-btn" data-pp-action="follow">Follow</button>`;
+
+    return `
+      <div class="pp-header">
+        <img src="${pic}" class="pp-avatar" alt="" onerror="this.src='image1.jpeg'">
+        ${followBtn}
+      </div>
+      <div class="pp-name">${name}${verifiedSvg ? `<span class="verified-icon">${verifiedSvg}</span>` : ''}</div>
+      <div class="pp-handle">${handle}</div>
+      ${bio ? `<div class="pp-bio">${bio}</div>` : ''}
+      ${postCount !== null
+        ? `<div class="pp-stats"><span><strong>${postCount}</strong> ${postCount === 1 ? 'post' : 'posts'} in view</span></div>`
+        : ''}
+      <div class="pp-view-hint">Click card to view profile →</div>
+    `;
+  }
+
+  _positionPopup(popup, anchor) {
+    const rect = anchor.getBoundingClientRect();
+    popup.style.display = 'block';
+    popup.style.visibility = 'hidden';
+    const pw = popup.offsetWidth || 320;
+    const ph = popup.offsetHeight || 200;
+    popup.style.visibility = '';
+
+    let left = rect.left;
+    let top  = rect.bottom + 8;
+    if (left + pw > window.innerWidth - 12) left = window.innerWidth - pw - 12;
+    if (left < 12) left = 12;
+    if (top + ph > window.innerHeight - 12) {
+      const flipped = rect.top - ph - 8;
+      top = flipped > 12 ? flipped : Math.max(12, window.innerHeight - ph - 12);
+    }
+    popup.style.left = left + 'px';
+    popup.style.top  = top  + 'px';
+  }
+
+  _wirePopupDismiss() {
+    if (this._popupHandlersAttached) return;
+    this._popupHandlersAttached = true;
+    setTimeout(() => {
+      const popup = this.g('profile-popup');
+      if (!popup) return;
+      const dismiss = e => {
+        if (e.type === 'click') {
+          if (popup.contains(e.target)) {
+            const btn = e.target.closest('[data-pp-action]');
+            if (btn) {
+              e.stopPropagation();
+              const addr = popup.dataset.addr;
+              this.toggleFollowAddr(addr, null);
+              setTimeout(() => {
+                if (popup.classList.contains('open') && popup.dataset.addr === addr) {
+                  const postCount = this.state.posts.filter(
+                    p => p.reporter?.toLowerCase() === addr && (!p.postType || p.postType === 'post')
+                  ).length;
+                  popup.innerHTML = this._profilePopupHTML(addr, this.state.profCache[addr] || (addr === this.state.signerAddr ? this.state.profile : {}), postCount);
+                }
+              }, 500);
+              return;
+            }
+            const addr = popup.dataset.addr;
+            this.hideProfilePopup();
+            this.goProfilePage(addr, addr === this.state.signerAddr);
+            return;
+          }
+          this.hideProfilePopup();
+        } else if (e.type === 'keydown' && e.key === 'Escape') {
+          this.hideProfilePopup();
+        } else if (e.type === 'scroll') {
+          this.hideProfilePopup();
+        }
+      };
+      this._popupDismiss = dismiss;
+      document.addEventListener('click', dismiss, true);
+      document.addEventListener('keydown', dismiss);
+      window.addEventListener('scroll', dismiss, { passive: true, capture: true });
+    }, 0);
+  }
+
+  hideProfilePopup() {
+    const popup = this.g('profile-popup');
+    if (!popup || !popup.classList.contains('open')) return;
+    popup.classList.remove('visible');
+    setTimeout(() => popup.classList.remove('open'), 150);
+    if (this._popupDismiss) {
+      document.removeEventListener('click', this._popupDismiss, true);
+      document.removeEventListener('keydown', this._popupDismiss);
+      window.removeEventListener('scroll', this._popupDismiss, { capture: true });
+      this._popupDismiss = null;
+    }
+    this._popupHandlersAttached = false;
   }
 
   trunc = a => (a && a.length > 10) ? `${a.slice(0,6)}...${a.slice(-4)}` : (a || '');
