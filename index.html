@@ -38,7 +38,7 @@ a { color:inherit; text-decoration:none; }
 :focus-visible { outline:2px solid var(--primary); outline-offset:2px; }
 
 /* ── Layout ─────────────────────────────────────────────────────────────── */
-#app { display:flex; min-height:100vh; max-width:1225px; margin:0 auto; }
+#app { display:flex; min-height:100vh; max-width:1225px; margin:0 auto; align-items:flex-start; }
 
 /* ── Left sidebar ───────────────────────────────────────────────────────── */
 #sidebar-left {
@@ -47,7 +47,9 @@ a { color:inherit; text-decoration:none; }
   display:flex; flex-direction:column;
   background:var(--bg-dark);
   border-right:1px solid var(--border);
-  padding:0; overflow-y:auto;
+  padding:0;
+  /* Twitter left sidebar never scrolls independently */
+  overflow:hidden;
 }
 .logo-wrap {
   display:flex; align-items:center; gap:10px;
@@ -78,13 +80,13 @@ nav { flex:1; padding:4px 0; }
 }
 .nav-btn:hover  { background:rgba(255,255,255,0.06); }
 .nav-btn.active { font-weight:800; color:var(--text); }
-.nav-btn.active .nav-icon { filter:drop-shadow(0 0 2px var(--primary-lt)); }
-.nav-icon  {
+/* X/Twitter: active nav icon has NO extra styling — just bold label.
+   Icon color stays white. No drop-shadow, no glow. */
+.nav-icon {
   width:28px; height:28px; flex-shrink:0;
   display:flex; align-items:center; justify-content:center;
   color:var(--text);
 }
-.nav-btn.active .nav-icon { color:var(--text); }
 .mn-btn .mn-icon {
   width:26px; height:26px; line-height:1;
   display:flex; align-items:center; justify-content:center;
@@ -108,9 +110,14 @@ nav { flex:1; padding:4px 0; }
 }
 #nav-post-btn:hover { background:var(--primary-lt); box-shadow:var(--neon); }
 
+/* Wrapper pinned to the bottom of the sidebar */
+.sidebar-footer {
+  padding:0 0 12px;  /* 12px from viewport bottom — matches Twitter */
+  flex-shrink:0;
+}
 #account-pill {
   display:flex; align-items:center; gap:10px;
-  padding:10px 16px; margin:8px 0;
+  padding:10px 12px; margin:0;
   border-radius:9999px; cursor:pointer;
   transition:background 0.18s;
 }
@@ -148,23 +155,47 @@ nav { flex:1; padding:4px 0; }
   display:flex; flex-direction:column;
 }
 
-#feed-header {
+/* #feed-header removed — titles are now rendered inline per-page */
+/* Shared sticky page header injected by _makePageHeader() */
+.page-header {
   position:sticky; top:0; z-index:20;
   background:rgba(0,0,0,0.85); backdrop-filter:blur(12px) saturate(180%);
   border-bottom:1px solid var(--border);
-  padding:0 16px; min-height:53px;
+  padding:4px 16px;
+  min-height:53px;
   display:flex; align-items:center;
-  justify-content:space-between; gap:12px;
+  gap:16px;
 }
-#feed-title { font-size:20px; font-weight:700; }
-#refresh-btn {
-  background:transparent; border:none; color:var(--muted);
-  border-radius:9999px; padding:8px; font-size:18px; cursor:pointer;
-  width:36px; height:36px; flex-shrink:0;
+.page-header-title {
+  font-size:20px; font-weight:800; line-height:1.2;
+  color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.page-header-subtitle {
+  font-size:13px; color:var(--muted); line-height:1.2; margin-top:1px;
+}
+.page-header-back {
+  width:34px; height:34px; border-radius:50%;
+  background:transparent; border:none; cursor:pointer;
   display:flex; align-items:center; justify-content:center;
-  transition:background 0.18s, color 0.18s;
+  color:var(--text); flex-shrink:0; transition:background 0.15s;
 }
-#refresh-btn:hover { background:rgba(255,255,255,0.06); color:var(--text); }
+.page-header-back:hover { background:rgba(255,255,255,0.08); }
+.page-header-titles { flex:1; min-width:0; }
+.page-header-title {
+  font-size:20px; font-weight:800; line-height:1.2;
+  color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.page-header-subtitle {
+  font-size:13px; color:var(--muted); margin-top:0; line-height:1.2;
+}
+.page-header-action {
+  width:34px; height:34px; border-radius:50%;
+  background:transparent; border:none; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  color:var(--text); flex-shrink:0; transition:background 0.15s;
+}
+.page-header-action:hover { background:rgba(255,255,255,0.08); }
+/* #refresh-btn removed — pull-to-refresh via double-tap on active tab */
 
 #feed-tabs {
   display:flex; border-bottom:1px solid var(--border);
@@ -183,22 +214,26 @@ nav { flex:1; padding:4px 0; }
 .feed-tab:hover { background:rgba(255,255,255,0.03); color:var(--text); }
 .feed-tab.active { font-weight:700; color:var(--text); }
 .feed-tab.active::after {
-  content:''; position:absolute; bottom:-1px; left:50%;
+  content:''; position:absolute; bottom:0; left:50%;
   transform:translateX(-50%);
   width:56px; height:4px; background:var(--primary); border-radius:9999px;
+  transition:transform 0.2s ease;
 }
 
 #new-banner {
   display:none; width:100%; padding:14px 16px;
-  background:transparent; border:none; border-bottom:1px solid var(--border);
-  color:var(--primary-lt); font-size:14px; font-weight:600;
-  cursor:pointer; text-align:left; transition:background 0.15s;
+  background:transparent; border:none;
+  border-bottom:1px solid var(--border);
+  /* X-style: centered text, primary color, full-width tap target */
+  color:var(--primary-lt); font-size:15px; font-weight:500;
+  cursor:pointer; text-align:center;
+  transition:background 0.15s;
 }
-#new-banner:hover { background:rgba(255,255,255,0.03); }
+#new-banner:hover { background:rgba(29,155,240,0.05); }
 
 #channel-banner { display:none; border-bottom:1px solid var(--border); }
 .cb-cover {
-  height:130px;
+  height:150px;  /* Channel banner cover */
   background:linear-gradient(135deg,rgba(124,77,255,0.45),rgba(179,136,255,0.2),rgba(0,229,160,0.1));
 }
 .cb-content {
@@ -229,6 +264,8 @@ nav { flex:1; padding:4px 0; }
 #compose-area {
   display:flex; gap:12px; padding:12px 16px 8px;
   border-bottom:1px solid var(--border);
+  background:var(--bg-dark);
+  position:relative;
 }
 .compose-avatar {
   width:40px; height:40px; border-radius:50%;
@@ -314,8 +351,10 @@ nav { flex:1; padding:4px 0; }
 .post-item {
   padding:12px 16px; border-bottom:1px solid var(--border);
   cursor:pointer; transition:background 0.15s;
-  position:relative; /* for .post-menu-btn absolute positioning */
+  position:relative;
 }
+/* X: no bottom border on the very last post */
+.post-item:last-child { border-bottom:0; }
 .post-item:hover { background:rgba(255,255,255,0.03); }
 .post-hdr { display:flex; gap:12px; }
 .post-avatar {
@@ -399,7 +438,9 @@ nav { flex:1; padding:4px 0; }
 .post-actions-left {
   display:flex; align-items:center;
   flex:1; justify-content:space-between;
-  max-width:320px;
+  /* cap at 340px so icons don't spread too far on wide posts */
+  max-width:340px;
+  min-width:0;
 }
 /* Right group: Bookmark + OtterScan -- flush right, touching */
 .post-actions-right {
@@ -495,9 +536,15 @@ nav { flex:1; padding:4px 0; }
   width:34px; height:34px; border-radius:50%;
   display:flex; align-items:center; justify-content:center;
   transition:background 0.15s, color 0.15s;
-  opacity:0; /* hidden until post is hovered */
+  /* Desktop: hidden until hover. Mobile (no hover): always visible. */
+  opacity:0;
 }
 .post-item:hover .post-menu-btn { opacity:1; }
+@media (hover: none) {
+  /* Touch devices have no hover state — show the menu button always */
+  .post-menu-btn { opacity:0.4; }
+  .post-item:active .post-menu-btn { opacity:1; }
+}
 .post-menu-btn:hover { background:rgba(29,155,240,0.1); color:var(--primary-lt); }
 .post-menu-dropdown {
   position:fixed; z-index:9998;
@@ -572,17 +619,16 @@ nav { flex:1; padding:4px 0; }
 /* ── Right sidebar ──────────────────────────────────────────────────────── */
 #sidebar-right {
   flex:0 0 350px; width:350px;
-  position:sticky; top:0; height:100vh;
+  /* NOT position:sticky — the right sidebar scrolls with the page.
+     The search bar inside it IS sticky so it stays visible on scroll. */
   background:var(--bg-dark);
-  overflow-y:auto; display:flex;
+  overflow:visible; display:flex;
   flex-direction:column; gap:12px;
   padding:12px 16px 24px;
-  scrollbar-width:thin;
-  scrollbar-color:var(--border) transparent;
+  /* No scrollbar — sidebar ends where its content ends */
+  scrollbar-width:none;
 }
-#sidebar-right::-webkit-scrollbar { width:4px; }
-#sidebar-right::-webkit-scrollbar-track { background:transparent; }
-#sidebar-right::-webkit-scrollbar-thumb { background:var(--border); border-radius:4px; }
+#sidebar-right::-webkit-scrollbar { display:none; }
 
 .sb-search {
   position:sticky; top:0; z-index:10;
@@ -604,6 +650,8 @@ nav { flex:1; padding:4px 0; }
 }
 
 .sb-card {
+  /* X/Twitter: "What's happening" cards have the same background as sidebar,
+     just a subtle border. bg-card is slightly lighter than bg-dark. */
   background:var(--bg-card); border:1px solid var(--border);
   border-radius:16px;
   /* Flex column so title stays pinned and inner list scrolls.
@@ -740,16 +788,17 @@ nav { flex:1; padding:4px 0; }
 .wave-desc { font-size:12px; color:var(--muted); line-height:1.5; }
 
 .sb-footer {
-  font-size:13px; color:var(--muted); line-height:2;
-  padding:8px 0 4px; margin-top:auto;
+  font-size:13px; color:var(--muted); line-height:1.6;
+  padding:16px 0 8px; margin-top:12px;
+  border-top:1px solid var(--border);
 }
 .sb-footer a {
-  color:var(--muted); margin-right:8px;
-  display:inline-block; transition:color 0.18s;
+  color:var(--muted); margin-right:12px; margin-bottom:4px;
+  display:inline-block; transition:color 0.18s; font-size:13px;
 }
-.sb-footer a:hover { color:var(--primary-lt); text-decoration:underline; }
-.sb-footer-row { display:flex; flex-wrap:wrap; gap:2px 0; margin-bottom:4px; }
-.sb-copyright { font-size:12px; color:var(--muted); opacity:0.6; margin-top:4px; }
+.sb-footer a:hover { color:var(--text); }
+.sb-footer-row { display:flex; flex-wrap:wrap; margin-bottom:8px; }
+.sb-copyright { font-size:12px; color:var(--muted); opacity:0.55; margin-top:6px; line-height:1.4; }
 
 /* DeFiX channel card */
 .defix-inner {
@@ -812,7 +861,7 @@ nav { flex:1; padding:4px 0; }
 
 /* ── Modals ─────────────────────────────────────────────────────────────── */
 .modal-bg {
-  position:fixed; inset:0; background:rgba(0,0,0,0.65);
+  position:fixed; inset:0; background:rgba(0,0,0,0.5);
   display:none; align-items:center; justify-content:center;
   z-index:500; padding:16px;
 }
@@ -1166,7 +1215,7 @@ nav { flex:1; padding:4px 0; }
 /* Profile page (full in-column view) ─────────────────────────────────── */
 .prof-page { flex:1; overflow-y:auto; }
 
-/* Cover photo */
+/* Cover photo -- X uses 200px on desktop */
 .prof-cover {
   height:200px; position:relative; overflow:hidden; flex-shrink:0;
   background:linear-gradient(135deg,rgba(124,77,255,0.55),rgba(179,136,255,0.25),rgba(43,134,197,0.15));
@@ -1179,10 +1228,10 @@ nav { flex:1; padding:4px 0; }
 /* Avatar row — sits below cover, overlapping it */
 .prof-avatar-row {
   display:flex; align-items:flex-end; justify-content:space-between;
-  padding:0 16px; margin-top:-52px; margin-bottom:12px; position:relative;
+  padding:0 16px; margin-top:-40px; margin-bottom:12px; position:relative;
 }
 .prof-page-avatar {
-  width:104px; height:104px; border-radius:50%;
+  width:96px; height:96px; border-radius:50%;
   border:4px solid var(--bg-dark); object-fit:cover;
   background:var(--bg-card); flex-shrink:0;
   position:relative; z-index:2;
@@ -1366,25 +1415,22 @@ nav { flex:1; padding:4px 0; }
 
     <button id="nav-post-btn">Post</button>
 
-    <div id="account-pill" style="display:none">
-      <img src="image1.jpeg" id="ap-avatar" alt="">
-      <div id="ap-info">
-        <span id="ap-name">My Wallet</span>
-        <span id="ap-addr"></span>
+    <div class="sidebar-footer">
+      <div id="account-pill" style="display:none">
+        <img src="image1.jpeg" id="ap-avatar" alt="">
+        <div id="ap-info">
+          <span id="ap-name">My Wallet</span>
+          <span id="ap-addr"></span>
+        </div>
+        <span id="ap-dots" title="Click to disconnect">•••</span>
       </div>
-      <span id="ap-dots" title="Click to disconnect">•••</span>
+      <button id="connect-btn">Connect Wallet</button>
     </div>
-    <button id="connect-btn">Connect Wallet</button>
   </div>
 
   <!-- Main feed -->
   <div id="main">
     <button id="new-banner">✦ New posts — click to load</button>
-
-    <div id="feed-header">
-      <span id="feed-title">Home</span>
-      <button id="refresh-btn" title="Refresh">↺</button>
-    </div>
 
     <div id="feed-tabs">
       <button class="feed-tab active" id="tab-foryou">For You</button>
@@ -1473,7 +1519,6 @@ nav { flex:1; padding:4px 0; }
           <span style="font-size:20px;align-self:center">🔗</span>
         </div>
       </div>
-      <button class="sb-show-more" id="wave-btn">Open Wave on Pulse →</button>
     </div>
 
     <!-- Who to follow — derived from active addresses in current feed -->
@@ -1549,16 +1594,18 @@ nav { flex:1; padding:4px 0; }
     <!-- Footer links -->
     <div class="sb-footer">
       <div class="sb-footer-row">
-        <a href="https://github.com/HyperLightCoder/DeFiX/blob/main/README.md"
+        <a href="https://github.com/HyperLightCoder/Pulse-Underground/blob/main/README.md"
           target="_blank" rel="noopener noreferrer">About</a>
         <a href="https://pulsechain.com"
           target="_blank" rel="noopener noreferrer">PulseChain</a>
         <a href="https://waveonpulse.com"
-          target="_blank" rel="noopener noreferrer">Wave</a>
-        <a href="https://github.com/HyperLightCoder/DeFiX"
+          target="_blank" rel="noopener noreferrer">Wave on Pulse</a>
+        <a href="https://github.com/HyperLightCoder/Pulse-Underground"
           target="_blank" rel="noopener noreferrer">GitHub</a>
         <a href="https://x.com/PLSUnderground"
-          target="_blank" rel="noopener noreferrer">𝕏 @PLSUnderground</a>
+          target="_blank" rel="noopener noreferrer">
+          <svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align:middle;margin-right:2px"><path fill="currentColor" d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.253 5.622 5.912-5.622zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+          @PLSUnderground</a>
       </div>
       <div class="sb-copyright">© 2025 Say It DeFi — Uncensorable social on PulseChain</div>
     </div>
@@ -1773,7 +1820,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20250526-1';
+const SW_CACHE_VER = '20260525-1';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -2238,16 +2285,33 @@ class DeFiX {
 
   wireListeners() {
     const g = this.g.bind(this);
+    /* Safe wire: silently skips if element doesn't exist.
+       Prevents "Cannot set properties of null" crashes when HTML
+       and JS get out of sync during development or future HTML changes. */
+    const w = (id, event, fn) => {
+      const el = g(id);
+      if (el) el[event] = fn;
+    };
 
     g('logo-wrap').onclick     = () => this.goHome();
-    const sbWave = g('sb-wave-row');
-    if (sbWave) sbWave.onclick = () => this.goWave();
+    w('sb-wave-row', 'onclick', () => this.goWave());
     g('connect-btn').onclick   = () => this.toggleWallet();
     g('nav-post-btn').onclick  = () => this.openComposeModal();
     g('mobile-fab').onclick    = () => this.openComposeModal();
 
-    g('tab-foryou').onclick   = () => this.setFeedTab('foryou');
-    g('tab-following').onclick = () => this.setFeedTab('following');
+    /* Tapping the active tab refreshes feed -- matches X/Twitter */
+    g('tab-foryou').onclick = () => {
+      if (document.getElementById('tab-foryou').classList.contains('active')) {
+        this.refreshFeed(); return;
+      }
+      this.setFeedTab('foryou');
+    };
+    g('tab-following').onclick = () => {
+      if (document.getElementById('tab-following').classList.contains('active')) {
+        this.refreshFeed(); return;
+      }
+      this.setFeedTab('following');
+    };
 
     g('compose-text').addEventListener('focus', () => {
       g('compose-area').classList.add('focused');
@@ -2274,7 +2338,7 @@ class DeFiX {
     g('nav-explore').onclick   = () => this.goExplore();
     g('nav-notifs').onclick    = () => this.goNotifications();
     g('nav-channels').onclick  = () => this.goChannels();
-    g('nav-mychannel').onclick = () => this.goSelf();
+    w('nav-mychannel', 'onclick', () => this.goSelf());
     g('nav-bookmarks').onclick = () => this.goBookmarks();
     g('nav-profile').onclick   = () => this.openProfileModal();
     g('nav-more').onclick      = e => { e.stopPropagation(); this.toggleMoreMenu(); };
@@ -2438,14 +2502,13 @@ class DeFiX {
       this.renderFeed();
     }, 250);
 
-    g('refresh-btn').onclick = () => this.refreshFeed();
     g('new-banner').onclick  = () => this.loadPending();
 
     g('ch-main').onclick = () => this.goHome();
     g('ch-self').onclick = () => this.goSelf();
     g('ch-go').onclick   = () => this.goCustom();
     g('custom-input').onkeydown = e => { if (e.key === 'Enter') this.goCustom(); };
-    g('wave-btn').onclick = () => this.goWave();
+    /* wave-btn removed from sidebar HTML — Wave is reachable via nav/sidebar card */
     const wcb = g('wave-card-btn');
     if (wcb) {
       wcb.onclick   = () => this.goWave();
@@ -2579,7 +2642,7 @@ class DeFiX {
     };
     g('fetch-nft-btn').onclick = () => this.fetchNFTImage();
 
-    g('close-share-modal').onclick = () => this.closeModal('share-modal');
+    w('close-share-modal', 'onclick', () => this.closeModal('share-modal'));
     g('close-reply').onclick      = () => this.closeModal('reply-modal');
     g('cancel-reply-btn').onclick = () => this.closeModal('reply-modal');
     g('post-reply-btn').onclick   = () => this.postReply();
@@ -2787,8 +2850,7 @@ class DeFiX {
     this.setNav('nav-home','home');
     this.state.mode    = 'main';
     this.state.channel = MAIN_CHANNEL;
-    /* Twitter/X: no title on home feed — tabs sit at the very top */
-    this.g('feed-header').style.display    = 'none';
+    /* Home: tabs are the sticky top element, no title header */
     this.g('feed-tabs').style.display      = 'flex';
     this.g('feed-tabs').classList.add('tabs-sticky');
     this.g('compose-area').style.display   = 'flex';
@@ -2806,19 +2868,21 @@ class DeFiX {
   async goNotifications() {
     if (!this.signer) { utils.toast('Connect wallet to view Notifications'); return; }
     this.setNav('nav-notifs','notifs');
-    this.g('feed-header').style.display    = '';
     this.g('feed-tabs').classList.remove('tabs-sticky');
-    this.g('feed-title').textContent       = '🔔 Notifications';
+    this.g('feed-tabs').style.display      = 'none';
     this.g('compose-area').style.display   = 'none';
     this.g('channel-banner').style.display = 'none';
-    this.g('feed-tabs').style.display      = 'none';
+    /* Inject sticky header at top of feed */
+    this._pendingPageHeader = this._makePageHeader({
+      title: 'Notifications', noBack: true });
     this.g('new-banner').style.display     = 'none';
     this.g('loading-more').style.display   = 'none';
     this.state.mode = 'notifications';
     localStorage.setItem(LAST_CHECK_KEY, Date.now().toString());
     this.clearNotifBadge();
 
-    this.g('feed').innerHTML = `<div class="prof-empty"><span>⏳</span><h3>Loading notifications…</h3></div>`;
+    this.g('feed').innerHTML = this._applyPageHeader() +
+      `<div class="prof-empty"><span>⏳</span><h3>Loading notifications…</h3></div>`;
 
     try {
       const allNotifs = [];
@@ -2936,9 +3000,11 @@ class DeFiX {
     this.setNav('nav-mychannel', null);
     this.state.mode    = 'self';
     this.state.channel = this.state.signerAddr;
-    this.g('feed-header').style.display  = '';
     this.g('feed-tabs').classList.remove('tabs-sticky');
-    this.g('feed-title').textContent     = '📡 My Channel';
+    const selfTitle = this.state.profile.username || 'My Channel';
+    const selfHandle = this.state.signerAddr ? '@' + this.trunc(this.state.signerAddr) : '';
+    this._pendingPageHeader = this._makePageHeader({
+      title: selfTitle, subtitle: selfHandle, noBack: true });
     this.g('compose-area').style.display = 'flex';
     this.setChActive('ch-self');
     this.updateChLabel();
@@ -2952,9 +3018,9 @@ class DeFiX {
     this.setNav(null, null);
     this.state.mode    = 'custom';
     this.state.channel = raw;
-    this.g('feed-header').style.display  = '';
     this.g('feed-tabs').classList.remove('tabs-sticky');
-    this.g('feed-title').textContent     = `📬 ${this.trunc(raw)}`;
+    this._pendingPageHeader = this._makePageHeader({
+      title: this.trunc(raw), subtitle: raw, noBack: false });
     this.g('compose-area').style.display = 'flex';
     this.setChActive(null);
     this.updateChLabel();
@@ -2968,9 +3034,9 @@ class DeFiX {
     this.setNav(null, null);
     this.state.mode    = 'wave';
     this.state.channel = WAVE_ADDRESS;
-    this.g('feed-header').style.display  = '';
     this.g('feed-tabs').classList.remove('tabs-sticky');
-    this.g('feed-title').textContent     = '📻 Wave on Pulse';
+    this._pendingPageHeader = this._makePageHeader({
+      title: 'Wave on Pulse', subtitle: 'Free speech radio on PulseChain', noBack: false });
     this.g('compose-area').style.display = 'none';
     this.setChActive(null);
     this.updateChLabel();
@@ -2983,9 +3049,9 @@ class DeFiX {
     this.state.mode    = 'custom';
     this.state.channel = DEFIX_CHANNEL;
     this.g('custom-input').value         = DEFIX_CHANNEL;
-    this.g('feed-header').style.display  = '';
     this.g('feed-tabs').classList.remove('tabs-sticky');
-    this.g('feed-title').textContent     = '⚡ Say It DeFi Channel';
+    this._pendingPageHeader = this._makePageHeader({
+      title: 'Say It DeFi Channel', subtitle: 'Official channel', noBack: false });
     this.g('compose-area').style.display = 'flex';
     this.g('feed-tabs').style.display    = 'none';
     this.setChActive(null);
@@ -2998,17 +3064,17 @@ class DeFiX {
   goExplore() {
     this.setNav('nav-explore','explore');
     this.state.mode = 'explore';
-    this.g('feed-header').style.display    = '';
     this.g('feed-tabs').classList.remove('tabs-sticky');
-    this.g('feed-title').textContent       = '🔭 Explore';
+    this.g('feed-tabs').style.display      = 'none';
     this.g('compose-area').style.display   = 'none';
     this.g('channel-banner').style.display = 'none';
-    this.g('feed-tabs').style.display      = 'none';
+    this._pendingPageHeader = this._makePageHeader({ title: 'Explore', noBack: true });
     this.g('loading-more').style.display   = 'none';
-    this._renderExplorePage();
+    const _exploreHeader = this._applyPageHeader();
+    this._renderExplorePage(_exploreHeader);
   }
 
-  _renderExplorePage() {
+  _renderExplorePage(_headerHTML = '') {
     const posts = this.state.posts;
     /* ── Trending hashtags ── */
     const tagCounts = new Map();
@@ -3084,7 +3150,7 @@ class DeFiX {
         }).join('')
       : '<div style="padding:16px;color:var(--muted)">Visit some channels to see them here.</div>';
 
-    this.g('feed').innerHTML = `
+    this.g('feed').innerHTML = _headerHTML + `
       <div class="explore-page">
         <div class="explore-section">
           <div class="explore-section-title">📈 Trending</div>
@@ -3109,9 +3175,12 @@ class DeFiX {
   goBookmarks() {
     if (!this.signer) { utils.toast('Connect wallet to view Bookmarks'); return; }
     this.setNav('nav-bookmarks', null);
-    this.g('feed-header').style.display  = '';
     this.g('feed-tabs').classList.remove('tabs-sticky');
-    this.g('feed-title').textContent     = '🔖 Bookmarks';
+    const bkUser = this.state.profile.username
+      ? '@' + utils.safe(this.state.profile.username)
+      : (this.state.signerAddr ? '@' + this.trunc(this.state.signerAddr) : '');
+    this._pendingPageHeader = this._makePageHeader({
+      title: 'Bookmarks', subtitle: bkUser, noBack: true });
     this.g('compose-area').style.display = 'none';
     this.g('channel-banner').style.display = 'none';
     this.g('feed-tabs').style.display    = 'none';
@@ -3146,9 +3215,8 @@ class DeFiX {
 
   async goChannels() {
     this.setNav('nav-channels','channels');
-    this.g('feed-header').style.display  = '';
     this.g('feed-tabs').classList.remove('tabs-sticky');
-    this.g('feed-title').textContent     = '💬 Channels';
+    this._pendingPageHeader = this._makePageHeader({ title: 'Channels', noBack: true });
     this.g('compose-area').style.display = 'none';
     this.g('channel-banner').style.display = 'none';
     this.g('feed-tabs').style.display    = 'none';
@@ -3168,12 +3236,15 @@ class DeFiX {
 
   goSettings() {
     this.setNav(null, null);
-    this.g('feed-title').textContent     = '⚙️ Settings';
-    this.g('compose-area').style.display = 'none';
+    this.state.mode = 'settings';
+    this.g('compose-area').style.display   = 'none';
     this.g('channel-banner').style.display = 'none';
-    this.g('feed-tabs').style.display    = 'none';
-    this.g('loading-more').style.display = 'none';
-    this.g('feed').innerHTML = this._settingsHTML();
+    this.g('feed-tabs').style.display      = 'none';
+    this.g('feed-tabs').classList.remove('tabs-sticky');
+    this.g('loading-more').style.display   = 'none';
+    this._pendingPageHeader = this._makePageHeader({ title: 'Settings', noBack: true });
+    const headerHTML = this._applyPageHeader();
+    this.g('feed').innerHTML = headerHTML + this._settingsHTML();
     this._wireSettingsListeners();
   }
 
@@ -3433,7 +3504,7 @@ class DeFiX {
           No server, no backend, no ads.
         </div>
         <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
-          <a href="https://github.com/HyperLightCoder/DeFiX" target="_blank"
+          <a href="https://github.com/HyperLightCoder/Pulse-Underground" target="_blank"
             class="settings-btn" style="text-decoration:none;display:inline-block">GitHub ↗</a>
           <a href="https://pulsechain.com" target="_blank"
             class="settings-btn" style="text-decoration:none;display:inline-block">PulseChain ↗</a>
@@ -3790,6 +3861,13 @@ class DeFiX {
               if (coverEl && data.coverUrl)
                 coverEl.style.background = `url('${data.coverUrl}') center/cover no-repeat`;
             }
+            /* Update My Channel page-header title if user is on that page */
+            if (this.state.mode === 'self' && data.username) {
+              const hdrTitle = this.g('feed')?.querySelector('.page-header-title');
+              if (hdrTitle && (hdrTitle.textContent === 'My Channel' || !hdrTitle.textContent)) {
+                hdrTitle.textContent = data.username;
+              }
+            }
             return; /* found — stop */
           } catch { continue; }
         }
@@ -3923,7 +4001,7 @@ class DeFiX {
     this.g('new-banner').style.display     = 'none';
     this.g('loading-more').style.display   = 'none';
     /* Set a real title so the header isn't blank */
-    this.g('feed-title').textContent = isOwn ? 'Profile' : 'Profile';
+    /* page header via _makePageHeader handles the title now */
 
     /* Profile data resolution:
        - Own profile: always start with state.profile (may be partial — has
@@ -3965,9 +4043,18 @@ class DeFiX {
       visibleTxHashes: new Set(),
     };
 
-    this.g('feed-header').style.display  = '';
     this.g('feed-tabs').classList.remove('tabs-sticky');
-    this.g('feed').innerHTML = this._profilePageHTML(address, prof, isOwn);
+    /* Profile header: back arrow | Name + N posts | search icon (Twitter pattern) */
+    const postCount = this.state.posts.filter(
+      p => p.reporter?.toLowerCase() === address.toLowerCase() &&
+           (!p.postType || p.postType === 'post')).length;
+    const profHeaderHTML = this._makePageHeader({
+      title: prof.username || this.trunc(address),
+      subtitle: postCount > 0 ? `${postCount} post${postCount !== 1 ? 's' : ''}` : '',
+      back: true,
+      searchAddr: address,
+    });
+    this.g('feed').innerHTML = profHeaderHTML + this._profilePageHTML(address, prof, isOwn);
     this._wireProfilePageListeners(address, isOwn);
 
     /* Scan more pages for own profile — they likely have many reaction
@@ -4686,7 +4773,7 @@ class DeFiX {
         this.state.pending = [...fresh, ...this.state.pending];
         const n = this.state.pending.length;
         const btn = this.g('new-banner');
-        btn.textContent   = `✦ ${n} new post${n > 1 ? 's' : ''} — tap to load`;
+        btn.textContent   = `Show ${n} post${n > 1 ? 's' : ''}`;
         btn.style.display = 'block';
       }
       if (this.state.signerAddr) this.checkNotifBadge();
@@ -4698,12 +4785,12 @@ class DeFiX {
     this.state.pending = [];
     this.g('new-banner').style.display = 'none';
     this.renderFeed();
+    /* X-style: snap to top after inserting new posts */
+    window.scrollTo({ top: 0, behavior: 'smooth' });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   async refreshFeed() {
-    const btn = this.g('refresh-btn');
-    btn.textContent  = '↻';
     /* Bump token to cancel any in-flight fetch from before refresh. */
     this._fetchToken++;
     this.state.posts     = [];
@@ -4722,7 +4809,7 @@ class DeFiX {
     this.state.loading = false;
     await this.fetchPosts(true);
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    btn.textContent = '↺';
+
   }
 
   async resetAndFetch() {
@@ -4762,13 +4849,17 @@ class DeFiX {
   }
 
   renderFeed() {
-    /* Keep sidebar trending + W2F live with the feed. Wrapped so this never
-       breaks rendering if the sidebar isn't in the DOM (e.g. mobile). */
     queueMicrotask(() => this._refreshSidebarPanels());
-    /* These modes manage #feed themselves — don't overwrite them.
-       Synced with _selfManagedModes used by onScroll() and pollNew(). */
     const selfManaged = this._selfManagedModes;
     if (selfManaged.has(this.state.mode)) return;
+    /* Prepend pending page header (set by non-home navigation functions) */
+    if (this._pendingPageHeader) {
+      const feed = this.g('feed');
+      if (feed && !feed.querySelector('.page-header')) {
+        feed.insertAdjacentHTML('afterbegin', this._pendingPageHeader);
+      }
+      this._pendingPageHeader = null;
+    }
 
     const feed = this.g('feed');
     const term = this.state.searchTerm;
@@ -5173,23 +5264,13 @@ class DeFiX {
     this.g('feed-tabs').style.display      = 'none';
     this.g('new-banner').style.display     = 'none';
     this.g('loading-more').style.display   = 'none';
-    this.g('feed-title').textContent       = 'Post';
-
-    /* Back button in header */
-    const existingBack = document.getElementById('thread-back-btn');
-    if (!existingBack) {
-      const backBtn = document.createElement('button');
-      backBtn.id = 'thread-back-btn';
-      backBtn.style.cssText = `background:transparent;border:none;color:var(--text);
-        font-size:20px;cursor:pointer;padding:4px 8px;border-radius:50%;
-        transition:background 0.18s;display:flex;align-items:center;gap:6px;
-        font-weight:700;font-size:15px;`;
-      backBtn.innerHTML = '← Back';
-      backBtn.onmouseenter = () => backBtn.style.background = 'rgba(255,255,255,0.06)';
-      backBtn.onmouseleave = () => backBtn.style.background = 'transparent';
-      backBtn.onclick = () => this._threadBack();
-      this.g('feed-header').insertBefore(backBtn, this.g('feed-header').firstChild);
-    }
+    /* Thread page header: back arrow + "Post" title, exactly like X */
+    this._pendingPageHeader = this._makePageHeader({
+      title: 'Post',
+      back: true,
+    });
+    /* Override back action to restore previous view, not history.back() */
+    this._threadBackOverride = true;
 
     this.state.threadPost = post;
     this._renderThreadPage(post);
@@ -5275,8 +5356,7 @@ class DeFiX {
   }
 
   _threadBack() {
-    const btn = document.getElementById('thread-back-btn');
-    if (btn) btn.remove();
+    this._threadBackOverride = false;
     /* Restore previous view */
     const prev = this._prevMode || 'main';
     if (prev === 'main')         this.goHome();
@@ -5306,7 +5386,8 @@ class DeFiX {
       repliesHTML += `<div class="post-item thread-reply-item" data-txhash="${utils.safe(r.txHash)}">${this.postHTML(r, true, null, null)}</div>`;
     });
 
-    this.g('feed').innerHTML = `
+    const threadHeader = this._applyPageHeader();
+    this.g('feed').innerHTML = threadHeader + `
       <div class="thread-page">
         <div class="post-item thread-orig-item" data-txhash="${utils.safe(post.txHash)}"
           style="cursor:default;border-bottom:2px solid var(--border)">
@@ -5318,7 +5399,7 @@ class DeFiX {
         <div id="thread-loading-page" style="display:none;padding:16px;text-align:center;color:var(--muted);font-size:14px">
           ⟳ Fetching replies from chain…
         </div>
-        <div class="thread-compose">
+        <div class="thread-compose" style="border-top:1px solid var(--border);margin-top:0">
           <img src="${utils.safe(this.state.profile.picUrl || 'image1.jpeg')}"
             class="compose-avatar" onerror="this.src='image1.jpeg'">
           <div style="flex:1">
@@ -5331,6 +5412,10 @@ class DeFiX {
           </div>
         </div>
       </div>`;
+
+    /* Wire back button to use _threadBack() (restores feed state correctly) */
+    const threadBackBtn = this.g('feed')?.querySelector('.page-header-back');
+    if (threadBackBtn) threadBackBtn.onclick = () => this._threadBack();
 
     /* Wire thread compose */
     const input = document.getElementById('thread-page-input');
@@ -5546,7 +5631,7 @@ class DeFiX {
      fired on them. Keep this in sync with renderFeed()'s selfManaged list. */
   _selfManagedModes = new Set([
     'notifications', 'profile', 'thread', 'channels',
-    'explore', 'bookmarks', 'settings'
+    'explore', 'bookmarks', 'settings', 'wave', 'self', 'custom'
   ]);
 
   onScroll() {
@@ -5564,6 +5649,62 @@ class DeFiX {
     const doc = document.documentElement;
     const bottom = window.scrollY + window.innerHeight;
     if (bottom >= doc.scrollHeight - 600) this.fetchPosts(false);
+  }
+
+  /* __ Per-page sticky header __ */
+  /* Returns an HTML string for a sticky top-of-feed header bar.
+     opts: { title, subtitle, back: bool, searchAddr, noBack: bool } */
+  _makePageHeader(opts = {}) {
+    const backBtn = opts.noBack ? '' : `
+      <button class="page-header-back" onclick="pulse._navBack()"
+        aria-label="Back">
+        <svg viewBox="0 0 24 24" width="20" height="20">
+          <path fill="currentColor" d="M7.414 13l5.043 5.04-1.414 1.42L3.586 12l7.457-7.46 1.414 1.42L7.414 11H21v2H7.414z"/>
+        </svg>
+      </button>`;
+    const searchBtn = opts.searchAddr ? `
+      <button class="page-header-action" title="Search posts"
+        onclick="pulse.g('search-input').focus();pulse.g('search-input').scrollIntoView({behavior:'smooth'})">
+        <svg viewBox="0 0 24 24" width="20" height="20">
+          <path fill="currentColor" d="M10.25 3.75c-3.59 0-6.5 2.91-6.5 6.5s2.91 6.5 6.5 6.5c1.795 0 3.419-.726 4.596-1.904 1.178-1.177 1.904-2.801 1.904-4.596 0-3.59-2.91-6.5-6.5-6.5zm-8.5 6.5c0-4.694 3.806-8.5 8.5-8.5s8.5 3.806 8.5 8.5c0 1.986-.682 3.815-1.814 5.272l4.771 4.771-1.414 1.414-4.771-4.771A8.456 8.456 0 0110.25 18.75c-4.694 0-8.5-3.806-8.5-8.5z"/>
+        </svg>
+      </button>` : '';
+    const subtitle = opts.subtitle
+      ? `<div class="page-header-subtitle">${utils.safe(opts.subtitle)}</div>` : '';
+    return `<div class="page-header">
+      ${backBtn}
+      <div class="page-header-titles">
+        <div class="page-header-title">${utils.safe(opts.title || '')}</div>
+        ${subtitle}
+      </div>
+      ${searchBtn}
+    </div>`;
+  }
+
+  /* Prepend the pending page header to the feed if not already present.
+     Call at the start of any function that sets feed.innerHTML directly. */
+  _applyPageHeader() {
+    if (!this._pendingPageHeader) return '';
+    const h = this._pendingPageHeader;
+    this._pendingPageHeader = null;
+    return h;
+  }
+
+  /* Navigate back using app state rather than browser history.
+     history.back() is unreliable on GitHub Pages (SW inflates history.length).
+     We check if there's a meaningful previous state to restore. */
+  _navBack() {
+    /* Thread page has explicit state saved in _prevMode */
+    if (this._threadBackOverride) {
+      this._threadBack();
+      return;
+    }
+    /* Profile/other pages: try real history first, fall back to Home */
+    if (window.history.length > 2) {
+      window.history.back();
+    } else {
+      this.goHome();
+    }
   }
 
   /* __ Post context menu __ */
@@ -6323,7 +6464,8 @@ if ('serviceWorker' in navigator) {
 }
 pulse.init().catch(err => {
   console.error('Init error:', err);
-  utils.toast('Startup failed — see console');
+  if (err.stack) console.error('Stack:', err.stack);
+  utils.toast('Startup failed — reload and check console');
 });
 </script>
 </body>
