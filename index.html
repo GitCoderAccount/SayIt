@@ -486,13 +486,17 @@ nav { flex:1; padding:4px 0; }
   transition:opacity 0.15s, transform 0.15s;
   cursor:pointer;
   font-size:14px;
-  /* Hover area: extend invisible padding so mouse can move from trigger
-     to popup without the popup dismissing. Twitter does the same. */
   padding-top:20px;
   margin-top:-12px;
+  /* CRITICAL: never intercept clicks when invisible (during fade-out).
+     Without this, the 150ms opacity fade leaves an invisible 320px
+     element at z-index:9999 that swallows all clicks — including the
+     left sidebar nav buttons. */
+  pointer-events:none;
 }
 .profile-popup.open { display:block; }
-.profile-popup.visible { opacity:1; transform:translateY(0); }
+/* Only capture events when actually visible to the user */
+.profile-popup.visible { opacity:1; transform:translateY(0); pointer-events:auto; }
 /* Touch devices: suppress hover-open so click-open is the only trigger */
 @media (hover: none) {
   .post-name, .post-avatar { cursor:pointer; }
@@ -554,6 +558,7 @@ nav { flex:1; padding:4px 0; }
   display:none;
 }
 .post-menu-dropdown.open { display:block; }
+/* Close post-menu-dropdown when clicking outside — handled in openPostMenu */
 .post-menu-item {
   display:flex; align-items:center; gap:12px;
   padding:12px 16px; cursor:pointer; font-size:15px;
@@ -2855,6 +2860,8 @@ class DeFiX {
     this.g('feed-tabs').classList.add('tabs-sticky');
     this.g('compose-area').style.display   = 'flex';
     this.g('channel-banner').style.display = 'none';
+    /* Clear any pending page-header from a previous page */
+    this._pendingPageHeader = null;
     this.setChActive('ch-main');
     this.updateChLabel();
     await this.resetAndFetch();
@@ -3001,6 +3008,7 @@ class DeFiX {
     this.state.mode    = 'self';
     this.state.channel = this.state.signerAddr;
     this.g('feed-tabs').classList.remove('tabs-sticky');
+    this.g('feed-tabs').style.display = 'none';
     const selfTitle = this.state.profile.username || 'My Channel';
     const selfHandle = this.state.signerAddr ? '@' + this.trunc(this.state.signerAddr) : '';
     this._pendingPageHeader = this._makePageHeader({
@@ -3019,6 +3027,7 @@ class DeFiX {
     this.state.mode    = 'custom';
     this.state.channel = raw;
     this.g('feed-tabs').classList.remove('tabs-sticky');
+    this.g('feed-tabs').style.display = 'none';
     this._pendingPageHeader = this._makePageHeader({
       title: this.trunc(raw), subtitle: raw, noBack: false });
     this.g('compose-area').style.display = 'flex';
@@ -3035,6 +3044,7 @@ class DeFiX {
     this.state.mode    = 'wave';
     this.state.channel = WAVE_ADDRESS;
     this.g('feed-tabs').classList.remove('tabs-sticky');
+    this.g('feed-tabs').style.display = 'none';
     this._pendingPageHeader = this._makePageHeader({
       title: 'Wave on Pulse', subtitle: 'Free speech radio on PulseChain', noBack: false });
     this.g('compose-area').style.display = 'none';
@@ -3050,6 +3060,7 @@ class DeFiX {
     this.state.channel = DEFIX_CHANNEL;
     this.g('custom-input').value         = DEFIX_CHANNEL;
     this.g('feed-tabs').classList.remove('tabs-sticky');
+    this.g('feed-tabs').style.display = 'none';
     this._pendingPageHeader = this._makePageHeader({
       title: 'Say It DeFi Channel', subtitle: 'Official channel', noBack: false });
     this.g('compose-area').style.display = 'flex';
@@ -4752,10 +4763,9 @@ class DeFiX {
   stopPolling()   { clearInterval(this.pollTimer); }
 
   async pollNew() {
-    /* Skip polling on pages that manage their own feed — otherwise the
-       "✦ N new posts" banner appears in contexts where it makes no sense
-       (e.g. while viewing someone's profile). */
-    if (this._selfManagedModes.has(this.state.mode)) return;
+    /* Skip on pages where the "Show N posts" banner makes no sense —
+       user is on a specific channel, not the main timeline. */
+    if (this._noBannerModes.has(this.state.mode)) return;
     if (!this.state.channel || this.state.loading) return;
     /* Skip polling when tab is hidden — saves bandwidth and rate limit.
        visibilitychange handler in init() resumes immediately on tab focus. */
@@ -4823,6 +4833,12 @@ class DeFiX {
     this.state.pending   = [];
     this.state.nextPage  = 1;
     this.state.hasMore   = true;
+    /* Clear feed DOM immediately so old channel's posts don't flash
+       while new channel's posts are loading. */
+    const feedEl = this.g('feed');
+    if (feedEl && !this._selfManagedModes.has(this.state.mode)) {
+      feedEl.innerHTML = '';
+    }
     this.state.expanded.clear();
     this.state.activeTag  = null;
     this.state.searchTerm = '';
@@ -4851,15 +4867,17 @@ class DeFiX {
   renderFeed() {
     queueMicrotask(() => this._refreshSidebarPanels());
     const selfManaged = this._selfManagedModes;
-    if (selfManaged.has(this.state.mode)) return;
-    /* Prepend pending page header (set by non-home navigation functions) */
-    if (this._pendingPageHeader) {
+    /* Inject pending page-header BEFORE the self-managed bail.
+       Self-managed pages (Notifications, Explore, etc.) call
+       feed.innerHTML = header + content in their own render functions.
+       Non-self-managed pages (My Channel, Wave, Custom, Main) get the
+       header prepended here to their feed DOM. */
+    if (this._pendingPageHeader && !this.g('feed')?.querySelector('.page-header')) {
       const feed = this.g('feed');
-      if (feed && !feed.querySelector('.page-header')) {
-        feed.insertAdjacentHTML('afterbegin', this._pendingPageHeader);
-      }
+      if (feed) feed.insertAdjacentHTML('afterbegin', this._pendingPageHeader);
       this._pendingPageHeader = null;
     }
+    if (selfManaged.has(this.state.mode)) return;
 
     const feed = this.g('feed');
     const term = this.state.searchTerm;
@@ -5629,7 +5647,16 @@ class DeFiX {
   /* Pages in this set render their own feed content (profile, thread,
      etc.) and would silently swallow appended posts if infinite-scroll
      fired on them. Keep this in sync with renderFeed()'s selfManaged list. */
+  /* Modes that replace the entire #feed DOM themselves — renderFeed must
+     NOT overwrite them with the standard post list. */
   _selfManagedModes = new Set([
+    'notifications', 'profile', 'thread', 'channels',
+    'explore', 'bookmarks', 'settings'
+  ]);
+  /* Modes where pollNew's "Show N posts" banner makes no sense.
+     Superset of _selfManagedModes — includes wave/self/custom where
+     the user is on a specific channel feed that isn't the main timeline. */
+  _noBannerModes = new Set([
     'notifications', 'profile', 'thread', 'channels',
     'explore', 'bookmarks', 'settings', 'wave', 'self', 'custom'
   ]);
