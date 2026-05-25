@@ -166,7 +166,14 @@ nav { flex:1; padding:4px 0; }
 }
 #refresh-btn:hover { background:rgba(255,255,255,0.06); color:var(--text); }
 
-#feed-tabs { display:flex; border-bottom:1px solid var(--border); }
+#feed-tabs {
+  display:flex; border-bottom:1px solid var(--border);
+  /* When header is hidden (home feed), tabs become the sticky top bar */
+  background:rgba(0,0,0,0.85); backdrop-filter:blur(12px) saturate(180%);
+}
+#feed-tabs.tabs-sticky {
+  position:sticky; top:0; z-index:20;
+}
 .feed-tab {
   flex:1; padding:15px 0; text-align:center;
   font-size:15px; font-weight:500; color:var(--muted);
@@ -307,6 +314,7 @@ nav { flex:1; padding:4px 0; }
 .post-item {
   padding:12px 16px; border-bottom:1px solid var(--border);
   cursor:pointer; transition:background 0.15s;
+  position:relative; /* for .post-menu-btn absolute positioning */
 }
 .post-item:hover { background:rgba(255,255,255,0.03); }
 .post-hdr { display:flex; gap:12px; }
@@ -319,7 +327,7 @@ nav { flex:1; padding:4px 0; }
 
 .post-meta-row {
   display:flex; align-items:baseline; flex-wrap:nowrap;
-  gap:0; line-height:1.4; margin-bottom:2px; overflow:hidden;
+  gap:0; line-height:1.4; margin-bottom:0; overflow:hidden;
 }
 .post-name   { font-weight:700; font-size:15px; flex-shrink:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:160px; }
 .post-name:hover { text-decoration:underline; cursor:pointer; }
@@ -344,7 +352,7 @@ nav { flex:1; padding:4px 0; }
 
 .post-body {
   font-size:15px; line-height:1.6; word-break:break-word;
-  color:var(--text); margin-top:4px; margin-bottom:10px;
+  color:var(--text); margin-top:2px; margin-bottom:8px;
 }
 .post-link    { color:#1d9bf0; }
 .post-link:hover    { text-decoration:underline; }
@@ -385,7 +393,17 @@ nav { flex:1; padding:4px 0; }
 .post-actions {
   display:flex; align-items:center;
   justify-content:space-between;
-  margin-top:4px; max-width:420px;
+  margin-top:4px; max-width:440px;
+}
+/* Left group: Reply, Repost, Like, Views -- spread evenly */
+.post-actions-left {
+  display:flex; align-items:center;
+  flex:1; justify-content:space-between;
+  max-width:320px;
+}
+/* Right group: Bookmark + OtterScan -- flush right, touching */
+.post-actions-right {
+  display:flex; align-items:center; gap:0; margin-left:auto;
 }
 .act-btn {
   display:flex; align-items:center; gap:2px;
@@ -470,6 +488,33 @@ nav { flex:1; padding:4px 0; }
 #sb-w2f-list .sb-card-row { display:flex; align-items:center; gap:8px; padding:10px 14px; }
 #sb-w2f-list .w2f-follow-btn:hover { background:rgba(231,233,234,0.85); }
 .act-bookmark.bookmarked        { color:#1d9bf0; }
+.post-menu-btn {
+  position:absolute; top:12px; right:12px;
+  background:transparent; border:none;
+  color:var(--muted); font-size:18px; cursor:pointer;
+  width:34px; height:34px; border-radius:50%;
+  display:flex; align-items:center; justify-content:center;
+  transition:background 0.15s, color 0.15s;
+  opacity:0; /* hidden until post is hovered */
+}
+.post-item:hover .post-menu-btn { opacity:1; }
+.post-menu-btn:hover { background:rgba(29,155,240,0.1); color:var(--primary-lt); }
+.post-menu-dropdown {
+  position:fixed; z-index:9998;
+  background:var(--bg-card); border:1px solid var(--border);
+  border-radius:12px; padding:4px 0; min-width:220px;
+  box-shadow:0 8px 24px rgba(0,0,0,0.4);
+  display:none;
+}
+.post-menu-dropdown.open { display:block; }
+.post-menu-item {
+  display:flex; align-items:center; gap:12px;
+  padding:12px 16px; cursor:pointer; font-size:15px;
+  color:var(--text); transition:background 0.12s;
+}
+.post-menu-item:hover { background:rgba(255,255,255,0.06); }
+.post-menu-item.danger { color:#f4212e; }
+.post-menu-item svg { flex-shrink:0; }
 /* J/K keyboard navigation focus ring — subtle, doesn't fight the dark theme */
 .post-item.kb-focus {
   outline:2px solid var(--primary);
@@ -2336,18 +2381,48 @@ class DeFiX {
       }
     };
 
-    /* Mouseout from popup itself — close after grace period */
-    document.addEventListener('mouseleave', e => {
+    /* Single permanent capture-phase click listener for popup dismissal.
+       Runs before any other click handler. If popup is open:
+         - Click inside popup -> handled by popup (action or navigate)
+         - Click outside popup -> close popup, then let event continue
+       We NEVER stopPropagation for outside clicks — that's what was
+       causing the left sidebar to lose click ability. When dismiss fired
+       via a leaked listener and called stopPropagation, sidebar buttons
+       never got the event. */
+    document.addEventListener('click', e => {
       const popup = this.g('profile-popup');
-      if (!popup || !popup.classList.contains('open')) return;
-      if (e.target !== popup && !popup.contains(e.target)) return;
-      /* Target is the popup or its child — check relatedTarget */
-      if (popup.contains(e.relatedTarget)) return;
-      clearTimeout(popup._pendingClose);
-      popup._pendingClose = setTimeout(() => {
-        if (!popup.matches(':hover')) this.hideProfilePopup();
-      }, 200);
-    }, true);
+      if (!popup?.classList.contains('open')) return;
+      if (popup.contains(e.target)) {
+        /* Inside popup: handle follow/unfollow action */
+        const btn = e.target.closest('[data-pp-action]');
+        if (btn) {
+          e.stopPropagation();
+          const addr = popup.dataset.addr;
+          this.toggleFollowAddr(addr, null);
+          setTimeout(() => {
+            if (popup.classList.contains('open') && popup.dataset.addr === addr) {
+              const postCount = this.state.posts.filter(
+                p => p.reporter?.toLowerCase() === addr &&
+                     (!p.postType || p.postType === 'post')).length;
+              popup.innerHTML = this._profilePopupHTML(addr,
+                this.state.profCache[addr] ||
+                (addr === this.state.signerAddr ? this.state.profile : {}), postCount);
+            }
+          }, 500);
+          return;
+        }
+        /* Click on popup body -> open profile page */
+        const addr = popup.dataset.addr;
+        this.hideProfilePopup();
+        this.goProfilePage(addr, addr === this.state.signerAddr);
+        return;
+      }
+      /* Outside popup: close it. Do NOT stopPropagation — allow the
+         click to reach its intended target (sidebar, buttons, etc). */
+      this.hideProfilePopup();
+      /* Note: we intentionally do NOT return or stopPropagation here.
+         The sidebar/feed elements get this click event normally. */
+    }, true /* capture phase: run before target handlers */);
 
     g('feed').addEventListener('mouseover', onFeedMouseover);
     g('feed').addEventListener('mouseout',  onFeedMouseout);
@@ -2583,6 +2658,9 @@ class DeFiX {
     } else if (action === 'mute') {
       e.stopPropagation();
       this.muteAddress(post.reporter);
+    } else if (action === 'menu') {
+      e.stopPropagation();
+      this.openPostMenu(post, e.currentTarget || e.target.closest('.post-menu-btn'));
     } else if (!action && !inModal && !e.target.closest('a') && !e.target.closest('button')) {
       this.openThread(post);
     }
@@ -2709,10 +2787,12 @@ class DeFiX {
     this.setNav('nav-home','home');
     this.state.mode    = 'main';
     this.state.channel = MAIN_CHANNEL;
-    this.g('feed-title').textContent       = 'Home';
+    /* Twitter/X: no title on home feed — tabs sit at the very top */
+    this.g('feed-header').style.display    = 'none';
+    this.g('feed-tabs').style.display      = 'flex';
+    this.g('feed-tabs').classList.add('tabs-sticky');
     this.g('compose-area').style.display   = 'flex';
     this.g('channel-banner').style.display = 'none';
-    this.g('feed-tabs').style.display      = 'flex';
     this.setChActive('ch-main');
     this.updateChLabel();
     await this.resetAndFetch();
@@ -2726,6 +2806,8 @@ class DeFiX {
   async goNotifications() {
     if (!this.signer) { utils.toast('Connect wallet to view Notifications'); return; }
     this.setNav('nav-notifs','notifs');
+    this.g('feed-header').style.display    = '';
+    this.g('feed-tabs').classList.remove('tabs-sticky');
     this.g('feed-title').textContent       = '🔔 Notifications';
     this.g('compose-area').style.display   = 'none';
     this.g('channel-banner').style.display = 'none';
@@ -2854,6 +2936,8 @@ class DeFiX {
     this.setNav('nav-mychannel', null);
     this.state.mode    = 'self';
     this.state.channel = this.state.signerAddr;
+    this.g('feed-header').style.display  = '';
+    this.g('feed-tabs').classList.remove('tabs-sticky');
     this.g('feed-title').textContent     = '📡 My Channel';
     this.g('compose-area').style.display = 'flex';
     this.setChActive('ch-self');
@@ -2868,6 +2952,8 @@ class DeFiX {
     this.setNav(null, null);
     this.state.mode    = 'custom';
     this.state.channel = raw;
+    this.g('feed-header').style.display  = '';
+    this.g('feed-tabs').classList.remove('tabs-sticky');
     this.g('feed-title').textContent     = `📬 ${this.trunc(raw)}`;
     this.g('compose-area').style.display = 'flex';
     this.setChActive(null);
@@ -2882,6 +2968,8 @@ class DeFiX {
     this.setNav(null, null);
     this.state.mode    = 'wave';
     this.state.channel = WAVE_ADDRESS;
+    this.g('feed-header').style.display  = '';
+    this.g('feed-tabs').classList.remove('tabs-sticky');
     this.g('feed-title').textContent     = '📻 Wave on Pulse';
     this.g('compose-area').style.display = 'none';
     this.setChActive(null);
@@ -2895,6 +2983,8 @@ class DeFiX {
     this.state.mode    = 'custom';
     this.state.channel = DEFIX_CHANNEL;
     this.g('custom-input').value         = DEFIX_CHANNEL;
+    this.g('feed-header').style.display  = '';
+    this.g('feed-tabs').classList.remove('tabs-sticky');
     this.g('feed-title').textContent     = '⚡ Say It DeFi Channel';
     this.g('compose-area').style.display = 'flex';
     this.g('feed-tabs').style.display    = 'none';
@@ -2908,6 +2998,8 @@ class DeFiX {
   goExplore() {
     this.setNav('nav-explore','explore');
     this.state.mode = 'explore';
+    this.g('feed-header').style.display    = '';
+    this.g('feed-tabs').classList.remove('tabs-sticky');
     this.g('feed-title').textContent       = '🔭 Explore';
     this.g('compose-area').style.display   = 'none';
     this.g('channel-banner').style.display = 'none';
@@ -3017,6 +3109,8 @@ class DeFiX {
   goBookmarks() {
     if (!this.signer) { utils.toast('Connect wallet to view Bookmarks'); return; }
     this.setNav('nav-bookmarks', null);
+    this.g('feed-header').style.display  = '';
+    this.g('feed-tabs').classList.remove('tabs-sticky');
     this.g('feed-title').textContent     = '🔖 Bookmarks';
     this.g('compose-area').style.display = 'none';
     this.g('channel-banner').style.display = 'none';
@@ -3052,6 +3146,8 @@ class DeFiX {
 
   async goChannels() {
     this.setNav('nav-channels','channels');
+    this.g('feed-header').style.display  = '';
+    this.g('feed-tabs').classList.remove('tabs-sticky');
     this.g('feed-title').textContent     = '💬 Channels';
     this.g('compose-area').style.display = 'none';
     this.g('channel-banner').style.display = 'none';
@@ -3869,6 +3965,8 @@ class DeFiX {
       visibleTxHashes: new Set(),
     };
 
+    this.g('feed-header').style.display  = '';
+    this.g('feed-tabs').classList.remove('tabs-sticky');
     this.g('feed').innerHTML = this._profilePageHTML(address, prof, isOwn);
     this._wireProfilePageListeners(address, isOwn);
 
@@ -4822,10 +4920,15 @@ class DeFiX {
     const isLiked      = this.state.likes.has(post.txHash);
     const isBookmarked = this.state.bookmarks.has(post.txHash);
 
+    const isMuted = this.isMuted(post.reporter);
     return `
       <div class="post-hdr">
         <img src="${utils.safe(picUrl)}" class="post-avatar" alt=""
           loading="lazy" onerror="this.src='image1.jpeg'">
+        <button class="post-menu-btn" data-action="menu" title="More options"
+          aria-label="More options">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M3 12c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zm9 2c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm7 0c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2z"/></svg>
+        </button>
         <div class="post-col">
           <div class="post-meta-row">
             <span class="post-name">${displayName}</span>${verifiedBadge}
@@ -4847,6 +4950,7 @@ class DeFiX {
           ${needsMore ? `<button class="read-more-btn" data-action="expand">Show more ↓</button>` : ''}
           ${imgHtml ? `<div class="post-images">${imgHtml}</div>` : ''}
           <div class="post-actions">
+            <div class="post-actions-left">
             <button class="act-btn act-reply" data-action="reply" title="Reply">
               <span class="act-icon"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M1.751 10c0-4.42 3.584-8 8.005-8h4.366c4.49 0 8.129 3.64 8.129 8.13 0 2.96-1.607 5.68-4.196 7.11l-8.054 4.46v-3.69h-.067c-4.49.1-8.183-3.51-8.183-8.01zm8.005-6c-3.317 0-6.005 2.69-6.005 6 0 3.37 2.77 6.08 6.138 6.01l.351-.01h1.761v2.3l5.087-2.81c1.951-1.08 3.163-3.13 3.163-5.36 0-3.39-2.744-6.13-6.129-6.13H9.756z"/></svg></span>
               <span class="act-count">${rcLabel}</span>
@@ -4869,6 +4973,8 @@ class DeFiX {
                   <span class="act-count">${(post.blockNumber).toLocaleString()}</span>
                 </span>`
               : ''}
+            </div><!-- /.post-actions-left -->
+            <div class="post-actions-right">
             <button class="act-btn act-bookmark ${isBookmarked ? 'bookmarked' : ''}" data-action="bookmark" title="${isBookmarked ? 'Remove bookmark' : 'Bookmark'}">
               <span class="act-icon">
                 ${isBookmarked
@@ -4876,16 +4982,14 @@ class DeFiX {
                   : `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5zM6.5 4c-.276 0-.5.22-.5.5v14.56l6-4.29 6 4.29V4.5c0-.28-.224-.5-.5-.5h-11z"/></svg>`}
               </span>
             </button>
-            <button class="act-btn act-share" data-action="share" title="Copy link">
-              <span class="act-icon"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2.59l5.7 5.7-1.41 1.42L13 6.41V16h-2V6.41l-3.3 3.3-1.41-1.42L12 2.59zM21 15l-.02 3.51c0 1.38-1.12 2.49-2.5 2.49H5.5C4.11 21 3 19.88 3 18.5V15h2v3.5c0 .28.22.5.5.5h12.98c.28 0 .5-.22.5-.5L19 15h2z"/></svg></span>
-            </button>
             <a href="https://otter.pulsechain.com/tx/${utils.safe(post.txHash)}"
-              target="_blank" class="otter-link" onclick="event.stopPropagation()">
-              <span class="act-icon" title="View on OtterScan">
-                <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M18.36 5.64c-1.95-1.96-5.11-1.96-7.07 0L9.88 7.05 8.46 5.64l1.42-1.42c2.73-2.73 7.16-2.73 9.9 0 2.73 2.74 2.73 7.17 0 9.9l-1.42 1.42-1.41-1.42 1.41-1.41c1.96-1.96 1.96-5.12 0-7.07zm-2.12 3.53l-7.07 7.07-1.41-1.41 7.07-7.07 1.41 1.41zm-12.02.71l1.42-1.42 1.41 1.42-1.41 1.41c-1.96 1.96-1.96 5.12 0 7.07 1.95 1.96 5.11 1.96 7.07 0l1.41-1.41 1.42 1.41-1.42 1.42c-2.73 2.73-7.16 2.73-9.9 0-2.73-2.74-2.73-7.17 0-9.9z"/></svg>
+              target="_blank" class="otter-link" title="Share / View on OtterScan" onclick="event.stopPropagation()">
+              <span class="act-icon">
+                <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2.59l5.7 5.7-1.41 1.42L13 6.41V16h-2V6.41l-3.3 3.3-1.41-1.42L12 2.59zM21 15l-.02 3.51c0 1.38-1.12 2.49-2.5 2.49H5.5C4.11 21 3 19.88 3 18.5V15h2v3.5c0 .28.22.5.5.5h12.98c.28 0 .5-.22.5-.5L19 15h2z"/></svg>
               </span>
             </a>
-          </div>
+            </div><!-- /.post-actions-right -->
+          </div><!-- /.post-actions -->
         </div>
       </div>`;
   }
@@ -5462,6 +5566,73 @@ class DeFiX {
     if (bottom >= doc.scrollHeight - 600) this.fetchPosts(false);
   }
 
+  /* __ Post context menu __ */
+  openPostMenu(post, anchorEl) {
+    /* Close any existing menu */
+    const existing = document.querySelector('.post-menu-dropdown.open');
+    if (existing) existing.remove();
+
+    const isOwn = post.reporter === this.state.signerAddr;
+    const isMuted = this.isMuted(post.reporter);
+    const handle = '@' + this.trunc(post.reporter);
+
+    const menu = document.createElement('div');
+    menu.className = 'post-menu-dropdown open';
+
+    const items = [
+      /* Mute / unmute */
+      isMuted
+        ? { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18 6.41L16.59 5 12 9.59 7.41 5 6 6.41 10.59 11 6 15.59 7.41 17 12 12.41 16.59 17 18 15.59 13.41 11z"/></svg>',
+            label: `Unmute ${handle}`, action: () => this.unmuteAddress(post.reporter), danger: false }
+        : { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18 11v2h4v-2h-4zm-2 6.61c.96.71 2.21 1.65 3.2 2.39.4-.53.8-1.07 1.2-1.6-.99-.74-2.24-1.68-3.2-2.4-.4.54-.8 1.08-1.2 1.61zM20.4 5.6c-.4-.53-.8-1.07-1.2-1.6-.99.74-2.24 1.68-3.2 2.4.4.53.8 1.07 1.2 1.6.96-.72 2.21-1.65 3.2-2.4zM4 9c-1.1 0-2 .9-2 2v2c0 1.1.9 2 2 2h1l5 5V4L5 9H4zm11.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>',
+            label: `Mute ${handle}`, action: () => this.muteAddress(post.reporter), danger: false },
+      /* Copy link */
+      { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.48-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>',
+        label: 'Copy post link', action: () => utils.copyToClipboard(`https://otter.pulsechain.com/tx/${post.txHash}`, 'Link copied!'), danger: false },
+      /* View on OtterScan */
+      { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18.36 5.64c-1.95-1.96-5.11-1.96-7.07 0L9.88 7.05 8.46 5.64l1.42-1.42c2.73-2.73 7.16-2.73 9.9 0 2.73 2.74 2.73 7.17 0 9.9l-1.42 1.42-1.41-1.42 1.41-1.41c1.96-1.96 1.96-5.12 0-7.07zm-2.12 3.53l-7.07 7.07-1.41-1.41 7.07-7.07 1.41 1.41zm-12.02.71l1.42-1.42 1.41 1.42-1.41 1.41c-1.96 1.96-1.96 5.12 0 7.07 1.95 1.96 5.11 1.96 7.07 0l1.41-1.41 1.42 1.41-1.42 1.42c-2.73 2.73-7.16 2.73-9.9 0-2.73-2.74-2.73-7.17 0-9.9z"/></svg>',
+        label: 'View on OtterScan', action: () => window.open(`https://otter.pulsechain.com/tx/${post.txHash}`, '_blank'), danger: false },
+    ];
+    /* Own posts get a note about on-chain permanence */
+    if (isOwn) {
+      items.push({ icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>',
+        label: 'Posts are permanent on-chain', action: () => utils.toast('On-chain posts are permanent by design.'), danger: false });
+    }
+
+    items.forEach(({ icon, label, action, danger }) => {
+      const el = document.createElement('div');
+      el.className = 'post-menu-item' + (danger ? ' danger' : '');
+      el.innerHTML = `${icon}<span>${utils.safe(label)}</span>`;
+      el.onclick = e2 => {
+        e2.stopPropagation();
+        menu.remove();
+        action();
+      };
+      menu.appendChild(el);
+    });
+
+    /* Position near the anchor button */
+    document.body.appendChild(menu);
+    const rect = anchorEl ? anchorEl.getBoundingClientRect() :
+      { left: window.innerWidth - 240, bottom: 60, top: 40 };
+    let left = rect.left - menu.offsetWidth + 34;
+    let top  = rect.bottom + 4;
+    if (left < 8) left = 8;
+    if (top + menu.offsetHeight > window.innerHeight - 8)
+      top = rect.top - menu.offsetHeight - 4;
+    menu.style.left = left + 'px';
+    menu.style.top  = top  + 'px';
+
+    /* Close on outside click */
+    const close = e2 => {
+      if (!menu.contains(e2.target)) {
+        menu.remove();
+        document.removeEventListener('click', close, true);
+      }
+    };
+    setTimeout(() => document.addEventListener('click', close, true), 0);
+  }
+
   /* __ Profile patch: update avatars + names in-place after profile fetch __
      Called by _debouncedRender (triggered by fetchOtherProfile completions).
      Walks existing post-item elements and patches only changed avatar/name
@@ -5974,60 +6145,35 @@ class DeFiX {
   }
 
   _wirePopupDismiss() {
+    /* Click handling is done by the permanent capture listener in wireListeners.
+       Here we only add ESC (keydown) and scroll — both are safe to attach once
+       per popup open since they call hideProfilePopup which is idempotent. */
     if (this._popupHandlersAttached) return;
     this._popupHandlersAttached = true;
-    setTimeout(() => {
-      const popup = this.g('profile-popup');
-      if (!popup) return;
-      const dismiss = e => {
-        if (e.type === 'click') {
-          if (popup.contains(e.target)) {
-            const btn = e.target.closest('[data-pp-action]');
-            if (btn) {
-              e.stopPropagation();
-              const addr = popup.dataset.addr;
-              this.toggleFollowAddr(addr, null);
-              setTimeout(() => {
-                if (popup.classList.contains('open') && popup.dataset.addr === addr) {
-                  const postCount = this.state.posts.filter(
-                    p => p.reporter?.toLowerCase() === addr && (!p.postType || p.postType === 'post')
-                  ).length;
-                  popup.innerHTML = this._profilePopupHTML(addr, this.state.profCache[addr] || (addr === this.state.signerAddr ? this.state.profile : {}), postCount);
-                }
-              }, 500);
-              return;
-            }
-            const addr = popup.dataset.addr;
-            this.hideProfilePopup();
-            this.goProfilePage(addr, addr === this.state.signerAddr);
-            return;
-          }
-          this.hideProfilePopup();
-        } else if (e.type === 'keydown' && e.key === 'Escape') {
-          this.hideProfilePopup();
-        } else if (e.type === 'scroll') {
-          this.hideProfilePopup();
-        }
-      };
-      this._popupDismiss = dismiss;
-      document.addEventListener('click', dismiss, true);
-      document.addEventListener('keydown', dismiss);
-      window.addEventListener('scroll', dismiss, { passive: true, capture: true });
-    }, 0);
+    const dismiss = e => {
+      if (e.type === 'keydown' && e.key === 'Escape') this.hideProfilePopup();
+      else if (e.type === 'scroll') this.hideProfilePopup();
+    };
+    this._popupDismiss = dismiss;
+    document.addEventListener('keydown', dismiss);
+    window.addEventListener('scroll', dismiss, { passive: true, once: false });
   }
 
   hideProfilePopup() {
     const popup = this.g('profile-popup');
     if (!popup || !popup.classList.contains('open')) return;
     popup.classList.remove('visible');
+    /* Remove .open after transition so CSS opacity:0 plays */
     setTimeout(() => popup.classList.remove('open'), 150);
+    /* Clean up ESC/scroll listener (click is handled by permanent listener) */
     if (this._popupDismiss) {
-      document.removeEventListener('click', this._popupDismiss, true);
       document.removeEventListener('keydown', this._popupDismiss);
-      window.removeEventListener('scroll', this._popupDismiss, { capture: true });
+      window.removeEventListener('scroll', this._popupDismiss);
       this._popupDismiss = null;
     }
     this._popupHandlersAttached = false;
+    clearTimeout(popup._pendingClose);
+    popup._pendingClose = null;
   }
 
   /* ── Share card ─────────────────────────────────────────────────── */
