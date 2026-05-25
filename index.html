@@ -409,6 +409,13 @@ nav { flex:1; padding:4px 0; }
 .act-like.liked .act-icon   { background:rgba(249,24,128,0.08); }
 .act-bookmark:hover             { color:#1d9bf0; }
 .act-bookmark:hover .act-icon   { background:rgba(29,155,240,0.1); }
+/* Verified-style checkmark next to on-chain-profile names */
+.verified-icon { display:inline-flex; align-items:center; margin-left:3px; line-height:0; }
+.verified-icon svg { transition:transform 0.15s; }
+.verified-icon:hover svg { transform:scale(1.1); }
+/* Who-to-follow row hover */
+#sb-w2f-list .sb-card-row { display:flex; align-items:center; gap:8px; padding:10px 14px; }
+#sb-w2f-list .w2f-follow-btn:hover { background:rgba(231,233,234,0.85); }
 .act-bookmark.bookmarked        { color:#1d9bf0; }
 .act-share:hover            { color:#1d9bf0; }
 .act-share:hover .act-icon  { background:rgba(29,155,240,0.1); }
@@ -1271,34 +1278,36 @@ nav { flex:1; padding:4px 0; }
       </div>
     </div>
 
-    <!-- What's happening — top liked posts placeholder -->
-    <div class="sb-card">
+    <!-- What's happening — dynamic trending hashtags + pinned partners -->
+    <div class="sb-card" id="sb-trending">
       <div class="sb-card-title">What's happening</div>
-      <div class="sb-card-row" onclick="pulse.filterByTag('DeFiX')" style="cursor:pointer">
-        <div style="flex:1">
-          <span class="trend-label">Trending on PulseChain</span>
-          <span class="trend-name">#DeFiX</span>
-          <span class="trend-count">On-chain social</span>
+      <div id="sb-trending-list">
+        <!-- Dynamic trending hashtags inserted by renderTrending().
+             Pinned partner rows always shown at the bottom. -->
+        <div class="sb-card-row" onclick="pulse.goWave()" style="cursor:pointer">
+          <div style="flex:1">
+            <span class="trend-label">Featured partner</span>
+            <span class="trend-name">Wave on Pulse 📻</span>
+            <span class="trend-count">Live free speech radio</span>
+          </div>
+          <span style="font-size:20px;align-self:center">🎙️</span>
         </div>
-        <span style="font-size:20px;align-self:center">📈</span>
-      </div>
-      <div class="sb-card-row" onclick="pulse.goWave()" style="cursor:pointer">
-        <div style="flex:1">
-          <span class="trend-label">Featured partner</span>
-          <span class="trend-name">Wave on Pulse 📻</span>
-          <span class="trend-count">Live free speech radio</span>
+        <div class="sb-card-row" style="cursor:pointer" onclick="window.open('https://pulsechain.com','_blank')">
+          <div style="flex:1">
+            <span class="trend-label">Powered by</span>
+            <span class="trend-name">PulseChain ⚡</span>
+            <span class="trend-count">Chain ID 369</span>
+          </div>
+          <span style="font-size:20px;align-self:center">🔗</span>
         </div>
-        <span style="font-size:20px;align-self:center">🎙️</span>
-      </div>
-      <div class="sb-card-row" style="cursor:pointer" onclick="window.open('https://pulsechain.com','_blank')">
-        <div style="flex:1">
-          <span class="trend-label">Powered by</span>
-          <span class="trend-name">PulseChain ⚡</span>
-          <span class="trend-count">Chain ID 369</span>
-        </div>
-        <span style="font-size:20px;align-self:center">🔗</span>
       </div>
       <button class="sb-show-more" id="wave-btn">Open Wave on Pulse →</button>
+    </div>
+
+    <!-- Who to follow — derived from active addresses in current feed -->
+    <div class="sb-card" id="sb-w2f-card" style="display:none">
+      <div class="sb-card-title">Who to follow</div>
+      <div id="sb-w2f-list"><!-- populated by renderWhoToFollow() --></div>
     </div>
 
     <!-- Wave on Pulse animated card -->
@@ -1570,8 +1579,14 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
+/* MAX_PREVIEW: chars shown before "Show more" truncation in feed */
 const MAX_PREVIEW    = 500;
+/* POSTS_TARGET: stop fetching once we've added this many new posts in one
+   pagination pass. Higher = denser scroll, more API calls. */
 const POSTS_TARGET   = 20;
+/* MAX_PAGES: hard cap on API pages scanned per fetchPosts() call. Each
+   page = 50 txs, so 40 pages = 2000 txs max. Beyond this, the user gets
+   a manual "Load more" button to continue. */
 const MAX_PAGES      = 40;
 const POLL_FIRST_MS  = 30_000;
 const POLL_MS        = 120_000;
@@ -1727,6 +1742,28 @@ const utils = {
   debounce(fn, ms) {
     let t;
     return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+  },
+  /* throttle: fires at most once per `ms`. Used for scroll-style events
+     where you want continuous updates during the action, not just a final
+     trailing call. The trailing setTimeout guarantees the LAST event is
+     processed even if it lands inside the cooldown window. */
+  throttle(fn, ms) {
+    let last = 0, pending = null;
+    return (...a) => {
+      const now = Date.now();
+      const remaining = ms - (now - last);
+      if (remaining <= 0) {
+        if (pending) { clearTimeout(pending); pending = null; }
+        last = now;
+        fn(...a);
+      } else if (!pending) {
+        pending = setTimeout(() => {
+          last = Date.now();
+          pending = null;
+          fn(...a);
+        }, remaining);
+      }
+    };
   },
   autoGrow(el) {
     el.style.height = 'auto';
@@ -1887,6 +1924,11 @@ class DeFiX {
     this.pollTimer     = null;
     this._profInFlight = 0;
     this._profQueue    = [];
+    /* Monotonic token bumped whenever we want to invalidate in-flight fetches
+       (channel switch, refresh). The async fetch loop checks this against
+       its locally captured token and aborts if they differ. Prevents stale
+       fetches from overwriting fresh state. */
+    this._fetchToken   = 0;
     this._walletReg    = false;
     this._postMap      = new Map();
     this.g             = id => document.getElementById(id);
@@ -1902,6 +1944,13 @@ class DeFiX {
     await this.loadCached();
     await this.tryAutoReconnect();
     await this.fetchPosts(true);
+    this._initComposePlaceholderRotation();
+    this._refreshSidebarPanels();
+    /* Resume polling immediately when tab becomes visible — picks up
+       anything that landed on-chain while the user was away. */
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) this.pollNew();
+    });
     setTimeout(() => { this.pollNew(); this.startPolling(); }, POLL_FIRST_MS);
   }
 
@@ -2028,7 +2077,7 @@ class DeFiX {
       dcb.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') this.goDeFiX(); };
     }
 
-    window.addEventListener('scroll', utils.debounce(() => this.onScroll(), 150));
+    window.addEventListener('scroll', utils.throttle(() => this.onScroll(), 100), { passive: true });
 
     document.addEventListener('keydown', e => {
       const active = document.activeElement?.tagName;
@@ -2058,7 +2107,12 @@ class DeFiX {
       const v = g('pe-cover').value.trim();
       const prev = g('pe-cover-preview');
       if (v) {
-        prev.style.backgroundImage = `url(${v})`;
+        /* CSS.escape() turns embedded quotes and parens into harmless
+           escapes — prevents background-image-as-injection if a user
+           pastes a value like url("); content: ... */
+        const safeV = (typeof CSS !== 'undefined' && CSS.escape)
+          ? CSS.escape(v) : v.replace(/["'()\\]/g, '');
+        prev.style.backgroundImage = `url("${safeV}")`;
         prev.style.backgroundSize  = 'cover';
         prev.style.backgroundPosition = 'center';
         prev.classList.add('has-cover');
@@ -3091,8 +3145,13 @@ class DeFiX {
   }
 
   _drainProfileQueue() {
-    while (this._profInFlight < 3 && this._profQueue.length > 0)
-      this._profQueue.shift()();
+    /* Wrap synchronous invocation: if work() throws before its inner async
+       runs (e.g. cache reference goes null mid-shutdown), we still keep
+       draining the queue instead of deadlocking _profInFlight. */
+    while (this._profInFlight < 3 && this._profQueue.length > 0) {
+      const work = this._profQueue.shift();
+      try { work(); } catch (err) { console.warn('Profile drain error:', err); }
+    }
   }
 
   applyProfile(data) {
@@ -3508,7 +3567,7 @@ class DeFiX {
     /* Cover preview */
     const prev = g('pe-cover-preview');
     if (p.coverUrl) {
-      prev.style.backgroundImage    = `url(${p.coverUrl})`;
+      prev.style.backgroundImage    = `url("${(typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(p.coverUrl) : p.coverUrl.replace(/["'()\\]/g, '')}")`;
       prev.style.backgroundSize     = 'cover';
       prev.style.backgroundPosition = 'center';
       prev.classList.add('has-cover');
@@ -3604,11 +3663,19 @@ class DeFiX {
     const backup  = s.backupApiUrl || '';
     const qs = `?module=account&action=txlist&address=${address}&offset=50&page=${page}&sort=desc`;
 
+    /* 15s timeout per attempt prevents a hung PulseScan from indefinitely
+       holding state.loading=true and breaking the rest of the UI. */
     const tryFetch = async url => {
-      const res = await fetch(url + qs);
-      if (!res.ok) throw new Error(`API ${res.status}`);
-      const data = await res.json();
-      return (data.status === '1' && Array.isArray(data.result)) ? data.result : [];
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 15000);
+      try {
+        const res = await fetch(url + qs, { signal: ctrl.signal });
+        if (!res.ok) throw new Error(`API ${res.status}`);
+        const data = await res.json();
+        return (data.status === '1' && Array.isArray(data.result)) ? data.result : [];
+      } finally {
+        clearTimeout(timer);
+      }
     };
 
     try {
@@ -3637,18 +3704,32 @@ class DeFiX {
   async fetchPosts(reset = false) {
     if (this.state.loading) return;
     this.state.loading = true;
+    /* Capture token at entry. If a channel switch / refresh bumps it during
+       our await, we abort writes to prevent cross-channel post leakage. */
+    const myToken = this._fetchToken;
     if (reset) { this.state.nextPage = 1; this.state.hasMore = true; }
-    this.g('loading-more').style.display = 'block';
+    const loadingEl = this.g('loading-more');
+    loadingEl.style.display = 'block';
+    loadingEl.textContent   = 'Scanning the chain…';
 
     let found = 0, pages = 0;
     try {
       while (found < POSTS_TARGET && this.state.hasMore && pages < MAX_PAGES) {
         let raw;
         try { raw = await this.fetchOnePage(this.state.nextPage); }
-        catch (err) { utils.toast('Fetch error — ' + err.message); break; }
+        catch (err) {
+          /* Don't toast on aborted fetches — they're intentional. */
+          if (myToken === this._fetchToken) utils.toast('Fetch error — ' + err.message);
+          break;
+        }
+        /* Stale fetch — channel changed mid-flight. Abandon silently. */
+        if (myToken !== this._fetchToken) return;
         this.state.nextPage++;
         pages++;
-        this.state.hasMore = raw.length === 50;
+        /* End-of-history is "API returned fewer than the page size" — robust
+           against a single 49-result page that the old equality check would
+           misread as "definitive end". */
+        if (raw.length < 50) this.state.hasMore = false;
         const parsed = this.parseTxs(raw);
         if (parsed.length > 0) {
           const known  = new Set(this.state.posts.map(p => p.txHash));
@@ -3657,16 +3738,30 @@ class DeFiX {
             this.state.posts = [...this.state.posts, ...unique]
               .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
             await this.cache.savePosts(unique);
+            if (myToken !== this._fetchToken) return;
             found += unique.length;
             this.renderFeed();
+            this._refreshSidebarPanels();
           }
         }
         if (this.state.mode === 'notifications') break;
       }
-      if (this.state.posts.length === 0) this.renderFeed();
+      /* MAX_PAGES cap with more history likely available: surface a manual
+         "Load more" button so the user can keep going on dense channels
+         instead of silently stalling. */
+      if (pages >= MAX_PAGES && this.state.hasMore && myToken === this._fetchToken) {
+        loadingEl.innerHTML =
+          `<button class="settings-btn" style="margin:8px auto;display:block" ` +
+          `onclick="pulse.fetchPosts(false)">Load more from chain</button>`;
+        loadingEl.style.display = 'block';
+        return;
+      }
+      if (this.state.posts.length === 0 && myToken === this._fetchToken) this.renderFeed();
     } finally {
-      this.state.loading = false;
-      this.g('loading-more').style.display = 'none';
+      if (myToken === this._fetchToken) this.state.loading = false;
+      /* Only hide the loader if we left it as text — don't clobber the
+         "Load more" button we may have installed. */
+      if (loadingEl.textContent === 'Scanning the chain…') loadingEl.style.display = 'none';
     }
   }
 
@@ -3746,7 +3841,14 @@ class DeFiX {
   stopPolling()   { clearInterval(this.pollTimer); }
 
   async pollNew() {
+    /* Skip polling on pages that manage their own feed — otherwise the
+       "✦ N new posts" banner appears in contexts where it makes no sense
+       (e.g. while viewing someone's profile). */
+    if (this._selfManagedModes.has(this.state.mode)) return;
     if (!this.state.channel || this.state.loading) return;
+    /* Skip polling when tab is hidden — saves bandwidth and rate limit.
+       visibilitychange handler in init() resumes immediately on tab focus. */
+    if (typeof document !== 'undefined' && document.hidden) return;
     const latestTs = this.state.posts[0] ? new Date(this.state.posts[0].timestamp) : new Date(0);
     try {
       const raw       = await this.fetchOnePage(1);
@@ -3777,11 +3879,22 @@ class DeFiX {
   async refreshFeed() {
     const btn = this.g('refresh-btn');
     btn.textContent  = '↻';
-    this.state.posts = [];
+    /* Bump token to cancel any in-flight fetch from before refresh. */
+    this._fetchToken++;
+    this.state.posts     = [];
     this.state.pending   = [];
     this.state.nextPage  = 1;
     this.state.hasMore   = true;
+    /* Match resetAndFetch — refresh should give the user a clean slate,
+       not preserve a stale search filter or expanded posts. */
+    this.state.expanded.clear();
+    this.state.activeTag  = null;
+    this.state.searchTerm = '';
+    const search = this.g('search-input');
+    if (search) search.value = '';
     this.g('new-banner').style.display = 'none';
+    /* Loading flag may have been left true by a fetch we just cancelled. */
+    this.state.loading = false;
     await this.fetchPosts(true);
     window.scrollTo({ top: 0, behavior: 'smooth' });
     btn.textContent = '↺';
@@ -3789,6 +3902,11 @@ class DeFiX {
 
   async resetAndFetch() {
     this.stopPolling();
+    /* Bump token so any in-flight fetch from the previous channel aborts
+       its writes — otherwise state.loading sticks true and the new
+       channel's first fetch silently does nothing. */
+    this._fetchToken++;
+    this.state.loading   = false;
     this.state.posts     = [];
     this.state.pending   = [];
     this.state.nextPage  = 1;
@@ -3816,9 +3934,13 @@ class DeFiX {
   }
 
   renderFeed() {
-    /* These modes manage #feed themselves — don't overwrite them */
-    const selfManaged = ['profile', 'thread', 'notifications', 'channels', 'explore', 'bookmarks', 'settings'];
-    if (selfManaged.includes(this.state.mode)) return;
+    /* Keep sidebar trending + W2F live with the feed. Wrapped so this never
+       breaks rendering if the sidebar isn't in the DOM (e.g. mobile). */
+    queueMicrotask(() => this._refreshSidebarPanels());
+    /* These modes manage #feed themselves — don't overwrite them.
+       Synced with _selfManagedModes used by onScroll() and pollNew(). */
+    const selfManaged = this._selfManagedModes;
+    if (selfManaged.has(this.state.mode)) return;
 
     const feed = this.g('feed');
     const term = this.state.searchTerm;
@@ -3889,17 +4011,25 @@ class DeFiX {
     const isOwn    = post.reporter === this.state.signerAddr;
     const expanded = this.state.expanded.has(post.txHash);
 
-    let picUrl, displayName;
+    let picUrl, displayName, hasProfile;
     if (isOwn) {
       picUrl      = this.state.profile.picUrl || 'image1.jpeg';
       displayName = this.state.profile.username
         ? utils.safe(this.state.profile.username)
         : this.trunc(post.reporter);
+      hasProfile  = !!this.state.profile.username;
     } else {
       const c = this.state.profCache[post.reporter];
       picUrl      = c?.picUrl  || 'image1.jpeg';
       displayName = c?.username ? utils.safe(c.username) : this.trunc(post.reporter);
+      hasProfile  = !!c?.username;
     }
+    /* On-chain "verified" — small ✓ next to names that have published a
+       PROFILE_DATA on-chain transaction. Free differentiator over Twitter:
+       no payment, no gatekeeper, just chain proof of identity. */
+    const verifiedBadge = hasProfile
+      ? '<span class="verified-icon" title="On-chain profile verified"><svg viewBox="0 0 22 22" width="14" height="14" style="vertical-align:-2px"><path fill="#1d9bf0" d="M20.396 11c-.018-.646-.215-1.275-.57-1.816-.354-.54-.852-.972-1.438-1.246.223-.607.27-1.264.14-1.897-.131-.634-.437-1.218-.882-1.687-.47-.445-1.053-.75-1.687-.882-.633-.13-1.29-.083-1.897.14-.273-.587-.704-1.086-1.245-1.44S11.647 1.62 11 1.604c-.646.017-1.273.213-1.813.568s-.969.854-1.24 1.44c-.608-.223-1.267-.272-1.902-.14-.635.13-1.22.436-1.69.882-.445.47-.749 1.055-.878 1.688-.13.633-.08 1.29.144 1.896-.587.274-1.087.705-1.443 1.245-.356.54-.555 1.17-.574 1.817.02.647.218 1.276.574 1.817.356.54.856.972 1.443 1.245-.224.606-.274 1.263-.144 1.896.13.634.433 1.218.877 1.688.47.443 1.054.747 1.687.878.633.132 1.29.084 1.897-.136.274.586.705 1.084 1.246 1.439.54.354 1.17.551 1.816.569.647-.016 1.276-.213 1.817-.567s.972-.854 1.245-1.44c.604.239 1.266.296 1.903.164.636-.132 1.22-.447 1.68-.907.46-.46.776-1.044.908-1.681s.075-1.299-.165-1.903c.586-.274 1.084-.705 1.439-1.246.354-.54.551-1.17.569-1.816zM9.662 14.85l-3.429-3.428 1.293-1.302 2.072 2.072 4.4-4.794 1.347 1.246z"/></svg></span>'
+      : '';
 
     const textToRender = (!inModal && !expanded && post.display.length > MAX_PREVIEW)
       ? post.display.slice(0, MAX_PREVIEW) + '…'
@@ -3964,7 +4094,7 @@ class DeFiX {
           loading="lazy" onerror="this.src='image1.jpeg'">
         <div class="post-col">
           <div class="post-meta-row">
-            <span class="post-name">${displayName}</span>
+            <span class="post-name">${displayName}</span>${verifiedBadge}
             <span class="post-dot">·</span>
             <span class="post-handle" data-addr="${utils.safe(post.reporter)}"
               title="Click to copy address">@${this.trunc(post.reporter)}</span>
@@ -4489,12 +4619,167 @@ class DeFiX {
     }
   }
 
+  /* Pages in this set render their own feed content (profile, thread,
+     etc.) and would silently swallow appended posts if infinite-scroll
+     fired on them. Keep this in sync with renderFeed()'s selfManaged list. */
+  _selfManagedModes = new Set([
+    'notifications', 'profile', 'thread', 'channels',
+    'explore', 'bookmarks', 'settings'
+  ]);
+
   onScroll() {
-    if (this.state.mode === 'notifications') return;
-    if (this.state.hasMore && !this.state.loading) {
-      const near = window.innerHeight + window.scrollY >= document.body.offsetHeight - 400;
-      if (near) this.fetchPosts(false);
+    if (this._selfManagedModes.has(this.state.mode)) return;
+    if (!this.state.hasMore || this.state.loading) return;
+    /* documentElement.scrollHeight is the canonical scrollable height —
+       document.body.offsetHeight is wrong when sticky/fixed elements
+       contribute to layout. 600px lookahead = ~1 viewport of buffer
+       on a 720p screen, prefetching feels seamless. */
+    const doc = document.documentElement;
+    const bottom = window.scrollY + window.innerHeight;
+    if (bottom >= doc.scrollHeight - 600) this.fetchPosts(false);
+  }
+
+  /* ── Sidebar: dynamic trending + who-to-follow ────────────────────────
+     Called from fetchPosts() after new posts land and from feed re-renders.
+     Cheap: all data comes from in-memory state.posts and state.profCache. */
+  _refreshSidebarPanels() {
+    try { this.renderTrending(); } catch (err) { console.warn('Trending render:', err); }
+    try { this.renderWhoToFollow(); } catch (err) { console.warn('W2F render:', err); }
+  }
+
+  renderTrending() {
+    const list = this.g('sb-trending-list');
+    if (!list) return;
+    /* Scan up to ~200 most recent posts. Match #tag patterns (alphanumeric
+       + underscore), lowercase for grouping, count occurrences. */
+    const counts = new Map();
+    const sample = this.state.posts.slice(0, 200);
+    sample.forEach(p => {
+      if (!p.display) return;
+      const tags = p.display.match(/#[A-Za-z0-9_]{2,30}/g);
+      if (!tags) return;
+      tags.forEach(t => {
+        const key = t.toLowerCase();
+        counts.set(key, (counts.get(key) || 0) + 1);
+      });
+    });
+    /* Top 5 by count, drop singletons — a tag mentioned once isn't a trend. */
+    const top = [...counts.entries()]
+      .filter(([_, n]) => n >= 2)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5);
+
+    /* Preserve pinned partner rows already in the DOM. */
+    const pinned = [...list.querySelectorAll('.sb-card-row')]
+      .filter(r => r.querySelector('.trend-label')?.textContent?.match(/partner|powered/i));
+
+    const trendHTML = top.map(([tag, count]) => {
+      const display = tag.replace(/^#/, '');
+      return `<div class="sb-card-row" onclick="pulse.filterByTag('${utils.safe(display)}')" style="cursor:pointer">
+        <div style="flex:1">
+          <span class="trend-label">Trending on PulseChain</span>
+          <span class="trend-name">#${utils.safe(display)}</span>
+          <span class="trend-count">${count} post${count > 1 ? 's' : ''}</span>
+        </div>
+        <span style="font-size:20px;align-self:center">📈</span>
+      </div>`;
+    }).join('');
+
+    /* Fallback when nothing trends yet — keeps the card from looking empty. */
+    const fallback = (top.length === 0)
+      ? `<div class="sb-card-row" onclick="pulse.filterByTag('PulseChain')" style="cursor:pointer">
+          <div style="flex:1">
+            <span class="trend-label">Trending on PulseChain</span>
+            <span class="trend-name">#PulseChain</span>
+            <span class="trend-count">Join the conversation</span>
+          </div>
+          <span style="font-size:20px;align-self:center">⚡</span>
+        </div>`
+      : '';
+
+    list.innerHTML = trendHTML + fallback + pinned.map(p => p.outerHTML).join('');
+  }
+
+  renderWhoToFollow() {
+    const list = this.g('sb-w2f-list');
+    const card = this.g('sb-w2f-card');
+    if (!list || !card) return;
+    if (!this.state.signerAddr) { card.style.display = 'none'; return; }
+
+    /* Count post frequency by reporter, excluding self and already-followed. */
+    const counts = new Map();
+    this.state.posts.slice(0, 200).forEach(p => {
+      const r = p.reporter?.toLowerCase();
+      if (!r || r === this.state.signerAddr) return;
+      if (this.state.following.has(r)) return;
+      counts.set(r, (counts.get(r) || 0) + 1);
+    });
+    /* Prefer addresses we have profile info for — nicer cards, real names. */
+    const candidates = [...counts.entries()]
+      .sort((a, b) => {
+        const aHasProfile = this.state.profCache[a[0]]?.username ? 1 : 0;
+        const bHasProfile = this.state.profCache[b[0]]?.username ? 1 : 0;
+        if (aHasProfile !== bHasProfile) return bHasProfile - aHasProfile;
+        return b[1] - a[1];
+      })
+      .slice(0, 3);
+
+    if (candidates.length === 0) { card.style.display = 'none'; return; }
+    card.style.display = '';
+    list.innerHTML = candidates.map(([addr]) => {
+      const c = this.state.profCache[addr];
+      const name = c?.username ? utils.safe(c.username) : this.trunc(addr);
+      const pic  = c?.picUrl || 'image1.jpeg';
+      return `<div class="sb-card-row" style="cursor:pointer" onclick="pulse.goProfilePage('${utils.safe(addr)}', false)">
+        <img src="${utils.safe(pic)}" class="w2f-avatar" onerror="this.src='image1.jpeg'"
+          alt="" style="width:40px;height:40px;border-radius:50%;margin-right:10px;flex-shrink:0">
+        <div style="flex:1;min-width:0">
+          <span class="trend-name" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</span>
+          <span class="trend-count">${this.trunc(addr)}</span>
+        </div>
+        <button class="w2f-follow-btn" onclick="event.stopPropagation();pulse.toggleFollowAddr('${utils.safe(addr)}',this)"
+          style="padding:6px 14px;border-radius:9999px;background:var(--text);color:var(--bg);
+                 font-weight:700;font-size:13px;border:0;cursor:pointer;flex-shrink:0">Follow</button>
+      </div>`;
+    }).join('');
+  }
+
+  /* Follow from Who-to-follow card. Uses existing FOLLOW_PREFIX flow. */
+  toggleFollowAddr(addr, btn) {
+    addr = addr.toLowerCase();
+    if (!this.signer) { utils.toast('Connect wallet to follow'); return; }
+    if (typeof this.publish === 'function') {
+      this.publish(`${FOLLOW_PREFIX}${addr}`, null, this.state.signerAddr).then(ok => {
+        if (ok) {
+          this.state.following.add(addr);
+          if (btn) { btn.textContent = 'Following'; btn.disabled = true; btn.style.opacity = '0.6'; }
+          setTimeout(() => this.renderWhoToFollow(), 1500);
+        }
+      });
     }
+  }
+
+  /* Rotating compose placeholder — light Twitter polish. Only rotates when
+     the textarea is empty AND unfocused, so we never disturb a user typing. */
+  _initComposePlaceholderRotation() {
+    const placeholders = [
+      "What's happening on Pulse?",
+      "What's on your mind?",
+      "Drop something uncensorable…",
+      "Speak freely — the chain remembers.",
+      "Post to the underground.",
+    ];
+    const targets = ['compose-text', 'modal-compose-text'].map(id => this.g(id)).filter(Boolean);
+    if (targets.length === 0) return;
+    let idx = 0;
+    setInterval(() => {
+      idx = (idx + 1) % placeholders.length;
+      targets.forEach(el => {
+        if (!el.value && document.activeElement !== el) {
+          el.placeholder = placeholders[idx];
+        }
+      });
+    }, 8000);
   }
 
   trunc = a => (a && a.length > 10) ? `${a.slice(0,6)}...${a.slice(-4)}` : (a || '');
