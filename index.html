@@ -1219,13 +1219,21 @@ nav { flex:1; padding:4px 0; }
 }
 .repost-card {
   border:1px solid var(--border); border-radius:12px;
-  padding:10px 12px; margin:6px 0 10px;
+  padding:10px 12px; margin:6px 0 8px;
   cursor:pointer; transition:background 0.15s;
-  background:var(--bg-card);
+  background:var(--bg-dark);
 }
-.repost-card:hover { background:rgba(255,255,255,0.04); }
-.repost-card-missing { cursor:default; }
-.repost-card-missing:hover { background:var(--bg-card); }
+.repost-card:hover { background:rgba(255,255,255,0.03); }
+.repost-card-missing {
+  cursor:default; color:var(--muted); font-size:14px;
+  display:flex; align-items:center; gap:8px;
+}
+.repost-card-missing:hover { background:var(--bg-dark); }
+/* Quote card preview inside compose modal */
+.quote-card-preview {
+  border:1px solid var(--border); border-radius:12px;
+  padding:10px 12px; background:var(--bg-dark);
+}
 .repost-card-hdr {
   display:flex; align-items:center; gap:6px; margin-bottom:4px;
 }
@@ -1796,11 +1804,11 @@ nav { flex:1; padding:4px 0; }
       <span class="modal-title">Repost</span>
       <button class="modal-close" id="close-repost">✕</button>
     </div>
-    <div id="repost-quote" class="reply-quote"></div>
     <textarea class="auto-textarea" id="repost-input"
-      placeholder="Add a comment… (optional)"></textarea>
+      placeholder="Add your quote…" style="margin-bottom:12px"></textarea>
+    <div id="repost-quote"></div>
     <div class="btn-row" style="margin-top:12px">
-      <button class="btn-pri" id="post-repost-btn">🔁 Repost</button>
+      <button class="btn-pri" id="post-repost-btn">?? Quote</button>
       <button class="btn-ghost" id="cancel-repost-btn">Cancel</button>
     </div>
   </div>
@@ -2889,7 +2897,7 @@ class DeFiX {
       this.toggleLike(post, item);
     } else if (action === 'repost') {
       e.stopPropagation();
-      this.openRepostModal(post);
+      this.openRepostChoice(post, e.target.closest('.act-btn'));
     } else if (action === 'bookmark') {
       e.stopPropagation();
       this.toggleBookmark(post, item);
@@ -5336,9 +5344,14 @@ class DeFiX {
             <div class="repost-card-body">${origBody}</div>
           </div>`;
       } else {
-        repostCard = `<div class="repost-card repost-card-missing">
-          <span style="color:var(--muted);font-size:13px">🔁 Reposted post · <a href="https://otter.pulsechain.com/tx/${utils.safe(post.repostOf)}" target="_blank" class="post-link" onclick="event.stopPropagation()">View on OtterScan</a></span>
+        /* Original not in _postMap yet — show placeholder and fetch */
+        const qid = utils.safe(post.repostOf);
+        repostCard = `<div class="repost-card repost-card-missing" data-fetch-quote="${qid}" id="qc-${qid.slice(2,8)}">
+          <svg viewBox="0 0 24 24" width="14" height="14" style="flex-shrink:0"><path fill="currentColor" d="M4.5 3.88l4.432 4.14-1.364 1.46L5.5 7.55V16c0 1.1.896 2 2 2H13v2H7.5c-2.209 0-4-1.79-4-4V7.55L1.432 9.48.068 8.02 4.5 3.88zM16.5 6H11V4h5.5c2.209 0 4 1.79 4 4v8.45l2.068-1.93 1.364 1.46L19.5 20.12l-4.432-4.14 1.364-1.46 2.068 1.93V8c0-1.1-.896-2-2-2z"/></svg>
+          <span>Loading quoted post…</span>
         </div>`;
+        /* Fetch the original post in the background */
+        this._fetchQuotedPost(post.repostOf, post.to || this.state.channel);
       }
     }
 
@@ -5593,7 +5606,101 @@ class DeFiX {
     }
   }
 
-  /* ── Repost ─────────────────────────────────────────────────────────── */
+  /* ── Repost / Quote (X-style) ────────────────────────────────────────── */
+
+  /* Show the two-option repost menu: instant repost OR quote post */
+  openRepostChoice(post, anchorEl) {
+    /* Close any existing menu */
+    const existing = document.querySelector('.repost-choice-menu');
+    if (existing) { existing.remove(); return; }
+
+    const menu = document.createElement('div');
+    menu.className = 'repost-choice-menu post-menu-dropdown open';
+    menu.innerHTML = `
+      <div class="post-menu-item" id="rc-repost">
+        <svg viewBox="0 0 24 24" width="18" height="18">
+          <path fill="currentColor" d="M4.5 3.88l4.432 4.14-1.364 1.46L5.5 7.55V16c0 1.1.896 2 2 2H13v2H7.5c-2.209 0-4-1.79-4-4V7.55L1.432 9.48.068 8.02 4.5 3.88zM16.5 6H11V4h5.5c2.209 0 4 1.79 4 4v8.45l2.068-1.93 1.364 1.46L19.5 20.12l-4.432-4.14 1.364-1.46 2.068 1.93V8c0-1.1-.896-2-2-2z"/>
+        </svg>
+        <span>Repost</span>
+      </div>
+      <div class="post-menu-item" id="rc-quote">
+        <svg viewBox="0 0 24 24" width="18" height="18">
+          <path fill="currentColor" d="M19.75 2H4.25C3.01 2 2 3.01 2 4.25v15.5C2 20.99 3.01 22 4.25 22h15.5c1.24 0 2.25-1.01 2.25-2.25V4.25C22 3.01 20.99 2 19.75 2zM11.5 17.5h-7v-1.5l2-2H4.5V10h7v7zm7 0h-7v-1.5l2-2H11.5V10h7v7z"/>
+        </svg>
+        <span>Quote Post</span>
+      </div>`;
+
+    document.body.appendChild(menu);
+
+    /* Position below the repost button */
+    const rect = anchorEl ? anchorEl.getBoundingClientRect()
+      : { left: window.innerWidth/2 - 110, bottom: window.innerHeight/2, top: window.innerHeight/2 - 40 };
+    const mw = menu.offsetWidth || 220;
+    let left = rect.left - mw/2 + (anchorEl ? 18 : 0);
+    let top  = rect.bottom + 4;
+    if (left < 8) left = 8;
+    if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
+    if (top + 100 > window.innerHeight - 8) top = rect.top - 110;
+    menu.style.left = left + 'px';
+    menu.style.top  = top  + 'px';
+
+    /* Wire actions */
+    menu.querySelector('#rc-repost').onclick = async e2 => {
+      e2.stopPropagation();
+      menu.remove();
+      /* Instant repost — no text, no modal */
+      if (!this.signer) { utils.toast('Connect wallet to repost'); return; }
+      const ok = await this.publish(`REPOST:${post.txHash}`);
+      if (ok) utils.toast('?? Reposted');
+    };
+    menu.querySelector('#rc-quote').onclick = e2 => {
+      e2.stopPropagation();
+      menu.remove();
+      this.openQuoteModal(post);
+    };
+
+    /* Close on outside click */
+    setTimeout(() => {
+      const close = e2 => {
+        if (!menu.contains(e2.target)) {
+          menu.remove();
+          document.removeEventListener('click', close, true);
+        }
+      };
+      document.addEventListener('click', close, true);
+    }, 0);
+  }
+
+  /* Open the quote compose modal with the quoted post card */
+  openQuoteModal(post) {
+    if (!this.signer) { utils.toast('Connect wallet to quote'); return; }
+    this.state.repostTarget = post;
+    /* Build a full quoted card in the modal */
+    const c       = this.state.profCache[post.reporter];
+    const name    = c?.username ? utils.safe(c.username) : this.trunc(post.reporter);
+    const pic     = utils.safe(c?.picUrl || 'image1.jpeg');
+    const preview = utils.safe(post.display.slice(0, 200) + (post.display.length > 200 ? '…' : ''));
+    const relT    = this.relTime(post.timestamp);
+    this.g('repost-quote').innerHTML = `
+      <div class="quote-card-preview">
+        <div class="repost-card-hdr">
+          <img src="${pic}" class="repost-card-avatar" onerror="this.src='image1.jpeg'">
+          <span class="repost-card-name">${name}</span>
+          <span style="color:var(--muted);font-size:13px;margin-left:4px">· ${relT}</span>
+        </div>
+        <div class="repost-card-body">${preview}</div>
+      </div>`;
+    /* Change modal title to "Quote Post" */
+    const title = this.g('repost-modal').querySelector('.modal-title');
+    if (title) title.textContent = 'Quote Post';
+    const btn = this.g('post-repost-btn');
+    if (btn) btn.textContent = '?? Quote';
+    this.g('repost-input').value        = '';
+    this.g('repost-input').style.height = '';
+    this.g('repost-modal').classList.add('open');
+    this.g('repost-input').focus();
+  }
+
   openRepostModal(post) {
     if (!this.signer) { utils.toast('Connect wallet to repost'); return; }
     this.state.repostTarget = post;
@@ -5613,16 +5720,15 @@ class DeFiX {
   async postRepost() {
     if (!this.state.repostTarget) return;
     const comment = this.g('repost-input').value.trim();
+    if (!comment) { utils.toast('Add some text to quote this post'); return; }
     const hash    = this.state.repostTarget.txHash;
-    /* Format: REPOST:{hash}\n\n{optional comment} */
-    const content = comment
-      ? `REPOST:${hash}\n\n${comment}`
-      : `REPOST:${hash}`;
+    /* Quote format: REPOST:{hash}\n\n{comment} */
+    const content = `REPOST:${hash}\n\n${comment}`;
     const ok = await this.publish(content);
     if (ok) {
       this.closeModal('repost-modal');
       this.g('repost-input').value = '';
-      utils.toast('🔁 Reposted on-chain');
+      utils.toast('?? Quoted on-chain');
     }
   }
 
@@ -6191,6 +6297,76 @@ class DeFiX {
     const profFeed = this.g('feed')?.querySelector('.prof-feed');
     const count = profFeed ? profFeed.querySelectorAll('.post-item').length : 0;
     if (count > 0) subtitle.textContent = `${count} post${count !== 1 ? 's' : ''}`;
+  }
+
+  /* Fetch a single quoted post that isn't in _postMap yet.
+     Scans the channel the quote was sent TO (same channel as the quote itself).
+     When found, patches the placeholder card in the DOM. */
+  async _fetchQuotedPost(hash, channel) {
+    /* Only fetch if not already in progress */
+    if (!this._fetchingQuotes) this._fetchingQuotes = new Set();
+    if (this._fetchingQuotes.has(hash)) return;
+    this._fetchingQuotes.add(hash);
+
+    try {
+      for (let page = 1; page <= 5; page++) {
+        let raw;
+        try { raw = await this.apiFetch(channel, page); } catch { break; }
+        for (const tx of raw) {
+          if (tx.hash?.toLowerCase() !== hash) continue;
+          if (!tx.input || tx.input === '0x') break;
+          try {
+            const text = ethers.utils.toUtf8String(tx.input).trim();
+            if (text.startsWith(PROFILE_PREFIX)) break;
+            const m = text.match(/^REPLY_TO:(0x[a-f0-9]{64})\n\n/i);
+            const display = m ? text.slice(m[0].length).trim() : text;
+            const orig = {
+              content: text, display,
+              parentTx: m ? m[1].toLowerCase() : null,
+              repostOf: null, reactionTarget: null, direction: null,
+              postType: 'post', reporter: tx.from?.toLowerCase(),
+              to: tx.to?.toLowerCase() ?? null,
+              timestamp: tx.timeStamp
+                ? new Date(Number(tx.timeStamp) * 1000).toISOString()
+                : new Date().toISOString(),
+              txHash: hash, channel, mode: 'main',
+              blockNumber: tx.blockNumber ? Number(tx.blockNumber) : null,
+            };
+            this._postMap.set(hash, orig);
+            if (this._postHashSet) this._postHashSet.add(hash);
+            /* Patch any placeholder cards in the DOM */
+            const cardId = 'qc-' + hash.slice(2, 8);
+            const placeholder = document.getElementById(cardId);
+            if (placeholder) {
+              const c2   = this.state.profCache[orig.reporter] || {};
+              const name = c2.username ? utils.safe(c2.username) : this.trunc(orig.reporter);
+              const pic  = utils.safe(c2.picUrl || 'image1.jpeg');
+              const body = utils.safe(orig.display.slice(0, 200) + (orig.display.length > 200 ? '…' : ''));
+              placeholder.className = 'repost-card';
+              placeholder.removeAttribute('data-fetch-quote');
+              placeholder.onclick = e => {
+                e.stopPropagation();
+                this.openThread(orig);
+              };
+              placeholder.innerHTML = `
+                <div class="repost-card-hdr">
+                  <img src="${pic}" class="repost-card-avatar" onerror="this.src='image1.jpeg'">
+                  <span class="repost-card-name">${name}</span>
+                  <span style="color:var(--muted);font-size:13px;margin-left:4px">· ${this.relTime(orig.timestamp)}</span>
+                </div>
+                <div class="repost-card-body">${body}</div>`;
+            }
+            /* Fetch their profile too */
+            if (orig.reporter) this.fetchOtherProfile(orig.reporter);
+          } catch { /* skip */ }
+          break;
+        }
+        /* Found — stop scanning */
+        if (this._postMap.has(hash)) break;
+      }
+    } finally {
+      this._fetchingQuotes.delete(hash);
+    }
   }
 
   /* __ Offline post queue __ */
