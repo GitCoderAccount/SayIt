@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Say It DeFi</title>
 <link rel="icon" type="image/jpeg" href="image1.jpeg">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./icon-192.png">
+<meta name="theme-color" content="#7c4dff">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"></script>
 <style>
 /* ── Variables ──────────────────────────────────────────────────────────── */
@@ -2788,9 +2791,11 @@ class DeFiX {
   }
 
   async _fetchFollowingFeed() {
-    const addrs = [...this.state.following].slice(0, 20); /* cap at 20 to avoid flooding */
+    /* Cancel any in-flight following fetch from a previous tab click */
+    const myToken = (this._followingFetchToken = (this._followingFetchToken || 0) + 1);
+    const addrs = [...this.state.following].slice(0, 20);
     if (!addrs.length) return;
-    const known = new Set(this.state.posts.map(p => p.txHash));
+    const known = this._postHashSet || new Set(this.state.posts.map(p => p.txHash));
     let newPosts = [];
     /* Fetch page 1 from each followed address -- 5 at a time */
     const BATCH = 5;
@@ -2836,12 +2841,14 @@ class DeFiX {
       });
     }
     if (!newPosts.length) return;
-    /* Merge with existing posts and re-render */
+    /* Bail if the user has switched tabs since we started */
+    if (myToken !== this._followingFetchToken) return;
     this.state.posts = [...this.state.posts, ...newPosts]
       .sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
+    /* Update _postHashSet with new posts */
+    if (this._postHashSet) newPosts.forEach(p => this._postHashSet.add(p.txHash));
     await this.cache.savePosts(newPosts);
-    /* Only update display if still on following tab */
-    if (this._followingFilter) {
+    if (this._followingFilter && myToken === this._followingFetchToken) {
       this.renderFeed();
       utils.toast(`Loaded ${newPosts.length} new post${newPosts.length>1?'s':''} from follows`);
     }
@@ -3317,6 +3324,8 @@ class DeFiX {
     const idx = this.state.channelHistory.findIndex(c => c.address === address);
     if (idx >= 0) this.state.channelHistory[idx] = updated;
     else this.state.channelHistory.unshift(updated);
+    /* Cap history at 50 entries to prevent unbounded IDB growth */
+    if (this.state.channelHistory.length > 50) this.state.channelHistory.pop();
   }
 
   async rebuildChannelHistory() {
@@ -3564,8 +3573,18 @@ class DeFiX {
     /* Save API */
     g('set-save-api')?.addEventListener('click', () => {
       const s = this._getSettings();
-      s.apiUrl      = g('set-api-primary').value.trim() || 'https://api.scan.pulsechain.com/api';
-      s.backupApiUrl = g('set-api-backup').value.trim();
+      const rawPrimary = g('set-api-primary').value.trim();
+      const rawBackup  = g('set-api-backup').value.trim();
+      /* Validate URLs before saving — a bad URL causes confusing fetch errors */
+      const isValidUrl = u => { try { new URL(u); return true; } catch { return false; } };
+      if (rawPrimary && !isValidUrl(rawPrimary)) {
+        utils.toast('Primary API URL is not a valid URL'); return;
+      }
+      if (rawBackup && !isValidUrl(rawBackup)) {
+        utils.toast('Backup API URL is not a valid URL'); return;
+      }
+      s.apiUrl       = rawPrimary || 'https://api.scan.pulsechain.com/api';
+      s.backupApiUrl = rawBackup;
       this._saveSettings(s);
       utils.toast('API settings saved ✓');
     });
@@ -3952,6 +3971,7 @@ class DeFiX {
             location: db.location  || '',
             website:  db.website   || '',
           };
+          this._pruneProfileCache();
           this._debouncedRender();
           return;
         }
@@ -3988,6 +4008,7 @@ class DeFiX {
                 website:  data.website  || '',
               };
               await this.cache.saveProfile({ address, ...data });
+              this._pruneProfileCache();
               this._debouncedRender();
               found = true;
               break;
@@ -4941,7 +4962,8 @@ class DeFiX {
     this.state.pending   = [];
     this.state.nextPage  = 1;
     this.state.hasMore   = true;
-    this._postHashSet    = new Set(); /* invalidate O(1) dedup cache */
+    this._postHashSet    = new Set();
+    this._postMap.clear(); /* prevent unbounded growth across channel switches */
     /* Clear feed DOM immediately so old channel's posts don't flash
        while new channel's posts are loading. */
     const feedEl = this.g('feed');
@@ -5817,6 +5839,16 @@ class DeFiX {
       </div>
       ${searchBtn}
     </div>`;
+  }
+
+  /* Enforce a max size on profCache to prevent unbounded memory growth.
+     Evicts oldest entries (by insertion order) when over the cap. */
+  _pruneProfileCache(maxSize = 500) {
+    const keys = Object.keys(this.state.profCache);
+    if (keys.length <= maxSize) return;
+    /* Remove the oldest (first inserted) entries */
+    const toRemove = keys.slice(0, keys.length - maxSize);
+    toRemove.forEach(k => delete this.state.profCache[k]);
   }
 
   /* Prepend the pending page header to the feed if not already present.
