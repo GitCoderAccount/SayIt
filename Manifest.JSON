@@ -1,0 +1,27 @@
+{
+  "name": "Say It DeFi",
+  "short_name": "Say It DeFi",
+  "description": "Uncensorable social media on PulseChain — own your voice on-chain",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#7c4dff",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "./image1.jpeg",
+      "sizes": "192x192",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./image1.jpeg",
+      "sizes": "512x512",
+      "type": "image/jpeg",
+      "purpose": "any"
+    }
+  ],
+  "categories": ["social", "finance"],
+  "lang": "en-US",
+  "screenshots": []
+}
