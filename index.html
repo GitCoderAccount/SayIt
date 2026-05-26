@@ -385,7 +385,11 @@ nav { flex:1; padding:4px 0; }
 .dir-sent     { background:rgba(124,77,255,0.15); color:var(--primary-lt); }
 .dir-received { background:rgba(0,186,124,0.12);  color:var(--green); }
 .to-label    { font-size:13px; color:var(--muted); margin-bottom:3px; display:block; }
-.reply-badge { font-size:13px; color:var(--muted); margin-bottom:3px; display:block; }
+.reply-badge {
+  font-size:13px; color:var(--muted); margin-bottom:2px;
+  display:block; line-height:1.4;
+}
+.reply-badge a, .reply-badge span { color:var(--primary-lt); }
 
 .post-body {
   font-size:15px; line-height:1.6; word-break:break-word;
@@ -1184,8 +1188,24 @@ nav { flex:1; padding:4px 0; }
 
 /* ── Thread page ────────────────────────────────────────────────────────── */
 .thread-page { display:flex; flex-direction:column; }
-.thread-orig-item { border-bottom:1px solid var(--border); }
-.thread-reply-item { border-bottom:1px solid var(--border); }
+.thread-orig-item {
+  border-bottom:1px solid var(--border);
+  cursor:default !important;
+}
+.thread-orig-item .post-body { font-size:17px; line-height:1.65; }
+.thread-orig-item .post-actions {
+  margin-top:12px; padding-top:12px;
+  border-top:1px solid var(--border);
+}
+.thread-connector {
+  width:2px; background:var(--border);
+  margin:0 auto 0 28px;
+}
+.thread-reply-item {
+  border-bottom:1px solid var(--border);
+  padding:12px 16px;
+}
+.thread-reply-item:last-child { border-bottom:0; }
 .thread-compose {
   display:flex; gap:12px; padding:12px 16px;
   border-top:1px solid var(--border);
@@ -1962,12 +1982,41 @@ const utils = {
           data-raw-url="${safeRaw}">`;
         mediaCount++;
       } else if (mtype === 'vid') {
-        mediaUrls.add(resolved);
+        mediaUrls.add(normalizeForDedup(resolved));
         const safeR = utils.safe(resolved);
-        imgHtml += `<video src="${safeR}" class="post-vid-thumb"
-          controls preload="metadata" playsinline
-          onerror="this.style.display='none'"></video>`;
+        imgHtml += `<div class="post-vid-wrap">
+          <video src="${safeR}" class="post-vid-thumb"
+            autoplay muted loop playsinline preload="auto"
+            onerror="this.closest('.post-vid-wrap').style.display='none'"></video>
+          <button class="vid-unmute-btn" title="Tap to unmute"
+            onclick="event.stopPropagation();const v=this.previousElementSibling;v.muted=!v.muted;this.textContent=v.muted?'🔇':'🔊'">🔇</button>
+        </div>`;
         mediaCount++;
+      } else if (mtype === 'youtube') {
+        const vid = ytId(resolved);
+        if (vid) {
+          mediaUrls.add(normalizeForDedup(resolved));
+          imgHtml += `<div class="post-vid-wrap post-yt-wrap">
+            <iframe src="https://www.youtube-nocookie.com/embed/${utils.safe(vid)}?autoplay=0&rel=0"
+              class="post-yt-frame" allowfullscreen
+              allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              title="YouTube video" loading="lazy"
+              onerror="this.closest('.post-vid-wrap').style.display='none'"></iframe>
+          </div>`;
+          mediaCount++;
+        }
+      } else if (mtype === 'vimeo') {
+        const vid = vimeoId(resolved);
+        if (vid) {
+          mediaUrls.add(normalizeForDedup(resolved));
+          imgHtml += `<div class="post-vid-wrap post-yt-wrap">
+            <iframe src="https://player.vimeo.com/video/${utils.safe(vid)}?dnt=1"
+              class="post-yt-frame" allowfullscreen
+              title="Vimeo video" loading="lazy"
+              onerror="this.closest('.post-vid-wrap').style.display='none'"></iframe>
+          </div>`;
+          mediaCount++;
+        }
       }
     }
 
@@ -5215,6 +5264,24 @@ class DeFiX {
     });
     feed.innerHTML = '';
     feed.appendChild(frag);
+    this._wireVideoObserver(feed);
+  }
+
+  _wireVideoObserver(container) {
+    const videos = container.querySelectorAll('.post-vid-thumb');
+    if (!videos.length) return;
+    if (this._vidObserver) this._vidObserver.disconnect();
+    this._vidObserver = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        const vid = entry.target;
+        if (entry.isIntersecting) {
+          vid.play().catch(() => {});
+        } else {
+          vid.pause();
+        }
+      });
+    }, { threshold: 0.3 });
+    videos.forEach(v => this._vidObserver.observe(v));
   }
 
   postHTML(post, inModal, replyMap, likeMap, repostMap, engagerMap = null) {
@@ -5707,6 +5774,7 @@ class DeFiX {
           style="cursor:default;border-bottom:2px solid var(--border)">
           ${origHTML}
         </div>
+        ${repliesHTML ? '<div class="thread-connector" style="height:12px"></div>' : ''}
         <div id="thread-replies-page">
           ${repliesHTML || '<div class="prof-empty" style="padding:32px"><span>💬</span><h3>No replies yet</h3><p>Be the first to reply.</p></div>'}
         </div>
