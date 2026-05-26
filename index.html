@@ -436,6 +436,12 @@ nav { flex:1; padding:4px 0; }
 .vid-unmute-btn:hover { background:rgba(0,0,0,0.85); }
 .post-yt-wrap { padding-top:56.25%; position:relative; margin-top:8px; border-radius:12px; overflow:hidden; }
 .post-yt-frame { position:absolute; top:0; left:0; width:100%; height:100%; border:0; }
+.post-yt-facade, .post-vimeo-facade { position:relative; }
+.post-yt-thumb  { width:100%; display:block; border-radius:0; }
+.post-yt-play, .post-vimeo-play {
+  position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+  pointer-events:none; filter:drop-shadow(0 2px 8px rgba(0,0,0,0.4));
+}
 .post-yt-facade { position:relative; margin-top:8px; border-radius:12px; overflow:hidden; background:#000; cursor:pointer; }
 .post-yt-thumb { width:100%; display:block; aspect-ratio:16/9; object-fit:cover; }
 .post-yt-play {
@@ -1872,7 +1878,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260525-1';
+const SW_CACHE_VER = '20260526-1';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -2049,11 +2055,22 @@ const utils = {
         const vid = vimeoId(resolved);
         if (vid) {
           mediaUrls.add(normalizeForDedup(resolved));
-          imgHtml += `<div class="post-vid-wrap post-yt-wrap">
-            <iframe src="https://player.vimeo.com/video/${utils.safe(vid)}?dnt=1"
-              class="post-yt-frame" allowfullscreen
-              title="Vimeo video" loading="lazy"
-              onerror="this.closest('.post-vid-wrap').style.display='none'"></iframe>
+          const safeVid = utils.safe(vid);
+          /* Facade: thumbnail from vumbnail.com + branded play button.
+             Clicking loads the real iframe with autoplay — same pattern as YouTube. */
+          imgHtml += `<div class="post-vid-wrap post-yt-facade post-vimeo-facade"
+              data-vimeo-id="${safeVid}"
+              onclick="event.stopPropagation();this.innerHTML='<iframe src=\'https://player.vimeo.com/video/${safeVid}?autoplay=1&dnt=1\' class=\'post-yt-frame\' allowfullscreen allow=\'autoplay;fullscreen;picture-in-picture\' title=\'Vimeo video\'></iframe>';this.classList.remove('post-yt-facade','post-vimeo-facade')"
+              style="cursor:pointer">
+            <img src="https://vumbnail.com/${safeVid}.jpg"
+              class="post-yt-thumb" alt="Vimeo video" loading="lazy"
+              onerror="this.style.display='none'">
+            <div class="post-yt-play post-vimeo-play">
+              <svg viewBox="0 0 68 48" width="68" height="48">
+                <rect width="68" height="48" rx="8" fill="#1AB7EA" opacity="0.9"/>
+                <path d="M45 24 27 14v20" fill="#fff"/>
+              </svg>
+            </div>
           </div>`;
           mediaCount++;
         }
@@ -2424,6 +2441,7 @@ class DeFiX {
     this._fetchToken   = 0;
     this._walletReg    = false;
     this._postMap      = new Map();
+    this._postHashSet  = new Set(); /* O(1) dedup — kept in sync with state.posts */
     this.g             = id => document.getElementById(id);
     /* Profile-triggered re-renders: instead of rebuilding the entire feed,
        patch only the avatar+name elements for the address that just loaded.
@@ -2946,6 +2964,8 @@ class DeFiX {
       e.stopPropagation();
       this.openPostMenu(post, e.currentTarget || e.target.closest('.post-menu-btn'));
     } else if (!action && !inModal && !e.target.closest('a') && !e.target.closest('button')) {
+      /* Don't open threads for pure reaction posts — they have no body to display */
+      if (post.postType === 'like' || post.postType === 'follow') return;
       this.openThread(post);
     }
   }
@@ -3029,7 +3049,8 @@ class DeFiX {
     /* Bail if the user has switched tabs since we started */
     if (myToken !== this._followingFetchToken) return;
     this.state.posts = [...this.state.posts, ...newPosts]
-      .sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
+      .sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp))
+      .slice(0, 2000);
     /* Update _postHashSet with new posts */
     if (this._postHashSet) newPosts.forEach(p => this._postHashSet.add(p.txHash));
     await this.cache.savePosts(newPosts);
@@ -4132,13 +4153,20 @@ class DeFiX {
     /* Skip if in profCache, unless it's a stale empty record (>24h old) */
     if (address in this.state.profCache) {
       const cached = this.state.profCache[address];
-      /* null = fetch in progress; non-empty = valid profile — both skip */
-      if (cached === null || cached?.username) return;
-      /* Empty placeholder: re-scan if older than 24h */
-      const TWENTY_FOUR_H = 86_400_000;
-      if (cached?._emptyAt && (Date.now() - cached._emptyAt) < TWENTY_FOUR_H) return;
-      /* Stale empty — fall through and re-scan */
-      delete this.state.profCache[address];
+      if (cached === null) return; /* fetch already in progress */
+      if (cached?.username) {
+        /* Found profile — re-fetch after 1 hour so profile updates propagate */
+        const ONE_HOUR = 3_600_000;
+        if (!cached._cachedAt || (Date.now() - cached._cachedAt) < ONE_HOUR) return;
+        /* Stale found profile — fall through and re-fetch */
+        delete this.state.profCache[address];
+      } else {
+        /* Empty placeholder: re-scan after 24h */
+        const TWENTY_FOUR_H = 86_400_000;
+        if (cached?._emptyAt && (Date.now() - cached._emptyAt) < TWENTY_FOUR_H) return;
+        /* Stale empty — fall through and re-scan */
+        delete this.state.profCache[address];
+      }
     }
     /* Mark in-progress immediately — prevents duplicate concurrent fetches. */
     this.state.profCache[address] = null;
@@ -4193,6 +4221,7 @@ class DeFiX {
                 coverUrl: data.coverUrl || '',
                 location: data.location || '',
                 website:  data.website  || '',
+                _cachedAt: Date.now(),   /* TTL: re-fetch after 1h */
               };
               await this.cache.saveProfile({ address, ...data });
               this._pruneProfileCache();
@@ -4507,7 +4536,7 @@ class DeFiX {
       const apiUrl = s.apiUrl || 'https://api.scan.pulsechain.com/api';
       let emptyStreak = 0;
 
-      for (let page = 1; page <= 30; page++) {
+      for (let page = 1; page <= 500; page++) {
         /* sort=asc puts oldest txs (where FOLLOW events live) on page 1 */
         const qs  = `?module=account&action=txlist&address=${addr}&offset=50&page=${page}&sort=asc`;
         let raw   = [];
@@ -4548,7 +4577,7 @@ class DeFiX {
 
         if (raw.length < 50) break; /* last page */
         emptyStreak = pageHadFollow ? 0 : emptyStreak + 1;
-        if (emptyStreak >= 3) break; /* 3 pages with no follow activity — done */
+        if (emptyStreak >= 30) break; /* 30 pages with no follow activity — done */
       }
     } catch { /* silent */ }
   }
@@ -4963,14 +4992,12 @@ class DeFiX {
         if (raw.length < 50) this.state.hasMore = false;
         const parsed = this.parseTxs(raw);
         if (parsed.length > 0) {
-          /* _postHashSet maintained as a Set<txHash> alongside state.posts.
-             O(1) lookup instead of O(n) Set rebuild on every page iteration. */
-          if (!this._postHashSet) this._postHashSet = new Set(this.state.posts.map(p => p.txHash));
           const unique = parsed.filter(p => !this._postHashSet.has(p.txHash));
           if (unique.length > 0) {
             unique.forEach(p => this._postHashSet.add(p.txHash));
             this.state.posts = [...this.state.posts, ...unique]
-              .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+              .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+              .slice(0, 2000); /* cap to prevent unbounded memory growth */
             await this.cache.savePosts(unique);
             if (myToken !== this._fetchToken) return;
             found += unique.length;
@@ -5264,7 +5291,8 @@ class DeFiX {
             const fresh = posts.filter(p => !known.has(p.txHash));
             if (fresh.length) {
               this.state.posts = [...this.state.posts, ...fresh]
-                .sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
+                .sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp))
+                .slice(0, 2000);
               fresh.forEach(p => { if (this._postHashSet) this._postHashSet.add(p.txHash); });
               this.renderFeed();
             }
@@ -5697,14 +5725,30 @@ class DeFiX {
     /* Position below the repost button */
     const rect = anchorEl ? anchorEl.getBoundingClientRect()
       : { left: window.innerWidth/2 - 110, bottom: window.innerHeight/2, top: window.innerHeight/2 - 40 };
-    const mw = menu.offsetWidth || 220;
-    let left = rect.left - mw/2 + (anchorEl ? 18 : 0);
-    let top  = rect.bottom + 4;
-    if (left < 8) left = 8;
-    if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
-    if (top + 100 > window.innerHeight - 8) top = rect.top - 110;
-    menu.style.left = left + 'px';
-    menu.style.top  = top  + 'px';
+    const mw = menu.offsetWidth  || 220;
+    const mh = menu.offsetHeight || 100;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let left, top;
+    if (anchorEl) {
+      /* Align menu's left edge with button; clamp to viewport */
+      left = rect.left;
+      top  = rect.bottom + 6;
+      /* Flip above if it would overflow bottom */
+      if (top + mh > vh - 8) top = rect.top - mh - 6;
+      /* Keep fully within horizontal bounds */
+      if (left + mw > vw - 8) left = vw - mw - 8;
+      if (left < 8) left = 8;
+    } else {
+      /* Keyboard trigger / no anchor — center in viewport */
+      left = Math.max(8, (vw - mw) / 2);
+      top  = Math.max(8, (vh - mh) / 2);
+    }
+    /* Final clamp — guarantees menu is never off-screen on any device */
+    left = Math.min(left, vw - mw - 8);
+    top  = Math.min(top,  vh - mh - 8);
+    menu.style.left = Math.max(8, left) + 'px';
+    menu.style.top  = Math.max(8, top)  + 'px';
 
     /* Wire actions */
     menu.querySelector('#rc-repost').onclick = async e2 => {
@@ -6020,7 +6064,8 @@ class DeFiX {
 
     if (newFound.length > 0) {
       this.state.posts = [...this.state.posts, ...newFound]
-        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+        .slice(0, 2000);
       await this.cache.savePosts(newFound);
       if (this.state.threadPost?.txHash === targetHash && this.state.mode === 'thread') {
         this._renderThreadPage(post);
@@ -7185,7 +7230,7 @@ class DeFiX {
     utils.toast(`Unmuted ${this.trunc(addr)}`);
     this.renderFeed();
   }
-  isMuted(addr) { return this.state.muted.has(addr?.toLowerCase()); }
+  isMuted(addr) { return !!(addr && this.state.muted.has(addr.toLowerCase())); }
 
   trunc = a => (a && a.length > 10) ? `${a.slice(0,6)}...${a.slice(-4)}` : (a || '');
 
