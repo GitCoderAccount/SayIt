@@ -2230,13 +2230,38 @@ class Cache {
     posts.forEach(p => store.put(p));
     return new Promise((res, rej) => {
       tx.oncomplete = () => {
-        /* Index for full-text search in the background — non-blocking */
-        posts.forEach(p => this.indexPost(p).catch(() => {}));
+        /* Index for search; prune after batch to bound index size */
+        Promise.all(posts.map(p => this.indexPost(p).catch(() => {}))).then(() => {
+          this.pruneSearchIndex().catch(() => {});
+        });
         res();
       };
       tx.onerror = () => rej(tx.error);
     });
   }
+  async pruneSearchIndex(maxRows = 200000) {
+    await this._ready;
+    if (!this._db.objectStoreNames.contains('search_index')) return;
+    const countReq = this._db.transaction('search_index', 'readonly')
+      .objectStore('search_index').count();
+    const count = await new Promise(res => { countReq.onsuccess = () => res(countReq.result); });
+    if (count <= maxRows) return;
+    const toDelete = count - maxRows;
+    const tx = this._db.transaction('search_index', 'readwrite');
+    const store = tx.objectStore('search_index');
+    let deleted = 0;
+    return new Promise(res => {
+      const req = store.openCursor();
+      req.onsuccess = e => {
+        const cur = e.target.result;
+        if (!cur || deleted >= toDelete) { res(); return; }
+        cur.delete(); deleted++;
+        cur.continue();
+      };
+      req.onerror = () => res();
+    });
+  }
+
   async getPendingPosts() {
     await this._ready;
     if (!this._db.objectStoreNames.contains('pending_posts')) return [];
@@ -2998,7 +3023,8 @@ class DeFiX {
   async _fetchFollowingFeed() {
     /* Cancel any in-flight following fetch from a previous tab click */
     const myToken = (this._followingFetchToken = (this._followingFetchToken || 0) + 1);
-    const addrs = [...this.state.following].slice(0, 20);
+    /* 200 followed addresses — generous cap for the parallel fetch strategy */
+    const addrs = [...this.state.following].slice(0, 200);
     if (!addrs.length) return;
     const known = this._postHashSet || new Set(this.state.posts.map(p => p.txHash));
     let newPosts = [];
@@ -3091,6 +3117,13 @@ class DeFiX {
 
   async goHome() {
     if (this.state.mode === 'main' && this.state.channel === MAIN_CHANNEL) {
+      if (this.state.searchTerm || this.state.activeTag) {
+        this.state.searchTerm = '';
+        this.state.activeTag  = null;
+        const si = this.g('search-input');
+        if (si) si.value = '';
+        this.renderFeed();
+      }
       window.scrollTo({ top: 0, behavior: 'smooth' }); return;
     }
     this.setNav('nav-home','home');
@@ -3684,6 +3717,10 @@ class DeFiX {
     try { return JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); }
     catch { return {}; }
   }
+  _getPostCap() {
+    const s = this._getSettings();
+    return Number(s.postCap) || 2000;
+  }
   _saveSettings(s) {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
     this.state.settings = s;
@@ -3730,6 +3767,17 @@ class DeFiX {
           </div>
           <select class="settings-btn" id="set-prune-age" style="padding:9px 12px">
             ${[3,7,14,30].map(d => `<option value="${d}" ${(s.pruneAgeDays||7)==d?'selected':''}>${d} days</option>`).join('')}
+          </select>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Feed post cap</strong>
+            <span>Max posts kept in memory per session. Higher = more history while scrolling, more RAM used.</span>
+          </div>
+          <select class="settings-btn" id="set-post-cap" style="padding:9px 12px">
+            ${[500,1000,2000,5000,10000].map(n =>
+              `<option value="${n}" ${(s.postCap||2000)==n?'selected':''}>${n.toLocaleString()} posts</option>`
+            ).join('')}
           </select>
         </div>
         <div class="settings-row">
@@ -3811,6 +3859,12 @@ class DeFiX {
       s.pruneAgeDays = parseInt(g('set-prune-age').value, 10);
       this._saveSettings(s);
       utils.toast('Prune age saved ✓');
+    });
+    g('set-post-cap')?.addEventListener('change', () => {
+      const s = this._getSettings();
+      s.postCap = Number(g('set-post-cap').value) || 2000;
+      this._saveSettings(s);
+      utils.toast('Feed cap saved ✓');
     });
     /* Clear posts */
     g('set-clear-posts')?.addEventListener('click', async () => {
@@ -4992,12 +5046,13 @@ class DeFiX {
         if (raw.length < 50) this.state.hasMore = false;
         const parsed = this.parseTxs(raw);
         if (parsed.length > 0) {
+          /* Dedup within this batch AND against already-loaded posts */
           const unique = parsed.filter(p => !this._postHashSet.has(p.txHash));
           if (unique.length > 0) {
             unique.forEach(p => this._postHashSet.add(p.txHash));
             this.state.posts = [...this.state.posts, ...unique]
               .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-              .slice(0, 2000); /* cap to prevent unbounded memory growth */
+              .slice(0, this._getPostCap()); /* cap — configurable in Settings */
             await this.cache.savePosts(unique);
             if (myToken !== this._fetchToken) return;
             found += unique.length;
@@ -5233,6 +5288,11 @@ class DeFiX {
       return p.channel === channel && p.mode === mode;
     });
     this.state.posts = posts.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    /* Rebuild _postHashSet from cached posts so fetchPosts() doesn't
+       re-add them as "new". Without this, every cached post appears
+       twice in the feed after a channel switch: once from IDB via
+       loadCached, and again from the chain scan via fetchPosts. */
+    this._postHashSet = new Set(posts.map(p => p.txHash));
     this.renderFeed();
   }
 
