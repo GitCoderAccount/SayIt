@@ -2559,8 +2559,9 @@ class DeFiX {
     };
 
     g('logo-wrap').onclick     = () => this.goHome();
-    w('sb-wave-row',      'onclick', () => this.goWave());
-    w('sb-pulsechain-row', 'onclick', () => window.open('https://pulsechain.com','_blank'));
+    /* Wave on Pulse sidebar → filter current feed for #Wave content */
+    w('sb-wave-row',      'onclick', () => this.filterByTag('Wave'));
+    w('sb-pulsechain-row', 'onclick', () => this.filterByTag('PulseChain'));
     g('connect-btn').onclick   = () => this.toggleWallet();
     g('nav-post-btn').onclick  = () => this.openComposeModal();
     g('mobile-fab').onclick    = () => this.openComposeModal();
@@ -4408,7 +4409,7 @@ class DeFiX {
 
     /* Scan more pages for own profile — they likely have many reaction
        txs (likes, follows) interleaved with actual posts. */
-    const maxPages = isOwn ? 10 : 6;
+    const maxPages = isOwn ? 30 : 15;
     this.loadProfileTab(address, isOwn, 'posts', maxPages).then(() => {
       this._updateProfileSubtitle(address);
     }).catch(() => {});
@@ -4531,7 +4532,9 @@ class DeFiX {
       };
     }
     /* Tab switching */
-    const maxPages = isOwn ? 8 : 4;
+    /* Scan more pages so tabs populate without needing 'Load more'.
+       Profile pages mix posts/replies/reactions — more pages = less blank tabs. */
+    const maxPages = isOwn ? 30 : 15;
     document.querySelectorAll('.prof-tab').forEach(btn => {
       btn.onclick = () => {
         document.querySelectorAll('.prof-tab').forEach(t => t.classList.remove('active'));
@@ -4566,6 +4569,153 @@ class DeFiX {
     /* Count following and fetch follower count */
     this._showFollowingCount();
     this._fetchFollowerCount(address);
+
+    /* Follower/Following counts → open list screen (Twitter/X pattern) */
+    const followingCountEl = document.getElementById('prof-following-count');
+    const followerCountEl  = document.getElementById('prof-follower-count');
+    if (followingCountEl) followingCountEl.onclick = () => this._showFollowingList(address, isOwn);
+    if (followerCountEl)  followerCountEl.onclick  = () => this._showFollowerList(address);
+  }
+
+  /* Show a Twitter/X-style list of accounts this address follows.
+     For own profile: read state.following (already loaded).
+     For others: scan their sent txs for FOLLOW: prefixes. */
+  async _showFollowingList(address, isOwn) {
+    const feed = this.g('feed');
+    if (!feed) return;
+    const headerHTML = this._makePageHeader({ title: 'Following', back: true });
+    feed.innerHTML = headerHTML + `<div class="prof-empty"><span>⏳</span><h3>Loading…</h3></div>`;
+
+    const backBtn = feed.querySelector('.page-header-back');
+    if (backBtn) backBtn.onclick = () => this.goProfilePage(address, isOwn);
+
+    let addrs = [];
+    if (isOwn && this.state.signerAddr === address.toLowerCase()) {
+      addrs = [...this.state.following];
+    } else {
+      /* Scan their sent txs for FOLLOW: prefixes */
+      try {
+        const s = this._getSettings();
+        const apiUrl = s.apiUrl || 'https://api.scan.pulsechain.com/api';
+        const follows = new Map();
+        for (let page = 1; page <= 20; page++) {
+          const qs = `?module=account&action=txlist&address=${address}&offset=50&page=${page}&sort=desc`;
+          const ctrl = new AbortController();
+          const tim  = setTimeout(() => ctrl.abort(), 15000);
+          let raw = [];
+          try {
+            const res = await fetch(apiUrl + qs, { signal: ctrl.signal });
+            if (res.ok) { const d = await res.json(); raw = d.status === '1' ? (d.result || []) : []; }
+          } finally { clearTimeout(tim); }
+          raw.forEach(tx => {
+            if (tx.from?.toLowerCase() !== address.toLowerCase()) return;
+            if (!tx.input || tx.input === '0x') return;
+            try {
+              const text = ethers.utils.toUtf8String(tx.input).trim();
+              if (text.startsWith(FOLLOW_PREFIX))   follows.set(text.slice(FOLLOW_PREFIX.length).trim().toLowerCase(), 'follow');
+              if (text.startsWith(UNFOLLOW_PREFIX)) follows.set(text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase(), 'unfollow');
+            } catch {}
+          });
+          if (raw.length < 50) break;
+        }
+        addrs = [...follows.entries()].filter(([,v]) => v === 'follow').map(([a]) => a);
+      } catch {}
+    }
+    this._renderFollowList(feed, headerHTML, address, isOwn, addrs, 'Following', backBtn);
+  }
+
+  /* Show a list of addresses that follow this profile.
+     Reads from the follower scan data we already have (or re-scans). */
+  async _showFollowerList(address) {
+    const feed = this.g('feed');
+    if (!feed) return;
+    const isOwn = address.toLowerCase() === this.state.signerAddr?.toLowerCase();
+    const headerHTML = this._makePageHeader({ title: 'Followers', back: true });
+    feed.innerHTML = headerHTML + `<div class="prof-empty"><span>⏳</span><h3>Loading…</h3></div>`;
+
+    const backBtn = feed.querySelector('.page-header-back');
+    if (backBtn) backBtn.onclick = () => this.goProfilePage(address, isOwn);
+
+    /* Scan the address's received txs for FOLLOW markers */
+    const addr = address.toLowerCase();
+    const s = this._getSettings();
+    const apiUrl = s.apiUrl || 'https://api.scan.pulsechain.com/api';
+    const follows = new Map();
+    let emptyStreak = 0;
+    try {
+      for (let page = 1; page <= 30; page++) {
+        const qs = `?module=account&action=txlist&address=${addr}&offset=50&page=${page}&sort=asc`;
+        const ctrl = new AbortController();
+        const tim  = setTimeout(() => ctrl.abort(), 15000);
+        let raw = [];
+        try {
+          const res = await fetch(apiUrl + qs, { signal: ctrl.signal });
+          if (res.ok) { const d = await res.json(); raw = d.status === '1' ? (d.result || []) : []; }
+        } finally { clearTimeout(tim); }
+        let pageHadFollow = false;
+        raw.forEach(tx => {
+          if (tx.to?.toLowerCase() !== addr) return;
+          if (!tx.input || tx.input === '0x') return;
+          try {
+            const text = ethers.utils.toUtf8String(tx.input).trim();
+            const from = tx.from?.toLowerCase();
+            if (text.startsWith(FOLLOW_PREFIX)) {
+              const target = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
+              if (target === addr) { follows.set(from, 'follow'); pageHadFollow = true; }
+            } else if (text.startsWith(UNFOLLOW_PREFIX)) {
+              const target = text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase();
+              if (target === addr) { follows.set(from, 'unfollow'); pageHadFollow = true; }
+            }
+          } catch {}
+        });
+        if (raw.length < 50) break;
+        emptyStreak = pageHadFollow ? 0 : emptyStreak + 1;
+        if (emptyStreak >= 3) break;
+      }
+    } catch {}
+    const addrs = [...follows.entries()].filter(([,v]) => v === 'follow').map(([a]) => a);
+    this._renderFollowList(feed, headerHTML, address, isOwn, addrs, 'Followers', backBtn);
+  }
+
+  /* Shared renderer for Followers/Following list screens.
+     Shows avatar, name, handle, follow button — exactly like X. */
+  _renderFollowList(feed, headerHTML, profileAddr, profileIsOwn, addrs, title, backBtn) {
+    if (!addrs.length) {
+      feed.innerHTML = headerHTML + `<div class="prof-empty"><span>??</span><h3>No ${title}</h3><p>None yet.</p></div>`;
+      if (backBtn) backBtn.onclick = () => this.goProfilePage(profileAddr, profileIsOwn);
+      return;
+    }
+    let listHTML = '';
+    addrs.forEach(addr => {
+      const c    = this.state.profCache[addr] || {};
+      const name = c.username ? utils.safe(c.username) : this.trunc(addr);
+      const pic  = utils.safe(c.picUrl || 'image1.jpeg');
+      const isFollowing = this.state.following.has(addr);
+      const isSelf = addr === this.state.signerAddr?.toLowerCase();
+      const followBtnHTML = (!isSelf && this.signer)
+        ? `<button class="prof-follow-btn${isFollowing ? ' following' : ''}"
+            onclick="event.stopPropagation();pulse.toggleFollow('${utils.safe(addr)}', this)"
+            style="padding:6px 16px;font-size:13px">${isFollowing ? 'Following' : 'Follow'}</button>`
+        : '';
+      listHTML += `
+        <div class="post-item" style="cursor:pointer;display:flex;align-items:center;gap:12px;padding:12px 16px"
+          onclick="pulse.goProfilePage('${utils.safe(addr)}', ${isSelf})">
+          <img src="${pic}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;flex-shrink:0"
+            onerror="this.src='image1.jpeg'" loading="lazy">
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:700;font-size:15px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${name}</div>
+            <div style="font-size:13px;color:var(--muted)">@${utils.safe(this.trunc(addr))}</div>
+            ${c.bio ? `<div style="font-size:13px;color:var(--text);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${utils.safe(c.bio.slice(0,80))}</div>` : ''}
+          </div>
+          ${followBtnHTML}
+        </div>`;
+      /* Fetch profiles for names/avatars in background */
+      if (!c.username) this.fetchOtherProfile(addr);
+    });
+    feed.innerHTML = headerHTML + listHTML;
+    /* Re-wire back button after innerHTML wipe */
+    const newBack = feed.querySelector('.page-header-back');
+    if (newBack) newBack.onclick = () => this.goProfilePage(profileAddr, profileIsOwn);
   }
 
   _showFollowingCount() {
@@ -4590,7 +4740,7 @@ class DeFiX {
       const apiUrl = s.apiUrl || 'https://api.scan.pulsechain.com/api';
       let emptyStreak = 0;
 
-      for (let page = 1; page <= 500; page++) {
+      for (let page = 1; page <= 30; page++) {
         /* sort=asc puts oldest txs (where FOLLOW events live) on page 1 */
         const qs  = `?module=account&action=txlist&address=${addr}&offset=50&page=${page}&sort=asc`;
         let raw   = [];
@@ -4631,7 +4781,7 @@ class DeFiX {
 
         if (raw.length < 50) break; /* last page */
         emptyStreak = pageHadFollow ? 0 : emptyStreak + 1;
-        if (emptyStreak >= 30) break; /* 30 pages with no follow activity — done */
+        if (emptyStreak >= 3) break; /* 3 pages with no follow activity — done */
       }
     } catch { /* silent */ }
   }
