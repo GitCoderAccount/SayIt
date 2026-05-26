@@ -166,13 +166,6 @@ nav { flex:1; padding:4px 0; }
   display:flex; align-items:center;
   gap:16px;
 }
-.page-header-title {
-  font-size:20px; font-weight:800; line-height:1.2;
-  color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-}
-.page-header-subtitle {
-  font-size:13px; color:var(--muted); line-height:1.2; margin-top:1px;
-}
 .page-header-back {
   width:34px; height:34px; border-radius:50%;
   background:transparent; border:none; cursor:pointer;
@@ -368,7 +361,7 @@ nav { flex:1; padding:4px 0; }
   display:flex; align-items:baseline; flex-wrap:nowrap;
   gap:0; line-height:1.4; margin-bottom:0; overflow:hidden;
 }
-.post-name   { font-weight:700; font-size:15px; flex-shrink:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:160px; }
+.post-name   { font-weight:700; font-size:15px; flex-shrink:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; max-width:200px; }
 .post-name:hover { text-decoration:underline; cursor:pointer; }
 .post-dot    { color:var(--muted); font-size:14px; margin:0 4px; flex-shrink:0; }
 .post-handle {
@@ -479,14 +472,15 @@ nav { flex:1; padding:4px 0; }
   position:fixed; z-index:9999;
   width:320px; max-width:calc(100vw - 24px);
   background:var(--bg-card); border:1px solid var(--border);
-  border-radius:16px; padding:16px;
+  border-radius:16px;
+  /* 20px top gives hover bridge between trigger and popup */
+  padding:20px 16px 16px;
+  margin-top:-12px;
   box-shadow:0 12px 32px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3);
   display:none; opacity:0; transform:translateY(-4px);
   transition:opacity 0.15s, transform 0.15s;
   cursor:pointer;
   font-size:14px;
-  padding-top:20px;
-  margin-top:-12px;
   /* CRITICAL: never intercept clicks when invisible (during fade-out).
      Without this, the 150ms opacity fade leaves an invisible 320px
      element at z-index:9999 that swallows all clicks — including the
@@ -503,7 +497,7 @@ nav { flex:1; padding:4px 0; }
 .pp-header { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:10px; }
 .pp-avatar { width:60px; height:60px; border-radius:50%; object-fit:cover; flex-shrink:0; background:#222; }
 .pp-follow-btn {
-  background:var(--text); color:var(--bg);
+  background:var(--text); color:var(--bg-dark);
   border:0; border-radius:9999px;
   padding:7px 18px; font-weight:700; font-size:13px;
   cursor:pointer; flex-shrink:0;
@@ -578,7 +572,7 @@ nav { flex:1; padding:4px 0; }
 .explore-section-title {
   font-size:20px; font-weight:800; padding:16px 16px 8px;
   color:var(--text); position:sticky; top:53px;
-  background:var(--bg); z-index:5;
+  background:var(--bg-dark); z-index:5;
   border-bottom:1px solid var(--border);
 }
 .explore-row {
@@ -1007,7 +1001,7 @@ nav { flex:1; padding:4px 0; }
 /* ── Responsive ─────────────────────────────────────────────────────────── */
 @media (max-width:1280px) { #sidebar-right { flex:0 0 310px; width:310px; } }
 @media (max-width:1100px) { #sidebar-right { flex:0 0 260px; width:260px; padding:12px 10px 24px; } }
-@media (max-width:1100px) .sb-card-title { font-size:18px; }
+@media (max-width:1100px) { .sb-card-title { font-size:18px; } }
 @media (max-width:900px)  {
   #sidebar-right { display:none; }
   #main { flex:1; width:auto; max-width:none; border-right:none; }
@@ -1514,7 +1508,7 @@ nav { flex:1; padding:4px 0; }
           </div>
           <span style="font-size:20px;align-self:center">🎙️</span>
         </div>
-        <div class="sb-card-row" style="cursor:pointer" onclick="window.open('https://pulsechain.com','_blank')">
+        <div class="sb-card-row" id="sb-pulsechain-row" style="cursor:pointer">
           <div style="flex:1">
             <span class="trend-label">Powered by</span>
             <span class="trend-name">PulseChain ⚡</span>
@@ -2334,7 +2328,8 @@ class DeFiX {
     };
 
     g('logo-wrap').onclick     = () => this.goHome();
-    w('sb-wave-row', 'onclick', () => this.goWave());
+    w('sb-wave-row',      'onclick', () => this.goWave());
+    w('sb-pulsechain-row', 'onclick', () => window.open('https://pulsechain.com','_blank'));
     g('connect-btn').onclick   = () => this.toggleWallet();
     g('nav-post-btn').onclick  = () => this.openComposeModal();
     g('mobile-fab').onclick    = () => this.openComposeModal();
@@ -2661,11 +2656,9 @@ class DeFiX {
       const v = g('pe-cover').value.trim();
       const prev = g('pe-cover-preview');
       if (v) {
-        /* CSS.escape() turns embedded quotes and parens into harmless
-           escapes — prevents background-image-as-injection if a user
-           pastes a value like url("); content: ... */
-        const safeV = (typeof CSS !== 'undefined' && CSS.escape)
-          ? CSS.escape(v) : v.replace(/["'()\\]/g, '');
+        /* Inside a double-quoted CSS url() only " and \ need escaping.
+           CSS.escape() is for identifiers and encodes : / . which breaks URLs. */
+        const safeV = v.replace(/["\\]/g, c => '\\' + c);
         prev.style.backgroundImage = `url("${safeV}")`;
         prev.style.backgroundSize  = 'cover';
         prev.style.backgroundPosition = 'center';
@@ -4515,7 +4508,7 @@ class DeFiX {
     /* Cover preview */
     const prev = g('pe-cover-preview');
     if (p.coverUrl) {
-      prev.style.backgroundImage    = `url("${(typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(p.coverUrl) : p.coverUrl.replace(/["'()\\]/g, '')}")`;
+      prev.style.backgroundImage    = `url("${p.coverUrl.replace(/["\\]/g, c => '\\' + c)}")`;
       prev.style.backgroundSize     = 'cover';
       prev.style.backgroundPosition = 'center';
       prev.classList.add('has-cover');
@@ -6012,7 +6005,7 @@ class DeFiX {
           <span class="trend-count">${this.trunc(addr)}</span>
         </div>
         <button class="w2f-follow-btn" onclick="event.stopPropagation();pulse.toggleFollowAddr('${utils.safe(addr)}',this)"
-          style="padding:6px 14px;border-radius:9999px;background:var(--text);color:var(--bg);
+          style="padding:6px 14px;border-radius:9999px;background:var(--text);color:var(--bg-dark);
                  font-weight:700;font-size:13px;border:0;cursor:pointer;flex-shrink:0">Follow</button>
       </div>`;
     }).join('');
