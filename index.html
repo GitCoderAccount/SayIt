@@ -418,10 +418,31 @@ nav { flex:1; padding:4px 0; }
   transition:opacity 0.15s;
 }
 .post-img-thumb:hover { opacity:0.9; }
+.post-vid-wrap {
+  position:relative; display:block; border-radius:12px; overflow:hidden;
+  background:#000; margin-top:8px;
+}
 .post-vid-thumb {
   width:100%; max-height:420px; display:block;
-  background:#000; outline:none; cursor:pointer;
-  border-radius:0;
+  outline:none; cursor:pointer; object-fit:contain;
+}
+.vid-unmute-btn {
+  position:absolute; bottom:8px; right:8px;
+  background:rgba(0,0,0,0.6); border:none; border-radius:50%;
+  width:32px; height:32px; font-size:16px;
+  cursor:pointer; display:flex; align-items:center; justify-content:center;
+  color:#fff; transition:background 0.15s; z-index:2;
+}
+.vid-unmute-btn:hover { background:rgba(0,0,0,0.85); }
+.post-yt-wrap { padding-top:56.25%; position:relative; margin-top:8px; border-radius:12px; overflow:hidden; }
+.post-yt-frame { position:absolute; top:0; left:0; width:100%; height:100%; border:0; }
+.post-yt-facade { position:relative; margin-top:8px; border-radius:12px; overflow:hidden; background:#000; cursor:pointer; }
+.post-yt-thumb { width:100%; display:block; aspect-ratio:16/9; object-fit:cover; }
+.post-yt-play {
+  position:absolute; top:50%; left:50%;
+  transform:translate(-50%,-50%);
+  pointer-events:none;
+  filter:drop-shadow(0 2px 8px rgba(0,0,0,0.5));
 }
 .read-more-btn {
   background:none; border:none; color:var(--primary-lt);
@@ -2004,12 +2025,23 @@ const utils = {
         const vid = ytId(resolved);
         if (vid) {
           mediaUrls.add(normalizeForDedup(resolved));
-          imgHtml += `<div class="post-vid-wrap post-yt-wrap">
-            <iframe src="https://www.youtube-nocookie.com/embed/${utils.safe(vid)}?autoplay=0&rel=0"
-              class="post-yt-frame" allowfullscreen
-              allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-              title="YouTube video" loading="lazy"
-              onerror="this.closest('.post-vid-wrap').style.display='none'"></iframe>
+          const safeVid = utils.safe(vid);
+          /* Thumbnail + play button — iframe loads on click (faster, avoids
+             Google tracking before user interaction, and works in feed context
+             where autoplay is blocked by browser sandbox). */
+          imgHtml += `<div class="post-vid-wrap post-yt-facade"
+              data-yt-id="${safeVid}"
+              onclick="event.stopPropagation();this.innerHTML='<iframe src=\"https://www.youtube-nocookie.com/embed/${safeVid}?autoplay=1&rel=0\" class=\"post-yt-frame\" allowfullscreen allow=\"autoplay;accelerometer;clipboard-write;encrypted-media;gyroscope;picture-in-picture\" title=\"YouTube video\"></iframe>';this.classList.remove('post-yt-facade')"
+              style="cursor:pointer">
+            <img src="https://i.ytimg.com/vi/${safeVid}/hqdefault.jpg"
+              class="post-yt-thumb" alt="YouTube video" loading="lazy"
+              onerror="this.src='https://i.ytimg.com/vi/${safeVid}/default.jpg'">
+            <div class="post-yt-play">
+              <svg viewBox="0 0 68 48" width="68" height="48">
+                <path d="M66.52 7.74c-.78-2.93-2.49-5.41-5.42-6.19C55.79.13 34 0 34 0S12.21.13 6.9 1.55c-2.93.78-4.63 3.26-5.42 6.19C.06 13.05 0 24 0 24s.06 10.95 1.48 16.26c.78 2.93 2.49 5.41 5.42 6.19C12.21 47.87 34 48 34 48s21.79-.13 27.1-1.55c2.93-.78 4.64-3.26 5.42-6.19C67.94 34.95 68 24 68 24s-.06-10.95-1.48-16.26z" fill="#f00"/>
+                <path d="M45 24 27 14v20" fill="#fff"/>
+              </svg>
+            </div>
           </div>`;
           mediaCount++;
         }
@@ -2428,14 +2460,17 @@ class DeFiX {
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden) this.pollNew();
     });
-    /* Retry offline queue when network recovers */
     window.addEventListener('online', () => {
       utils.toast('✅ Back online — retrying queued posts…');
       setTimeout(() => this._retryPendingPosts(), 1000);
     });
+    this._rebuildSearchIndex();
     setTimeout(() => { this.pollNew(); this.startPolling(); }, POLL_FIRST_MS);
     /* Show any posts that were saved to the offline queue */
     this._loadPendingPostsIntoFeed();
+    /* One-time search index rebuild for posts cached before round 18.
+       Runs in idle time so it never blocks the UI. */
+    this._rebuildSearchIndex();
   }
 
   /* Per-channel draft storage — keyed by channel address so switching
@@ -2748,7 +2783,7 @@ class DeFiX {
           return;
         }
         if (e.key === 'r' || e.key === 'R') { e.preventDefault(); this.openReplyModal(post); return; }
-        if (e.key === 't' || e.key === 'T') { e.preventDefault(); this.openRepostModal(post); return; }
+        if (e.key === 't' || e.key === 'T') { e.preventDefault(); this.openRepostChoice(post, null); return; }
         if (e.key === 'b' || e.key === 'B') {
           e.preventDefault();
           const el = document.querySelector(`.post-item.kb-focus`);
@@ -3992,7 +4027,7 @@ class DeFiX {
     this.state.bookmarks.clear();
     this.state.following.clear();
     try {
-      for (let page = 1; page <= 4; page++) {
+      for (let page = 1; page <= 10; page++) {
         let raw;
         try { raw = await this.apiFetch(this.state.signerAddr, page); }
         catch { break; }
@@ -4459,38 +4494,63 @@ class DeFiX {
   }
 
   async _fetchFollowerCount(address) {
-    /* Scan received txs for FOLLOW:{address} sent TO this address */
+    /* FOLLOW txs are sent TO the target address. Scan that address's
+       received txs for FOLLOW/UNFOLLOW markers.
+       Key insight: scan ascending (oldest first) — FOLLOW txs tend to be
+       early in an address's history. Descending would bury them on later pages. */
     const el = document.getElementById('prof-follower-count');
     if (!el) return;
     try {
-      let count = 0;
-      const seen = new Set(); /* dedupe — last FOLLOW/UNFOLLOW per sender wins */
-      const follows = new Map(); /* sender → 'follow'|'unfollow' */
-      for (let page = 1; page <= 3; page++) {
-        let raw;
-        try { raw = await this.apiFetch(address, page); }
-        catch { break; }
+      const addr = address.toLowerCase();
+      const follows = new Map(); /* follower address → 'follow'|'unfollow' */
+      const s = this._getSettings();
+      const apiUrl = s.apiUrl || 'https://api.scan.pulsechain.com/api';
+      let emptyStreak = 0;
+
+      for (let page = 1; page <= 30; page++) {
+        /* sort=asc puts oldest txs (where FOLLOW events live) on page 1 */
+        const qs  = `?module=account&action=txlist&address=${addr}&offset=50&page=${page}&sort=asc`;
+        let raw   = [];
+        try {
+          const ctrl = new AbortController();
+          const tim  = setTimeout(() => ctrl.abort(), 15000);
+          try {
+            const res  = await fetch(apiUrl + qs, { signal: ctrl.signal });
+            if (res.ok) {
+              const d = await res.json();
+              raw = (d.status === '1' && Array.isArray(d.result)) ? d.result : [];
+            }
+          } finally { clearTimeout(tim); }
+        } catch { break; }
+
+        let pageHadFollow = false;
         raw.forEach(tx => {
           const from = tx.from?.toLowerCase();
           const to   = tx.to?.toLowerCase();
-          if (to !== address.toLowerCase()) return;
+          if (to !== addr) return; /* only incoming */
           if (!tx.input || tx.input === '0x') return;
           try {
             const text = ethers.utils.toUtf8String(tx.input).trim();
             if (text.startsWith(FOLLOW_PREFIX)) {
               const target = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
-              if (target === address.toLowerCase()) follows.set(from, 'follow');
+              if (target === addr) { follows.set(from, 'follow'); pageHadFollow = true; }
             } else if (text.startsWith(UNFOLLOW_PREFIX)) {
               const target = text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase();
-              if (target === address.toLowerCase()) follows.set(from, 'unfollow');
+              if (target === addr) { follows.set(from, 'unfollow'); pageHadFollow = true; }
             }
-          } catch { /* skip */ }
+          } catch {}
         });
-        if (raw.length < 50) break;
+
+        /* Show live count as each page comes in */
+        const live = [...follows.values()].filter(v => v === 'follow').length;
+        const elNow = document.getElementById('prof-follower-count');
+        if (elNow) elNow.innerHTML = `<strong>${live}</strong> Followers`;
+
+        if (raw.length < 50) break; /* last page */
+        emptyStreak = pageHadFollow ? 0 : emptyStreak + 1;
+        if (emptyStreak >= 3) break; /* 3 pages with no follow activity — done */
       }
-      count = [...follows.values()].filter(v => v === 'follow').length;
-      el.innerHTML = `<strong>${count}</strong> Followers`;
-    } catch { /* silent — leave as ? */ }
+    } catch { /* silent */ }
   }
 
   async toggleFollow(address, btn) {
@@ -5075,9 +5135,10 @@ class DeFiX {
     this.state.pending = [];
     this.g('new-banner').style.display = 'none';
     this.renderFeed();
-    /* X-style: snap to top after inserting new posts */
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    /* Wire video autoplay observer for newly prepended posts */
+    const feedEl = this.g('feed');
+    if (feedEl) this._wireVideoObserver(feedEl);
   }
 
   async refreshFeed() {
@@ -5115,7 +5176,8 @@ class DeFiX {
     this.state.nextPage  = 1;
     this.state.hasMore   = true;
     this._postHashSet    = new Set();
-    this._postMap.clear(); /* prevent unbounded growth across channel switches */
+    this._postMap.clear();
+    this._fetchingQuotes = new Set(); /* clear in-flight quote fetches */
     /* Clear feed DOM immediately so old channel's posts don't flash
        while new channel's posts are loading. */
     const feedEl = this.g('feed');
@@ -5423,7 +5485,7 @@ class DeFiX {
               <span class="act-icon"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M1.751 10c0-4.42 3.584-8 8.005-8h4.366c4.49 0 8.129 3.64 8.129 8.13 0 2.96-1.607 5.68-4.196 7.11l-8.054 4.46v-3.69h-.067c-4.49.1-8.183-3.51-8.183-8.01zm8.005-6c-3.317 0-6.005 2.69-6.005 6 0 3.37 2.77 6.08 6.138 6.01l.351-.01h1.761v2.3l5.087-2.81c1.951-1.08 3.163-3.13 3.163-5.36 0-3.39-2.744-6.13-6.129-6.13H9.756z"/></svg></span>
               <span class="act-count">${rcLabel}</span>
             </button>
-            <button class="act-btn act-repost" data-action="repost" title="Repost">
+            <button class="act-btn act-repost" data-action="repost" title="Repost or Quote">
               <span class="act-icon"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M4.5 3.88l4.432 4.14-1.364 1.46L5.5 7.55V16c0 1.1.896 2 2 2H13v2H7.5c-2.209 0-4-1.79-4-4V7.55L1.432 9.48.068 8.02 4.5 3.88zM16.5 6H11V4h5.5c2.209 0 4 1.79 4 4v8.45l2.068-1.93 1.364 1.46L19.5 20.12l-4.432-4.14 1.364-1.46 2.068 1.93V8c0-1.1-.896-2-2-2z"/></svg></span>
               <span class="act-count">${rpcLabel}</span>
             </button>
@@ -5701,21 +5763,8 @@ class DeFiX {
     this.g('repost-input').focus();
   }
 
-  openRepostModal(post) {
-    if (!this.signer) { utils.toast('Connect wallet to repost'); return; }
-    this.state.repostTarget = post;
-    const preview = post.display.length > 140 ? post.display.slice(0, 140) + '…' : post.display;
-    this.g('repost-quote').innerHTML = `
-      <div class="reply-quote-meta">
-        <strong>${this.trunc(post.reporter)}</strong>
-        <span style="color:var(--muted);font-size:12px;margin-left:6px">${this.relTime(post.timestamp)}</span>
-      </div>
-      <div style="margin-top:4px">${utils.safe(preview)}</div>`;
-    this.g('repost-input').value        = '';
-    this.g('repost-input').style.height = '';
-    this.g('repost-modal').classList.add('open');
-    this.g('repost-input').focus();
-  }
+  /* openRepostModal: redirects to quote flow (keyboard shortcut T and legacy callers) */
+  openRepostModal(post) { this.openQuoteModal(post); }
 
   async postRepost() {
     if (!this.state.repostTarget) return;
@@ -6366,6 +6415,69 @@ class DeFiX {
       }
     } finally {
       this._fetchingQuotes.delete(hash);
+    }
+  }
+
+  /* Build trigram search index for all IDB posts not yet indexed.
+     Runs during browser idle time — safe to call on every startup since
+     indexPost() is idempotent (it appends; we check before running). */
+  async _rebuildSearchIndex() {
+    /* Only run if search_index store exists (IDB v3+) */
+    try {
+      await this.cache._ready;
+      if (!this.cache._db.objectStoreNames.contains('search_index')) return;
+      /* Check if already built (has at least 1 entry) */
+      const count = await new Promise(res => {
+        const req = this.cache._db.transaction('search_index','readonly')
+          .objectStore('search_index').count();
+        req.onsuccess = () => res(req.result);
+        req.onerror   = () => res(0);
+      });
+      if (count > 500) return; /* already indexed */
+      /* Get all posts from IDB */
+      const posts = await this.cache.getPosts(() => true);
+      if (!posts.length) return;
+      /* Index in batches during idle time */
+      let i = 0;
+      const indexBatch = deadline => {
+        while (i < posts.length && (deadline.timeRemaining() > 5 || deadline.didTimeout)) {
+          this.cache.indexPost(posts[i]).catch(() => {});
+          i++;
+        }
+        if (i < posts.length) {
+          requestIdleCallback(indexBatch, { timeout: 5000 });
+        }
+      };
+      if (typeof requestIdleCallback !== 'undefined') {
+        requestIdleCallback(indexBatch, { timeout: 5000 });
+      } else {
+        /* Fallback: index all posts in a single async chain */
+        for (const post of posts) {
+          await this.cache.indexPost(post).catch(() => {});
+        }
+      }
+    } catch { /* non-critical — search still works for new posts */ }
+  }
+
+  _rebuildSearchIndex() {
+    const key = 'sayit_idx_v1';
+    if (localStorage.getItem(key)) return;
+    const run = async () => {
+      try {
+        const posts = await this.cache.getPosts(() => true);
+        if (!posts.length) return;
+        for (let i = 0; i < posts.length; i++) {
+          await this.cache.indexPost(posts[i]);
+          if (i % 50 === 49) await new Promise(res => setTimeout(res, 0));
+        }
+        localStorage.setItem(key, '1');
+        console.log('[search] Indexed ' + posts.length + ' cached posts');
+      } catch (err) { console.warn('[search] Rebuild failed:', err); }
+    };
+    if (typeof requestIdleCallback !== 'undefined') {
+      requestIdleCallback(() => run(), { timeout: 30000 });
+    } else {
+      setTimeout(run, 5000);
     }
   }
 
