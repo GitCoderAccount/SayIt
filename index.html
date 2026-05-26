@@ -2507,12 +2507,9 @@ class DeFiX {
       utils.toast('✅ Back online — retrying queued posts…');
       setTimeout(() => this._retryPendingPosts(), 1000);
     });
-    this._rebuildSearchIndex();
     setTimeout(() => { this.pollNew(); this.startPolling(); }, POLL_FIRST_MS);
-    /* Show any posts that were saved to the offline queue */
     this._loadPendingPostsIntoFeed();
-    /* One-time search index rebuild for posts cached before round 18.
-       Runs in idle time so it never blocks the UI. */
+    /* One-time idle-time search index rebuild for posts cached before r18. */
     this._rebuildSearchIndex();
   }
 
@@ -3783,6 +3780,17 @@ class DeFiX {
         </div>
         <div class="settings-row">
           <div class="settings-row-label">
+            <strong>Max scan depth</strong>
+            <span>API pages scanned per profile/follower lookup (50 txs per page). Higher finds more history but takes longer.</span>
+          </div>
+          <select class="settings-btn" id="set-max-scan" style="padding:9px 12px">
+            ${[30,100,300,0].map(n =>
+              `<option value="${n}" ${(s.maxScanPages ?? 100) == n ? 'selected' : ''}>${n === 0 ? 'Unlimited' : n + ' pages (' + (n*50).toLocaleString() + ' txs)'}</option>`
+            ).join('')}
+          </select>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">
             <strong>Clear post cache</strong>
             <span>Removes all cached posts from IndexedDB</span>
           </div>
@@ -3794,6 +3802,13 @@ class DeFiX {
             <span>Removes saved channel list (rebuilt from chain on next visit)</span>
           </div>
           <button class="settings-btn danger" id="set-clear-channels">Clear channels</button>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Clear offline queue</strong>
+            <span>Removes posts saved while offline that failed to publish</span>
+          </div>
+          <button class="settings-btn danger" id="set-clear-pending">Clear pending</button>
         </div>
       </div>
 
@@ -3867,11 +3882,20 @@ class DeFiX {
       this._saveSettings(s);
       utils.toast('Feed cap saved ✓');
     });
+    g('set-max-scan')?.addEventListener('change', () => {
+      const s = this._getSettings();
+      s.maxScanPages = Number(g('set-max-scan').value);
+      this._saveSettings(s);
+      const v = s.maxScanPages;
+      utils.toast('Scan depth: ' + (v === 0 ? 'Unlimited' : v + ' pages') + ' ✓');
+    });
     /* Clear posts */
     g('set-clear-posts')?.addEventListener('click', async () => {
       await this.cache.clearAllPosts();
       localStorage.removeItem(PRUNE_KEY);
+      localStorage.removeItem('sayit_idx_v1'); /* allow search index rebuild */
       this.state.posts = [];
+      this._postHashSet = new Set();
       utils.toast('Post cache cleared ✓');
     });
     /* Clear channels */
@@ -3881,11 +3905,21 @@ class DeFiX {
       localStorage.removeItem(CHANNELS_KEY);
       utils.toast('Channel history cleared ✓');
     });
+    g('set-clear-pending')?.addEventListener('click', async () => {
+      /* Remove all pending posts from IDB and any visual indicators */
+      try {
+        const pending = await this.cache.getPendingPosts();
+        await Promise.all(pending.map(q => this.cache.deletePendingPost(q.queueId)));
+        document.querySelectorAll('.pending-post').forEach(el => el.remove());
+        utils.toast(`Cleared ${pending.length} queued post${pending.length !== 1 ? 's' : ''} ✓`);
+      } catch { utils.toast('Could not clear queue'); }
+    });
   }
 
   setNav(desktopId, mobileKey) {
     this.hideProfilePopup?.();
     this._threadBackOverride = false;
+    this._profileScanCache = {}; /* clear stale profile scan data on navigation */
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.mn-btn').forEach(b => b.classList.remove('active'));
     if (desktopId) this.g(desktopId)?.classList.add('active');
@@ -4103,7 +4137,8 @@ class DeFiX {
     this.state.bookmarks.clear();
     this.state.following.clear();
     try {
-      for (let page = 1; page <= 10; page++) {
+      const rxLimit = Math.min(this._getMaxScanPages(), 20);
+      for (let page = 1; page <= rxLimit; page++) {
         let raw;
         try { raw = await this.apiFetch(this.state.signerAddr, page); }
         catch { break; }
@@ -4598,7 +4633,12 @@ class DeFiX {
         const s = this._getSettings();
         const apiUrl = s.apiUrl || 'https://api.scan.pulsechain.com/api';
         const follows = new Map();
-        for (let page = 1; page <= 20; page++) {
+        const flimit = this._getMaxScanPages();
+        const emptyD = feed.querySelector('.prof-empty');
+        const progFL = emptyD ? document.createElement('p') : null;
+        if (emptyD && progFL) emptyD.appendChild(progFL);
+        for (let page = 1; (flimit === Infinity || page <= flimit); page++) {
+          if (progFL) progFL.textContent = `Scanning page ${page}…`;
           const qs = `?module=account&action=txlist&address=${address}&offset=50&page=${page}&sort=desc`;
           const ctrl = new AbortController();
           const tim  = setTimeout(() => ctrl.abort(), 15000);
@@ -4617,6 +4657,7 @@ class DeFiX {
             } catch {}
           });
           if (raw.length < 50) break;
+          await this._scanDelay(150);
         }
         addrs = [...follows.entries()].filter(([,v]) => v === 'follow').map(([a]) => a);
       } catch {}
@@ -4643,7 +4684,12 @@ class DeFiX {
     const follows = new Map();
     let emptyStreak = 0;
     try {
-      for (let page = 1; page <= 30; page++) {
+      const flimit2 = this._getMaxScanPages();
+      const emptyEl2 = feed.querySelector('.prof-empty');
+      const progFL2  = emptyEl2 ? document.createElement('p') : null;
+      if (emptyEl2 && progFL2) emptyEl2.appendChild(progFL2);
+      for (let page = 1; (flimit2 === Infinity || page <= flimit2); page++) {
+        if (progFL2) progFL2.textContent = `Scanning page ${page}…`;
         const qs = `?module=account&action=txlist&address=${addr}&offset=50&page=${page}&sort=asc`;
         const ctrl = new AbortController();
         const tim  = setTimeout(() => ctrl.abort(), 15000);
@@ -4671,6 +4717,7 @@ class DeFiX {
         if (raw.length < 50) break;
         emptyStreak = pageHadFollow ? 0 : emptyStreak + 1;
         if (emptyStreak >= 3) break;
+        await this._scanDelay(150);
       }
     } catch {}
     const addrs = [...follows.entries()].filter(([,v]) => v === 'follow').map(([a]) => a);
@@ -4698,21 +4745,37 @@ class DeFiX {
             style="padding:6px 16px;font-size:13px">${isFollowing ? 'Following' : 'Follow'}</button>`
         : '';
       listHTML += `
-        <div class="post-item" style="cursor:pointer;display:flex;align-items:center;gap:12px;padding:12px 16px"
+        <div class="post-item follow-list-row" style="cursor:pointer;display:flex;align-items:center;gap:12px;padding:12px 16px"
           onclick="pulse.goProfilePage('${utils.safe(addr)}', ${isSelf})">
-          <img src="${pic}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;flex-shrink:0"
+          <img class="follow-list-avatar" src="${pic}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;flex-shrink:0"
             onerror="this.src='image1.jpeg'" loading="lazy">
           <div style="flex:1;min-width:0">
-            <div style="font-weight:700;font-size:15px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${name}</div>
+            <div class="follow-list-name" style="font-weight:700;font-size:15px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${name}</div>
             <div style="font-size:13px;color:var(--muted)">@${utils.safe(this.trunc(addr))}</div>
             ${c.bio ? `<div style="font-size:13px;color:var(--text);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${utils.safe(c.bio.slice(0,80))}</div>` : ''}
           </div>
           ${followBtnHTML}
         </div>`;
       /* Fetch profiles for names/avatars in background */
-      if (!c.username) this.fetchOtherProfile(addr);
+      if (!c.username) {
+        this.fetchOtherProfile(addr).then(() => {
+          /* Patch this row's name/avatar in-place once profile resolves */
+          const row = feed.querySelector(`[data-follow-addr="${addr}"]`);
+          if (!row) return;
+          const prof = this.state.profCache[addr];
+          if (!prof?.username) return;
+          const nameEl = row.querySelector('.follow-list-name');
+          const imgEl  = row.querySelector('.follow-list-avatar');
+          if (nameEl) nameEl.textContent = prof.username;
+          if (imgEl && prof.picUrl !== 'image1.jpeg') imgEl.src = prof.picUrl;
+        }).catch(() => {});
+      }
     });
+    /* Add data-follow-addr to each row for profile patching */
     feed.innerHTML = headerHTML + listHTML;
+    feed.querySelectorAll('.follow-list-row').forEach((row, i) => {
+      row.dataset.followAddr = addrs[i] || '';
+    });
     /* Re-wire back button after innerHTML wipe */
     const newBack = feed.querySelector('.page-header-back');
     if (newBack) newBack.onclick = () => this.goProfilePage(profileAddr, profileIsOwn);
@@ -4794,18 +4857,28 @@ class DeFiX {
        This lets the target count followers by scanning their received txs.
        You find your following list by scanning your own sent FOLLOW: txs. */
     const prefix = isFollowing ? UNFOLLOW_PREFIX : FOLLOW_PREFIX;
+    /* Optimistic UI: update immediately, revert on failure */
+    if (btn) {
+      btn.disabled    = true;
+      btn.textContent = isFollowing ? 'Unfollowing…' : 'Following…';
+    }
     const ok = await this.publish(prefix + addr, null, addr);
+    if (btn) btn.disabled = false;
     if (ok) {
       if (isFollowing) {
         this.state.following.delete(addr);
-        btn.textContent = 'Follow';
-        btn.className   = 'prof-follow-btn';
+        if (btn) { btn.textContent = 'Follow'; btn.className = 'prof-follow-btn'; }
       } else {
         this.state.following.add(addr);
-        btn.textContent = 'Following';
-        btn.className   = 'prof-following-btn';
+        if (btn) { btn.textContent = 'Following'; btn.className = 'prof-following-btn'; }
       }
       this._showFollowingCount();
+    } else {
+      /* Revert on failure — restore original text/class */
+      if (btn) {
+        btn.textContent = isFollowing ? 'Following' : 'Follow';
+        btn.className   = isFollowing ? 'prof-following-btn' : 'prof-follow-btn';
+      }
     }
   }
 
@@ -6676,44 +6749,6 @@ class DeFiX {
   /* Build trigram search index for all IDB posts not yet indexed.
      Runs during browser idle time — safe to call on every startup since
      indexPost() is idempotent (it appends; we check before running). */
-  async _rebuildSearchIndex() {
-    /* Only run if search_index store exists (IDB v3+) */
-    try {
-      await this.cache._ready;
-      if (!this.cache._db.objectStoreNames.contains('search_index')) return;
-      /* Check if already built (has at least 1 entry) */
-      const count = await new Promise(res => {
-        const req = this.cache._db.transaction('search_index','readonly')
-          .objectStore('search_index').count();
-        req.onsuccess = () => res(req.result);
-        req.onerror   = () => res(0);
-      });
-      if (count > 500) return; /* already indexed */
-      /* Get all posts from IDB */
-      const posts = await this.cache.getPosts(() => true);
-      if (!posts.length) return;
-      /* Index in batches during idle time */
-      let i = 0;
-      const indexBatch = deadline => {
-        while (i < posts.length && (deadline.timeRemaining() > 5 || deadline.didTimeout)) {
-          this.cache.indexPost(posts[i]).catch(() => {});
-          i++;
-        }
-        if (i < posts.length) {
-          requestIdleCallback(indexBatch, { timeout: 5000 });
-        }
-      };
-      if (typeof requestIdleCallback !== 'undefined') {
-        requestIdleCallback(indexBatch, { timeout: 5000 });
-      } else {
-        /* Fallback: index all posts in a single async chain */
-        for (const post of posts) {
-          await this.cache.indexPost(post).catch(() => {});
-        }
-      }
-    } catch { /* non-critical — search still works for new posts */ }
-  }
-
   _rebuildSearchIndex() {
     const key = 'sayit_idx_v1';
     if (localStorage.getItem(key)) return;
