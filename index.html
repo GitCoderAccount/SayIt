@@ -1519,6 +1519,9 @@ nav { flex:1; padding:4px 0; }
             <button class="cmp-icon" id="cmp-gif-btn" title="Attach GIF">
               <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 5.5C3 4.119 4.119 3 5.5 3h13C19.881 3 21 4.119 21 5.5v13c0 1.381-1.119 2.5-2.5 2.5h-13C4.119 21 3 19.881 3 18.5v-13zM5.5 5c-.276 0-.5.224-.5.5v13c0 .276.224.5.5.5h13c.276 0 .5-.224.5-.5v-13c0-.276-.224-.5-.5-.5h-13zM8 13.5v-3h1.5v.75H11v1.5H9.5v.75H8zm4.5-3H14c.552 0 1 .448 1 1v1c0 .552-.448 1-1 1h-1.5V10.5zm1.25 1.25v.5H14v-.5h-.25zM15.5 10.5H17v1.25h-1.5v.25H17v1.25h-1.5c-.552 0-1-.448-1-1v-1.25c0-.552.448-.5 1-.5z"/></svg>
             </button>
+            <button class="cmp-icon" id="cmp-video-btn" title="Attach video URL (mp4, YouTube, Vimeo)">
+              <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+            </button>
             <button class="cmp-icon" id="cmp-emoji-btn" title="Emoji">
               <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M8 9.5C8 8.672 8.672 8 9.5 8s1.5.672 1.5 1.5S10.328 11 9.5 11 8 10.328 8 9.5zm6.5 1.5c.828 0 1.5-.672 1.5-1.5S15.328 8 14.5 8 13 8.672 13 9.5s.672 1.5 1.5 1.5zM12 16c-2.224 0-3.021-1.4-3.094-1.536l-1.76.992C7.196 15.69 8.638 18 12 18s4.804-2.31 4.854-2.544l-1.76-.992C15.021 14.6 14.224 16 12 16zm-.002-14C6.477 2 2 6.477 2 12s4.477 10 9.998 10C17.523 22 22 17.523 22 12S17.523 2 11.998 2zM12 20C7.582 20 4 16.418 4 12s3.582-8 8-8 8 3.582 8 8-3.582 8-8 8z"/></svg>
             </button>
@@ -1715,6 +1718,17 @@ nav { flex:1; padding:4px 0; }
           style="min-height:200px;font-size:18px;background:transparent;border-color:transparent;padding:8px 0"></textarea>
         <div style="display:flex;justify-content:space-between;align-items:center;
           margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
+          <div style="display:flex;gap:4px;align-items:center">
+            <button class="cmp-icon" id="modal-cmp-image-btn" title="Attach image">
+              <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 5.5C3 4.119 4.119 3 5.5 3h13C19.881 3 21 4.119 21 5.5v13c0 1.381-1.119 2.5-2.5 2.5h-13C4.119 21 3 19.881 3 18.5v-13zM5.5 5c-.276 0-.5.224-.5.5v9.086l3-3 3 3 5-5 3 3V5.5c0-.276-.224-.5-.5-.5h-13zM19 17.414l-3-3-5 5-3-3-3 3V18.5c0 .276.224.5.5.5h13c.276 0 .5-.224.5-.5v-1.086zM9.75 7C8.784 7 8 7.784 8 8.75s.784 1.75 1.75 1.75 1.75-.784 1.75-1.75S10.716 7 9.75 7z"/></svg>
+            </button>
+            <button class="cmp-icon" id="modal-cmp-gif-btn" title="Attach GIF">
+              <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 5.5C3 4.119 4.119 3 5.5 3h13C19.881 3 21 4.119 21 5.5v13c0 1.381-1.119 2.5-2.5 2.5h-13C4.119 21 3 19.881 3 18.5v-13zM5.5 5c-.276 0-.5.224-.5.5v13c0 .276.224.5.5.5h13c.276 0 .5-.224.5-.5v-13c0-.276-.224-.5-.5-.5h-13zm2.5 6h2v2H8v-2zm0-3h2v2H8V8zm3 0h5v2h-5V8zm0 3h5v2h-5v-2z"/></svg>
+            </button>
+            <button class="cmp-icon" id="modal-cmp-video-btn" title="Attach video URL">
+              <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+            </button>
+          </div>
           <span id="modal-char-count" style="font-size:14px;color:var(--muted)"></span>
           <button class="btn-pri" id="modal-post-btn" style="flex:none;padding:10px 24px">Post</button>
         </div>
@@ -1878,7 +1892,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260526-1';
+const SW_CACHE_VER = '20260527-1';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -2924,6 +2938,14 @@ class DeFiX {
     /* Compose toolbar — Image / GIF / Emoji */
     g('cmp-image-btn').onclick = () => this.openMediaModal('image');
     g('cmp-gif-btn').onclick   = () => this.openMediaModal('gif');
+    g('cmp-video-btn').onclick   = () => this.openMediaModal('video');
+    /* Expanded modal compose toolbar */
+    const miBtn = g('modal-cmp-image-btn');
+    const mgBtn = g('modal-cmp-gif-btn');
+    const mvBtn = g('modal-cmp-video-btn');
+    if (miBtn) miBtn.onclick = () => this.openMediaModal('image');
+    if (mgBtn) mgBtn.onclick = () => this.openMediaModal('gif');
+    if (mvBtn) mvBtn.onclick = () => this.openMediaModal('video');
     g('cmp-emoji-btn').onclick = () => this.toggleEmojiPicker();
 
     /* Media attach modal */
@@ -3026,17 +3048,46 @@ class DeFiX {
     if (!addrs.length) return;
     const known = this._postHashSet || new Set(this.state.posts.map(p => p.txHash));
     let newPosts = [];
-    /* Fetch page 1 from each followed address -- 5 at a time */
+    /* Fetch pages from each followed address, 5 addresses at a time.
+       Page count per address: 1 for small scan depth, up to 3 for larger.
+       Keeps total API calls bounded: 200 addrs * 3 pages * 5 concurrent = manageable. */
+    const scanLimit  = this._getMaxScanPages();
+    const pagesPerAddr = scanLimit === Infinity ? 3 : Math.min(3, Math.ceil(scanLimit / 30));
     const BATCH = 5;
+    const totalBatches = Math.ceil(addrs.length / BATCH);
+    let batchNum = 0;
     for (let i = 0; i < addrs.length; i += BATCH) {
+      batchNum++;
+      /* Show live progress in the feed while loading */
+      const progBanner = this.g('feed')?.querySelector('.following-progress');
+      if (!progBanner && this._followingFilter) {
+        const banner = document.createElement('div');
+        banner.className = 'following-progress';
+        banner.style.cssText = 'padding:10px 16px;font-size:13px;color:var(--muted);border-bottom:1px solid var(--border)';
+        this.g('feed')?.insertAdjacentElement('afterbegin', banner);
+      }
+      const prog = this.g('feed')?.querySelector('.following-progress');
+      if (prog) prog.textContent = `⏳ Loading following feed… ${batchNum * BATCH > addrs.length ? addrs.length : batchNum * BATCH}/${addrs.length} addresses`;
       const batch = addrs.slice(i, i + BATCH);
       const results = await Promise.allSettled(
-        batch.map(addr => this.apiFetch(addr, 1))
+        batch.map(async addr => {
+          const pages = [];
+          for (let pg = 1; pg <= pagesPerAddr; pg++) {
+            try {
+              const r = await this.apiFetch(addr, pg);
+              pages.push(...r);
+              if (r.length < 50) break;
+              if (pg < pagesPerAddr) await this._scanDelay(100);
+            } catch { break; }
+          }
+          return pages;
+        })
       );
       results.forEach((res, j) => {
         if (res.status !== 'fulfilled') return;
         const addr = batch[j];
-        res.value.forEach(tx => {
+        const txList = Array.isArray(res.value[0]) ? res.value.flat() : res.value;
+        txList.forEach(tx => {
           const hash = tx.hash?.toLowerCase();
           if (!hash || known.has(hash)) return;
           if (!tx.input || tx.input === '0x') return;
@@ -3069,8 +3120,9 @@ class DeFiX {
         });
       });
     }
+    /* Remove progress banner */
+    this.g('feed')?.querySelector('.following-progress')?.remove();
     if (!newPosts.length) return;
-    /* Bail if the user has switched tabs since we started */
     if (myToken !== this._followingFetchToken) return;
     this.state.posts = [...this.state.posts, ...newPosts]
       .sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp))
@@ -3719,6 +3771,18 @@ class DeFiX {
     const s = this._getSettings();
     return Number(s.postCap) || 2000;
   }
+  /* Max API pages for deep scans. 0 = Infinity (unlimited).
+     Default 100 pages = 5000 txs. */
+  _getMaxScanPages() {
+    const s = this._getSettings();
+    const v = Number(s.maxScanPages);
+    if (s.maxScanPages === 0 || s.maxScanPages === '0') return Infinity;
+    return v || 100;
+  }
+  /* Polite rate-limit pause between API pages */
+  _scanDelay(ms = 150) {
+    return new Promise(res => setTimeout(res, ms));
+  }
   _saveSettings(s) {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
     this.state.settings = s;
@@ -3886,6 +3950,8 @@ class DeFiX {
       const s = this._getSettings();
       s.maxScanPages = Number(g('set-max-scan').value);
       this._saveSettings(s);
+      /* Invalidate profile scan cache so next profile visit uses new depth */
+      this._profileScanCache = {};
       const v = s.maxScanPages;
       utils.toast('Scan depth: ' + (v === 0 ? 'Unlimited' : v + ' pages') + ' ✓');
     });
@@ -4729,11 +4795,16 @@ class DeFiX {
   _renderFollowList(feed, headerHTML, profileAddr, profileIsOwn, addrs, title, backBtn) {
     if (!addrs.length) {
       feed.innerHTML = headerHTML + `<div class="prof-empty"><span>??</span><h3>No ${title}</h3><p>None yet.</p></div>`;
-      if (backBtn) backBtn.onclick = () => this.goProfilePage(profileAddr, profileIsOwn);
+      const nb = feed.querySelector('.page-header-back');
+      if (nb) nb.onclick = () => this.goProfilePage(profileAddr, profileIsOwn);
       return;
     }
-    let listHTML = '';
-    addrs.forEach(addr => {
+    /* Paginate: first 50 visible, then "Show more" */
+    const PAGE_SIZE = 50;
+    const renderPage = (start) => {
+      const slice = addrs.slice(start, start + PAGE_SIZE);
+      let listHTML = '';
+      slice.forEach(addr => {
       const c    = this.state.profCache[addr] || {};
       const name = c.username ? utils.safe(c.username) : this.trunc(addr);
       const pic  = utils.safe(c.picUrl || 'image1.jpeg');
@@ -4759,7 +4830,6 @@ class DeFiX {
       /* Fetch profiles for names/avatars in background */
       if (!c.username) {
         this.fetchOtherProfile(addr).then(() => {
-          /* Patch this row's name/avatar in-place once profile resolves */
           const row = feed.querySelector(`[data-follow-addr="${addr}"]`);
           if (!row) return;
           const prof = this.state.profCache[addr];
@@ -4771,14 +4841,87 @@ class DeFiX {
         }).catch(() => {});
       }
     });
-    /* Add data-follow-addr to each row for profile patching */
-    feed.innerHTML = headerHTML + listHTML;
-    feed.querySelectorAll('.follow-list-row').forEach((row, i) => {
-      row.dataset.followAddr = addrs[i] || '';
+    /* "Show more" button if more pages exist */
+    const hasMore = (start + PAGE_SIZE) < addrs.length;
+    if (hasMore) {
+      const remaining = addrs.length - (start + PAGE_SIZE);
+      listHTML += `<div style="padding:16px;text-align:center">
+        <button class="btn-ghost" onclick="pulse._renderFollowListMore(this, ${start + PAGE_SIZE})"
+          style="padding:10px 24px">
+          Show ${Math.min(remaining, PAGE_SIZE)} more (${remaining} remaining)
+        </button>
+      </div>`;
+    }
+    const isFirstPage = start === 0;
+    if (isFirstPage) {
+      feed.innerHTML = headerHTML + listHTML;
+    } else {
+      /* Append: remove old "show more" and append new rows */
+      const oldBtn = feed.querySelector('[onclick*="_renderFollowListMore"]')?.closest('div');
+      if (oldBtn) oldBtn.remove();
+      feed.insertAdjacentHTML('beforeend', listHTML);
+    }
+    /* Tag rows with addresses for profile patching */
+    feed.querySelectorAll('.follow-list-row:not([data-follow-addr])').forEach((row, i) => {
+      row.dataset.followAddr = slice[i] || '';
     });
-    /* Re-wire back button after innerHTML wipe */
+    /* Wire back button */
     const newBack = feed.querySelector('.page-header-back');
     if (newBack) newBack.onclick = () => this.goProfilePage(profileAddr, profileIsOwn);
+  };
+
+  /* Store context for "show more" button */
+  this._followListCtx = { feed, headerHTML, profileAddr, profileIsOwn, addrs, title };
+  renderPage(0);
+}
+
+  _renderFollowListMore(btn, nextStart) {
+    const ctx = this._followListCtx;
+    if (!ctx) return;
+    const { feed, headerHTML, profileAddr, profileIsOwn, addrs, title } = ctx;
+    const PAGE_SIZE = 50;
+    const slice = addrs.slice(nextStart, nextStart + PAGE_SIZE);
+    let listHTML = '';
+    slice.forEach(addr => {
+      const c   = this.state.profCache[addr] || {};
+      const name = c.username ? utils.safe(c.username) : this.trunc(addr);
+      const pic  = utils.safe(c.picUrl || 'image1.jpeg');
+      const isSelf = addr === this.state.signerAddr?.toLowerCase();
+      const isFollowing = this.state.following.has(addr);
+      const followBtnHTML = (!isSelf && this.signer)
+        ? `<button class="prof-follow-btn${isFollowing ? ' following' : ''}"
+            onclick="event.stopPropagation();pulse.toggleFollow('${utils.safe(addr)}', this)"
+            style="padding:6px 16px;font-size:13px">${isFollowing ? 'Following' : 'Follow'}</button>`
+        : '';
+      listHTML += `
+        <div class="post-item follow-list-row" style="cursor:pointer;display:flex;align-items:center;gap:12px;padding:12px 16px"
+          onclick="pulse.goProfilePage('${utils.safe(addr)}', ${isSelf})">
+          <img class="follow-list-avatar" src="${pic}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;flex-shrink:0"
+            onerror="this.src='image1.jpeg'" loading="lazy">
+          <div style="flex:1;min-width:0">
+            <div class="follow-list-name" style="font-weight:700;font-size:15px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${name}</div>
+            <div style="font-size:13px;color:var(--muted)">@${utils.safe(this.trunc(addr))}</div>
+          </div>
+          ${followBtnHTML}
+        </div>`;
+      if (!c.username) this.fetchOtherProfile(addr).catch(() => {});
+    });
+    const hasMore2 = (nextStart + PAGE_SIZE) < addrs.length;
+    if (hasMore2) {
+      const remaining2 = addrs.length - (nextStart + PAGE_SIZE);
+      listHTML += `<div style="padding:16px;text-align:center">
+        <button class="btn-ghost" onclick="pulse._renderFollowListMore(this, ${nextStart + PAGE_SIZE})"
+          style="padding:10px 24px">
+          Show ${Math.min(remaining2, PAGE_SIZE)} more (${remaining2} remaining)
+        </button>
+      </div>`;
+    }
+    const oldBtn2 = btn.closest('div');
+    if (oldBtn2) oldBtn2.remove();
+    feed.insertAdjacentHTML('beforeend', listHTML);
+    feed.querySelectorAll('.follow-list-row:not([data-follow-addr])').forEach((row, i) => {
+      row.dataset.followAddr = slice[i] || '';
+    });
   }
 
   _showFollowingCount() {
@@ -4928,10 +5071,12 @@ class DeFiX {
       } else {
         /* Posts / Replies / Media: scan once, cache, reuse across tabs */
         this._profileScanCache = this._profileScanCache || {};
-        const cacheKey = `${address}_${maxPages}`;
+        /* Use settings-derived limit as cache key (maxPages may be null) */
+        const _limit  = this._getMaxScanPages();
+        const cacheKey = `${address}_${_limit}`;
         let raw = this._profileScanCache[cacheKey];
         if (!raw) {
-          raw = await this._scanProfilePages(address, maxPages);
+          raw = await this._scanProfilePages(address, null); /* uses _getMaxScanPages() */
           /* Cache for 60s — covers all tab switching */
           this._profileScanCache[cacheKey] = raw;
           setTimeout(() => { delete this._profileScanCache[cacheKey]; }, 60_000);
@@ -5035,14 +5180,33 @@ class DeFiX {
     }
   }
 
-  async _scanProfilePages(address, maxPages = 4) {
+  async _scanProfilePages(address, maxPages = null) {
+    /* null means "use settings". Caller can pass explicit value to override. */
+    const limit = (maxPages !== null && maxPages !== undefined)
+      ? maxPages
+      : this._getMaxScanPages();
     const all = [];
-    for (let page = 1; page <= maxPages; page++) {
+    /* Show progress when scanning deeply */
+    const feedEl = document.getElementById('prof-feed');
+    let progEl = null;
+    if (feedEl && (limit > 30 || limit === Infinity)) {
+      const existing = feedEl.querySelector('#prof-scan-progress');
+      if (!existing) {
+        feedEl.innerHTML = `<div class="prof-empty" id="prof-scan-progress">
+          <span>⏳</span><h3>Scanning chain…</h3>
+          <p id="prof-scan-status">Starting…</p>
+        </div>`;
+      }
+      progEl = document.getElementById('prof-scan-status');
+    }
+    for (let page = 1; (limit === Infinity || page <= limit); page++) {
+      if (progEl) progEl.textContent = `Page ${page} — ${all.length} txs so far…`;
       let raw;
       try { raw = await this.apiFetch(address, page); }
       catch { break; }
       all.push(...raw);
-      if (raw.length < 50) break;
+      if (raw.length < 50) break; /* last page */
+      await this._scanDelay(150);
     }
     return all;
   }
@@ -6362,10 +6526,16 @@ class DeFiX {
     const title   = this.g('media-modal-title');
     const hint    = this.g('media-url-hint');
     const preview = this.g('media-preview-area');
-    title.textContent = type === 'gif' ? 'Attach GIF' : 'Attach Image';
-    hint.textContent  = type === 'gif'
-      ? 'Paste any GIF URL (https:// or ipfs://)'
-      : 'Paste any image URL (https://, ipfs://, or arweave://)';
+    if (type === 'gif') {
+      title.textContent = 'Attach GIF';
+      hint.textContent  = 'Paste any GIF URL (https:// or ipfs://)';
+    } else if (type === 'video') {
+      title.textContent = 'Attach Video';
+      hint.textContent  = 'Paste a YouTube, Vimeo, or direct .mp4 / .webm URL';
+    } else {
+      title.textContent = 'Attach Image';
+      hint.textContent  = 'Paste any image URL (https://, ipfs://, or arweave://)';
+    }
     this.g('media-url-input').value = '';
     preview.innerHTML = '';
     preview.style.display = 'none';
