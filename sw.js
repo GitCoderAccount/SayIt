@@ -10,7 +10,7 @@
  *   - Everything else: Network-First with cache fallback.
  *
  * To force a cache refresh after deploying a new version:
- *   1. Bump SW_CACHE_VER in index.html (e.g. '20250526-2')
+ *   1. Bump SW_CACHE_VER in index.html (e.g. '20260527-2')
  *   2. Push to GitHub. On next page load the SW detects the version mismatch,
  *      deletes the old cache, fetches fresh assets, and notifies the page.
  */
@@ -19,6 +19,7 @@ const CACHE_NAME_PREFIX = 'sayitdefi-';
 const STATIC_ASSETS = [
   './',
   './index.html',
+  './manifest.json',
   './image1.jpeg',
   /* Ethers.js from CDN — cache it so the app works offline after first load */
   'https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js',
@@ -88,7 +89,7 @@ self.addEventListener('fetch', event => {
         /* Not in cache yet — fetch and store */
         try {
           const fresh = await fetch(request);
-          if (fresh.ok) cache.put(request, fresh.clone());
+          safeCachePut(cache, request, fresh);
           return fresh;
         } catch (err) {
           /* Offline and not cached — nothing we can do */
@@ -102,7 +103,7 @@ self.addEventListener('fetch', event => {
       /* Network-First for everything else (third-party images, IPFS, etc.) */
       try {
         const fresh = await fetch(request);
-        if (fresh.ok) cache.put(request, fresh.clone());
+        safeCachePut(cache, request, fresh);
         return fresh;
       } catch {
         const cached = await cache.match(request);
@@ -111,6 +112,20 @@ self.addEventListener('fetch', event => {
     })
   );
 });
+
+/* Safely put a response in the cache. Skips when the response is not
+   cacheable: non-2xx status, opaque (status 0), error type, or when the
+   request scheme is chrome-extension://, blob://, etc. cache.put would
+   otherwise throw a TypeError that we'd silently swallow. */
+function safeCachePut(cache, request, response) {
+  if (!response || !response.ok) return;
+  if (response.type === 'opaque' || response.type === 'error') return;
+  /* Cache API only supports http(s) schemes */
+  if (!request.url.startsWith('http')) return;
+  /* Clone first — body can only be consumed once */
+  try { cache.put(request, response.clone()); }
+  catch (err) { /* TypeError on unsupported request — silent */ }
+}
 
 /* ── Message: receive SW_CACHE_VER from the page ────────────────────────── */
 self.addEventListener('message', event => {
