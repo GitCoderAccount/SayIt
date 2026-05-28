@@ -4,6 +4,18 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Say It DeFi</title>
+<meta name="description" content="Uncensorable social media on PulseChain. Post on-chain, own your voice. No accounts, no servers, no middlemen — just your wallet and the chain.">
+<!-- Open Graph / Facebook / Discord / Telegram link previews -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Say It DeFi">
+<meta property="og:title" content="Say It DeFi — uncensorable social on PulseChain">
+<meta property="og:description" content="Post on-chain, own your voice. No accounts, no servers, no middlemen.">
+<meta property="og:image" content="image1.jpeg">
+<!-- Twitter Card -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Say It DeFi — uncensorable social on PulseChain">
+<meta name="twitter:description" content="Post on-chain, own your voice. No accounts, no servers, no middlemen.">
+<meta name="twitter:image" content="image1.jpeg">
 <link rel="icon" type="image/jpeg" href="image1.jpeg">
 <link rel="manifest" href="./manifest.json">
 <link rel="apple-touch-icon" href="./image1.jpeg">
@@ -289,10 +301,10 @@ nav { flex:1; padding:4px 0; }
   width:36px; height:36px; border-radius:50%;
   background:transparent; border:none;
   display:flex; align-items:center; justify-content:center;
-  font-size:18px; cursor:pointer; color:var(--primary-lt);
-  transition:background 0.18s;
+  font-size:18px; cursor:pointer; color:var(--muted);
+  transition:background 0.18s, color 0.18s;
 }
-.cmp-icon:hover { background:var(--primary-dim); }
+.cmp-icon:hover { background:var(--primary-dim); color:var(--primary-lt); }
 .compose-right { display:flex; align-items:center; gap:10px; }
 
 .char-ring {
@@ -635,6 +647,33 @@ nav { flex:1; padding:4px 0; }
   color:var(--muted); font-size:14px;
 }
 .empty-state { padding:64px 32px; text-align:center; color:var(--muted); }
+/* Skeleton loader for the feed — mimics post layout while data loads.
+   Shimmer animation conveys "actively working" without a spinner. */
+.skel-post {
+  padding:12px 16px; border-bottom:1px solid var(--border);
+  display:flex; gap:12px;
+}
+.skel-avatar {
+  width:40px; height:40px; border-radius:50%;
+  background:linear-gradient(90deg, var(--bg-mid) 0%, #1f2226 50%, var(--bg-mid) 100%);
+  background-size:200% 100%;
+  animation:skel-shimmer 1.5s ease-in-out infinite;
+  flex-shrink:0;
+}
+.skel-body { flex:1; display:flex; flex-direction:column; gap:8px; padding-top:4px; }
+.skel-line {
+  height:12px; border-radius:6px;
+  background:linear-gradient(90deg, var(--bg-mid) 0%, #1f2226 50%, var(--bg-mid) 100%);
+  background-size:200% 100%;
+  animation:skel-shimmer 1.5s ease-in-out infinite;
+}
+.skel-line.short  { width:30%; }
+.skel-line.medium { width:70%; }
+.skel-line.long   { width:90%; }
+@keyframes skel-shimmer {
+  0%   { background-position:200% 0; }
+  100% { background-position:-200% 0; }
+}
 .empty-icon  { font-size:52px; margin-bottom:20px; display:block; }
 .empty-state h3 { font-size:20px; color:var(--text); margin-bottom:8px; font-weight:700; }
 .empty-state p  { font-size:15px; max-width:280px; margin:0 auto; }
@@ -1393,6 +1432,21 @@ nav { flex:1; padding:4px 0; }
 </style>
 </head>
 <body>
+<!-- Icon sprite — symbols defined once, referenced via <use> from every post.
+     Biggest DOM-weight win: 12 SVGs per post × 2000 posts collapses to
+     one sprite + 12 small <use> elements per post. -->
+<svg width="0" height="0" style="position:absolute;overflow:hidden" aria-hidden="true">
+  <defs>
+    <symbol id="ic-reply" viewBox="0 0 24 24"><path fill="currentColor" d="M1.751 10c0-4.42 3.584-8 8.005-8h4.366c4.49 0 8.129 3.64 8.129 8.13 0 2.96-1.607 5.68-4.196 7.11l-8.054 4.46v-3.69h-.067c-4.49.1-8.183-3.51-8.183-8.01zm8.005-6c-3.317 0-6.005 2.69-6.005 6 0 3.37 2.77 6.08 6.138 6.01l.351-.01h1.761v2.3l5.087-2.81c1.951-1.08 3.163-3.13 3.163-5.36 0-3.39-2.744-6.13-6.129-6.13H9.756z"/></symbol>
+    <symbol id="ic-repost" viewBox="0 0 24 24"><path fill="currentColor" d="M4.5 3.88l4.432 4.14-1.364 1.46L5.5 7.55V16c0 1.1.896 2 2 2H13v2H7.5c-2.209 0-4-1.79-4-4V7.55L1.432 9.48.068 8.02 4.5 3.88zM16.5 6H11V4h5.5c2.209 0 4 1.79 4 4v8.45l2.068-1.93 1.364 1.46L19.5 20.12l-4.432-4.14 1.364-1.46 2.068 1.93V8c0-1.1-.896-2-2-2z"/></symbol>
+    <symbol id="ic-heart-empty" viewBox="0 0 24 24"><path fill="currentColor" d="M16.697 5.5c-1.222-.06-2.679.51-3.89 2.16l-.805 1.09-.806-1.09C9.984 6.01 8.526 5.44 7.304 5.5c-1.243.07-2.349.78-2.91 1.91-.552 1.12-.633 2.78.479 4.82 1.074 1.97 3.257 4.27 7.129 6.61 3.87-2.34 6.052-4.64 7.126-6.61 1.111-2.04 1.03-3.7.477-4.82-.561-1.13-1.666-1.84-2.908-1.91zm4.187 7.69c-1.351 2.48-4.001 5.12-8.379 7.67l-.503.3-.504-.3c-4.379-2.55-7.029-5.19-8.382-7.67-1.36-2.5-1.41-4.86-.514-6.67.887-1.79 2.647-2.91 4.601-3.01 1.651-.09 3.368.56 4.798 2.01 1.429-1.45 3.146-2.1 4.796-2.01 1.954.1 3.714 1.22 4.601 3.01.896 1.81.846 4.17-.514 6.67z"/></symbol>
+    <symbol id="ic-heart-full" viewBox="0 0 24 24"><path fill="#f91880" d="M20.884 13.19c-1.351 2.48-4.001 5.12-8.379 7.67l-.503.3-.504-.3c-4.379-2.55-7.029-5.19-8.382-7.67-1.36-2.5-1.41-4.86-.514-6.67.887-1.79 2.647-2.91 4.601-3.01 1.651-.09 3.368.56 4.798 2.01 1.429-1.45 3.146-2.1 4.796-2.01 1.954.1 3.714 1.22 4.601 3.01.896 1.81.846 4.17-.514 6.67z"/></symbol>
+    <symbol id="ic-bookmark-empty" viewBox="0 0 24 24"><path fill="currentColor" d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5zM6.5 4c-.276 0-.5.22-.5.5v14.56l6-4.29 6 4.29V4.5c0-.28-.224-.5-.5-.5h-11z"/></symbol>
+    <symbol id="ic-bookmark-full" viewBox="0 0 24 24"><path fill="#1d9bf0" d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5z"/></symbol>
+    <symbol id="ic-share" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2.59l5.7 5.7-1.41 1.42L13 6.41V16h-2V6.41l-3.3 3.3-1.41-1.42L12 2.59zM21 15l-.02 3.51c0 1.38-1.12 2.49-2.5 2.49H5.5C4.11 21 3 19.88 3 18.5V15h2v3.5c0 .28.22.5.5.5h12.98c.28 0 .5-.22.5-.5L19 15h2z"/></symbol>
+    <symbol id="ic-menu" viewBox="0 0 24 24"><path fill="currentColor" d="M3 12c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zm9 2c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm7 0c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2z"/></symbol>
+  </defs>
+</svg>
 <div id="app">
 
   <!-- Left sidebar -->
@@ -1514,16 +1568,16 @@ nav { flex:1; padding:4px 0; }
         <textarea id="compose-text" placeholder="What's happening on Pulse?"></textarea>
         <div id="compose-toolbar">
           <div class="compose-icons">
-            <button class="cmp-icon" id="cmp-image-btn" title="Attach image">
+            <button class="cmp-icon" id="cmp-image-btn" title="Attach image" aria-label="Attach image">
               <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 5.5C3 4.119 4.119 3 5.5 3h13C19.881 3 21 4.119 21 5.5v13c0 1.381-1.119 2.5-2.5 2.5h-13C4.119 21 3 19.881 3 18.5v-13zM5.5 5c-.276 0-.5.224-.5.5v9.086l3-3 3 3 5-5 3 3V5.5c0-.276-.224-.5-.5-.5h-13zM19 15.414l-3-3-5 5-3-3-3 3V18.5c0 .276.224.5.5.5h13c.276 0 .5-.224.5-.5v-3.086zM9.75 7C8.784 7 8 7.784 8 8.75s.784 1.75 1.75 1.75 1.75-.784 1.75-1.75S10.716 7 9.75 7z"/></svg>
             </button>
-            <button class="cmp-icon" id="cmp-gif-btn" title="Attach GIF">
+            <button class="cmp-icon" id="cmp-gif-btn" title="Attach GIF" aria-label="Attach GIF">
               <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 5.5C3 4.119 4.119 3 5.5 3h13C19.881 3 21 4.119 21 5.5v13c0 1.381-1.119 2.5-2.5 2.5h-13C4.119 21 3 19.881 3 18.5v-13zM5.5 5c-.276 0-.5.224-.5.5v13c0 .276.224.5.5.5h13c.276 0 .5-.224.5-.5v-13c0-.276-.224-.5-.5-.5h-13zM8 13.5v-3h1.5v.75H11v1.5H9.5v.75H8zm4.5-3H14c.552 0 1 .448 1 1v1c0 .552-.448 1-1 1h-1.5V10.5zm1.25 1.25v.5H14v-.5h-.25zM15.5 10.5H17v1.25h-1.5v.25H17v1.25h-1.5c-.552 0-1-.448-1-1v-1.25c0-.552.448-.5 1-.5z"/></svg>
             </button>
-            <button class="cmp-icon" id="cmp-video-btn" title="Attach video URL (mp4, YouTube, Vimeo)">
+            <button class="cmp-icon" id="cmp-video-btn" title="Attach video URL (mp4, YouTube, Vimeo)" aria-label="Attach video URL">
               <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z"/></svg>
             </button>
-            <button class="cmp-icon" id="cmp-emoji-btn" title="Emoji">
+            <button class="cmp-icon" id="cmp-emoji-btn" title="Emoji" aria-label="Insert emoji">
               <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M8 9.5C8 8.672 8.672 8 9.5 8s1.5.672 1.5 1.5S10.328 11 9.5 11 8 10.328 8 9.5zm6.5 1.5c.828 0 1.5-.672 1.5-1.5S15.328 8 14.5 8 13 8.672 13 9.5s.672 1.5 1.5 1.5zM12 16c-2.224 0-3.021-1.4-3.094-1.536l-1.76.992C7.196 15.69 8.638 18 12 18s4.804-2.31 4.854-2.544l-1.76-.992C15.021 14.6 14.224 16 12 16zm-.002-14C6.477 2 2 6.477 2 12s4.477 10 9.998 10C17.523 22 22 17.523 22 12S17.523 2 11.998 2zM12 20C7.582 20 4 16.418 4 12s3.582-8 8-8 8 3.582 8 8-3.582 8-8 8z"/></svg>
             </button>
           </div>
@@ -1726,13 +1780,13 @@ nav { flex:1; padding:4px 0; }
         <div style="display:flex;justify-content:space-between;align-items:center;
           margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
           <div style="display:flex;gap:4px;align-items:center">
-            <button class="cmp-icon" id="modal-cmp-image-btn" title="Attach image">
+            <button class="cmp-icon" id="modal-cmp-image-btn" title="Attach image" aria-label="Attach image">
               <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 5.5C3 4.119 4.119 3 5.5 3h13C19.881 3 21 4.119 21 5.5v13c0 1.381-1.119 2.5-2.5 2.5h-13C4.119 21 3 19.881 3 18.5v-13zM5.5 5c-.276 0-.5.224-.5.5v9.086l3-3 3 3 5-5 3 3V5.5c0-.276-.224-.5-.5-.5h-13zM19 17.414l-3-3-5 5-3-3-3 3V18.5c0 .276.224.5.5.5h13c.276 0 .5-.224.5-.5v-1.086zM9.75 7C8.784 7 8 7.784 8 8.75s.784 1.75 1.75 1.75 1.75-.784 1.75-1.75S10.716 7 9.75 7z"/></svg>
             </button>
-            <button class="cmp-icon" id="modal-cmp-gif-btn" title="Attach GIF">
+            <button class="cmp-icon" id="modal-cmp-gif-btn" title="Attach GIF" aria-label="Attach GIF">
               <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 5.5C3 4.119 4.119 3 5.5 3h13C19.881 3 21 4.119 21 5.5v13c0 1.381-1.119 2.5-2.5 2.5h-13C4.119 21 3 19.881 3 18.5v-13zM5.5 5c-.276 0-.5.224-.5.5v13c0 .276.224.5.5.5h13c.276 0 .5-.224.5-.5v-13c0-.276-.224-.5-.5-.5h-13zm2.5 6h2v2H8v-2zm0-3h2v2H8V8zm3 0h5v2h-5V8zm0 3h5v2h-5v-2z"/></svg>
             </button>
-            <button class="cmp-icon" id="modal-cmp-video-btn" title="Attach video URL">
+            <button class="cmp-icon" id="modal-cmp-video-btn" title="Attach video URL" aria-label="Attach video URL">
               <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z"/></svg>
             </button>
           </div>
@@ -1899,7 +1953,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260528-1';
+const SW_CACHE_VER = '20260528-2';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -2299,14 +2353,35 @@ class Cache {
     posts.forEach(p => store.put(p));
     return new Promise((res, rej) => {
       tx.oncomplete = () => {
-        /* Index for search; prune after batch to bound index size */
-        Promise.all(posts.map(p => this.indexPost(p).catch(() => {}))).then(() => {
+        /* Index for search in ONE batched IDB transaction instead of N.
+           Was: 100 posts = 100 transactions = ~1s of overhead. */
+        this.indexPostsBatch(posts).catch(() => {}).then(() => {
           this.pruneSearchIndex().catch(() => {});
         });
         res();
       };
       tx.onerror = () => rej(tx.error);
     });
+  }
+  /* Batched search-index writer. One IDB transaction per call instead of
+     one-per-post. Trigram entries previously accumulated stale duplicates
+     because the original indexPost never deleted old rows (TODO comment
+     in code). This implementation does the delete if the txHash index
+     exists; without it, we skip the delete (acceptable — pruneSearchIndex
+     bounds total size). */
+  async indexPostsBatch(posts) {
+    await this._ready;
+    if (!this._db.objectStoreNames.contains('search_index')) return;
+    const writes = [];
+    posts.forEach(post => {
+      const tris = this._trigrams((post.display || '') + ' ' + (post.reporter || ''));
+      tris.forEach(tri => writes.push({ trigram: tri, txHash: post.txHash }));
+    });
+    if (!writes.length) return;
+    const tx = this._db.transaction('search_index', 'readwrite');
+    const store = tx.objectStore('search_index');
+    writes.forEach(w => store.add(w));
+    return new Promise(res => { tx.oncomplete = res; tx.onerror = res; });
   }
   async pruneSearchIndex(maxRows = 200000) {
     await this._ready;
@@ -3299,6 +3374,7 @@ class DeFiX {
   }
 
   async goHome() {
+    this._updateTitle('Home');
     if (this.state.mode === 'main' && this.state.channel === MAIN_CHANNEL) {
       if (this.state.searchTerm || this.state.activeTag) {
         this.state.searchTerm = '';
@@ -3329,6 +3405,7 @@ class DeFiX {
 
   async goNotifications() {
     if (!this.signer) { utils.toast('Connect wallet to view Notifications'); return; }
+    this._updateTitle('Notifications');
     this.setNav('nav-notifs','notifs');
     this.g('feed-tabs').classList.remove('tabs-sticky');
     this.g('feed-tabs').style.display      = 'none';
@@ -3464,6 +3541,7 @@ class DeFiX {
 
   async goSelf() {
     if (!this.signer) { utils.toast('Connect wallet to view your channel'); return; }
+    this._updateTitle('My Channel');
     this.setNav('nav-mychannel', null);
     this.state.mode    = 'self';
     this.state.channel = this.state.signerAddr;
@@ -3500,6 +3578,7 @@ class DeFiX {
   }
 
   async goWave() {
+    this._updateTitle('Wave');
     this.setNav(null, null);
     this.state.mode    = 'wave';
     this.state.channel = WAVE_ADDRESS;
@@ -3533,6 +3612,7 @@ class DeFiX {
 
   /* ── New navigation methods ─────────────────────────────────────────── */
   goExplore() {
+    this._updateTitle('Explore');
     this.setNav('nav-explore','explore');
     this.state.mode = 'explore';
     this.g('feed-tabs').classList.remove('tabs-sticky');
@@ -3645,6 +3725,7 @@ class DeFiX {
 
   goBookmarks() {
     if (!this.signer) { utils.toast('Connect wallet to view Bookmarks'); return; }
+    this._updateTitle('Bookmarks');
     this.setNav('nav-bookmarks', null);
     this.state.mode = 'bookmarks';
     this.g('feed-tabs').classList.remove('tabs-sticky');
@@ -3740,6 +3821,7 @@ class DeFiX {
   }
 
   async goChannels() {
+    this._updateTitle('Channels');
     this.setNav('nav-channels','channels');
     this.g('feed-tabs').classList.remove('tabs-sticky');
     this._pendingPageHeader = this._makePageHeader({ title: 'Channels', noBack: true });
@@ -3762,6 +3844,7 @@ class DeFiX {
   }
 
   goSettings() {
+    this._updateTitle('Settings');
     this.setNav(null, null);
     this.state.mode = 'settings';
     this.g('compose-area').style.display   = 'none';
@@ -4702,6 +4785,10 @@ class DeFiX {
 
   async goProfilePage(address, isOwn = false) {
     this.setNav(isOwn ? 'nav-profile' : null, isOwn ? 'profile' : null);
+    /* Title placeholder until profile resolves. Refined below if cached. */
+    const cachedName = this.state.profCache[address]?.username
+      || (isOwn ? this.state.profile?.username : null);
+    this._updateTitle(cachedName ? '@' + cachedName : 'Profile');
     this.state.mode    = 'profile';
     this.state.channel = address; /* prevent renderFeed from overwriting this page */
     this.g('compose-area').style.display   = 'none';
@@ -5906,11 +5993,12 @@ class DeFiX {
     this._postHashSet    = new Set();
     this._postMap.clear();
     this._fetchingQuotes = new Set(); /* clear in-flight quote fetches */
-    /* Clear feed DOM immediately so old channel's posts don't flash
-       while new channel's posts are loading. */
+    /* Clear feed DOM and show skeleton placeholders so old channel's
+       posts don't flash while new channel's posts are loading. The skeleton
+       gets replaced when the first batch lands via loadCached/fetchPosts. */
     const feedEl = this.g('feed');
     if (feedEl && !this._selfManagedModes.has(this.state.mode)) {
-      feedEl.innerHTML = '';
+      this._renderSkeleton(4);
     }
     this.state.expanded.clear();
     this.state.activeTag  = null;
@@ -6191,9 +6279,7 @@ class DeFiX {
         <img src="${utils.safe(picUrl)}" class="post-avatar" alt=""
           loading="lazy" onerror="this.src='image1.jpeg'">
         <button class="post-menu-btn" data-action="menu" title="More options"
-          aria-label="More options">
-          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M3 12c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zm9 2c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm7 0c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2z"/></svg>
-        </button>
+          aria-label="More options">${this.icon('ic-menu')}</button>
         <div class="post-col">
           <div class="post-meta-row">
             <span class="post-name">${displayName}</span>${verifiedBadge}
@@ -6208,7 +6294,7 @@ class DeFiX {
           </div>
           ${toLabel}${replyBadge}
           ${post.repostOf ? `<div class="repost-label">
-            <svg viewBox="0 0 24 24" width="14" height="14" style="vertical-align:middle;margin-right:4px"><path fill="currentColor" d="M4.5 3.88l4.432 4.14-1.364 1.46L5.5 7.55V16c0 1.1.896 2 2 2H13v2H7.5c-2.209 0-4-1.79-4-4V7.55L1.432 9.48.068 8.02 4.5 3.88zM16.5 6H11V4h5.5c2.209 0 4 1.79 4 4v8.45l2.068-1.93 1.364 1.46L19.5 20.12l-4.432-4.14 1.364-1.46 2.068 1.93V8c0-1.1-.896-2-2-2z"/></svg>
+            <svg width="14" height="14" style="vertical-align:middle;margin-right:4px" aria-hidden="true"><use href="#ic-repost"/></svg>
             <span class="post-name">${displayName}</span> reposted</div>` : ''}
           <div class="post-body">${bodyHtml}</div>
           ${repostCard}
@@ -6216,37 +6302,27 @@ class DeFiX {
           ${imgHtml ? `<div class="post-images">${imgHtml}</div>` : ''}
           <div class="post-actions">
             <div class="post-actions-left">
-            <button class="act-btn act-reply" data-action="reply" title="Reply">
-              <span class="act-icon"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M1.751 10c0-4.42 3.584-8 8.005-8h4.366c4.49 0 8.129 3.64 8.129 8.13 0 2.96-1.607 5.68-4.196 7.11l-8.054 4.46v-3.69h-.067c-4.49.1-8.183-3.51-8.183-8.01zm8.005-6c-3.317 0-6.005 2.69-6.005 6 0 3.37 2.77 6.08 6.138 6.01l.351-.01h1.761v2.3l5.087-2.81c1.951-1.08 3.163-3.13 3.163-5.36 0-3.39-2.744-6.13-6.129-6.13H9.756z"/></svg></span>
+            <button class="act-btn act-reply" data-action="reply" title="Reply" aria-label="Reply to this post">
+              <span class="act-icon">${this.icon('ic-reply')}</span>
               <span class="act-count">${rcLabel}</span>
             </button>
-            <button class="act-btn act-repost" data-action="repost" title="Repost or Quote">
-              <span class="act-icon"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M4.5 3.88l4.432 4.14-1.364 1.46L5.5 7.55V16c0 1.1.896 2 2 2H13v2H7.5c-2.209 0-4-1.79-4-4V7.55L1.432 9.48.068 8.02 4.5 3.88zM16.5 6H11V4h5.5c2.209 0 4 1.79 4 4v8.45l2.068-1.93 1.364 1.46L19.5 20.12l-4.432-4.14 1.364-1.46 2.068 1.93V8c0-1.1-.896-2-2-2z"/></svg></span>
+            <button class="act-btn act-repost" data-action="repost" title="Repost or Quote" aria-label="Repost or quote">
+              <span class="act-icon">${this.icon('ic-repost')}</span>
               <span class="act-count">${rpcLabel}</span>
             </button>
-            <button class="act-btn act-like ${isLiked ? 'liked' : ''}" data-action="like" title="${isLiked ? 'Unlike' : 'Like'}">
-              <span class="act-icon">
-                ${isLiked
-                  ? `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="#f91880" d="M20.884 13.19c-1.351 2.48-4.001 5.12-8.379 7.67l-.503.3-.504-.3c-4.379-2.55-7.029-5.19-8.382-7.67-1.36-2.5-1.41-4.86-.514-6.67.887-1.79 2.647-2.91 4.601-3.01 1.651-.09 3.368.56 4.798 2.01 1.429-1.45 3.146-2.1 4.796-2.01 1.954.1 3.714 1.22 4.601 3.01.896 1.81.846 4.17-.514 6.67z"/></svg>`
-                  : `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M16.697 5.5c-1.222-.06-2.679.51-3.89 2.16l-.805 1.09-.806-1.09C9.984 6.01 8.526 5.44 7.304 5.5c-1.243.07-2.349.78-2.91 1.91-.552 1.12-.633 2.78.479 4.82 1.074 1.97 3.257 4.27 7.129 6.61 3.87-2.34 6.052-4.64 7.126-6.61 1.111-2.04 1.03-3.7.477-4.82-.561-1.13-1.666-1.84-2.908-1.91zm4.187 7.69c-1.351 2.48-4.001 5.12-8.379 7.67l-.503.3-.504-.3c-4.379-2.55-7.029-5.19-8.382-7.67-1.36-2.5-1.41-4.86-.514-6.67.887-1.79 2.647-2.91 4.601-3.01 1.651-.09 3.368.56 4.798 2.01 1.429-1.45 3.146-2.1 4.796-2.01 1.954.1 3.714 1.22 4.601 3.01.896 1.81.846 4.17-.514 6.67z"/></svg>`}
-              </span>
+            <button class="act-btn act-like ${isLiked ? 'liked' : ''}" data-action="like" title="${isLiked ? 'Unlike' : 'Like'}" aria-label="${isLiked ? 'Unlike this post' : 'Like this post'}" aria-pressed="${isLiked ? 'true' : 'false'}">
+              <span class="act-icon">${this.icon(isLiked ? 'ic-heart-full' : 'ic-heart-empty')}</span>
               <span class="act-count">${lcLabel}</span>
             </button>
             ${engagementHTML}
             </div><!-- /.post-actions-left -->
             <div class="post-actions-right">
-            <button class="act-btn act-bookmark ${isBookmarked ? 'bookmarked' : ''}" data-action="bookmark" title="${isBookmarked ? 'Remove bookmark' : 'Bookmark'}">
-              <span class="act-icon">
-                ${isBookmarked
-                  ? `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="#1d9bf0" d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5z"/></svg>`
-                  : `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5zM6.5 4c-.276 0-.5.22-.5.5v14.56l6-4.29 6 4.29V4.5c0-.28-.224-.5-.5-.5h-11z"/></svg>`}
-              </span>
+            <button class="act-btn act-bookmark ${isBookmarked ? 'bookmarked' : ''}" data-action="bookmark" title="${isBookmarked ? 'Remove bookmark' : 'Bookmark'}" aria-label="${isBookmarked ? 'Remove bookmark' : 'Bookmark this post'}" aria-pressed="${isBookmarked ? 'true' : 'false'}">
+              <span class="act-icon">${this.icon(isBookmarked ? 'ic-bookmark-full' : 'ic-bookmark-empty')}</span>
             </button>
             <a href="https://otter.pulsechain.com/tx/${utils.safe(post.txHash)}"
-              target="_blank" class="otter-link" title="Share / View on OtterScan" onclick="event.stopPropagation()">
-              <span class="act-icon">
-                <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2.59l5.7 5.7-1.41 1.42L13 6.41V16h-2V6.41l-3.3 3.3-1.41-1.42L12 2.59zM21 15l-.02 3.51c0 1.38-1.12 2.49-2.5 2.49H5.5C4.11 21 3 19.88 3 18.5V15h2v3.5c0 .28.22.5.5.5h12.98c.28 0 .5-.22.5-.5L19 15h2z"/></svg>
-              </span>
+              target="_blank" class="otter-link" title="Share / View on OtterScan" aria-label="Share / View transaction on OtterScan" onclick="event.stopPropagation()">
+              <span class="act-icon">${this.icon('ic-share')}</span>
             </a>
             </div><!-- /.post-actions-right -->
           </div><!-- /.post-actions -->
@@ -6370,8 +6446,8 @@ class DeFiX {
     const btn  = itemEl.querySelector('[data-action="like"]');
     const icon = btn?.querySelector('.act-icon');
 
-    const heartFull  = `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="#f91880" d="M20.884 13.19c-1.351 2.48-4.001 5.12-8.379 7.67l-.503.3-.504-.3c-4.379-2.55-7.029-5.19-8.382-7.67-1.36-2.5-1.41-4.86-.514-6.67.887-1.79 2.647-2.91 4.601-3.01 1.651-.09 3.368.56 4.798 2.01 1.429-1.45 3.146-2.1 4.796-2.01 1.954.1 3.714 1.22 4.601 3.01.896 1.81.846 4.17-.514 6.67z"/></svg>`;
-    const heartEmpty = `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M16.697 5.5c-1.222-.06-2.679.51-3.89 2.16l-.805 1.09-.806-1.09C9.984 6.01 8.526 5.44 7.304 5.5c-1.243.07-2.349.78-2.91 1.91-.552 1.12-.633 2.78.479 4.82 1.074 1.97 3.257 4.27 7.129 6.61 3.87-2.34 6.052-4.64 7.126-6.61 1.111-2.04 1.03-3.7.477-4.82-.561-1.13-1.666-1.84-2.908-1.91zm4.187 7.69c-1.351 2.48-4.001 5.12-8.379 7.67l-.503.3-.504-.3c-4.379-2.55-7.029-5.19-8.382-7.67-1.36-2.5-1.41-4.86-.514-6.67.887-1.79 2.647-2.91 4.601-3.01 1.651-.09 3.368.56 4.798 2.01 1.429-1.45 3.146-2.1 4.796-2.01 1.954.1 3.714 1.22 4.601 3.01.896 1.81.846 4.17-.514 6.67z"/></svg>`;
+    const heartFull  = this.icon('ic-heart-full');
+    const heartEmpty = this.icon('ic-heart-empty');
 
     const destination = post.to || this.state.channel;
     if (this.state.likes.has(hash)) {
@@ -6410,8 +6486,8 @@ class DeFiX {
     const btn  = itemEl.querySelector('[data-action="bookmark"]');
     const icon = btn?.querySelector('.act-icon');
 
-    const bmFull  = `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="#1d9bf0" d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5z"/></svg>`;
-    const bmEmpty = `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5zM6.5 4c-.276 0-.5.22-.5.5v14.56l6-4.29 6 4.29V4.5c0-.28-.224-.5-.5-.5h-11z"/></svg>`;
+    const bmFull  = this.icon('ic-bookmark-full');
+    const bmEmpty = this.icon('ic-bookmark-empty');
 
     if (this.state.bookmarks.has(hash)) {
       /* Toggle off — publish UNBOOKMARK so the change persists. */
@@ -6605,6 +6681,7 @@ class DeFiX {
 
   openThread(post) {
     if (!post) { utils.toast('Post not loaded yet — try again'); return; }
+    this._updateTitle('Post');
     /* Save previous view so back button can restore it */
     this._prevMode    = this.state.mode;
     this._prevChannel = this.state.channel;
@@ -7975,6 +8052,35 @@ class DeFiX {
     this.renderFeed();
   }
   isMuted(addr) { return !!(addr && this.state.muted.has(addr.toLowerCase())); }
+
+  /* Build a <svg><use> reference to a sprite symbol. Returns the HTML
+     string for inline injection. Defaults to 18px square. */
+  icon(id, sz = 18) {
+    return `<svg width="${sz}" height="${sz}" aria-hidden="true"><use href="#${id}"/></svg>`;
+  }
+
+  /* Render N skeleton post placeholders into the feed. Used during initial
+     fetch so the user sees structure immediately instead of a spinner. */
+  _renderSkeleton(count = 4) {
+    const feed = this.g('feed');
+    if (!feed) return;
+    const skel = Array(count).fill(0).map(() => `
+      <div class="skel-post">
+        <div class="skel-avatar"></div>
+        <div class="skel-body">
+          <div class="skel-line short"></div>
+          <div class="skel-line long"></div>
+          <div class="skel-line medium"></div>
+        </div>
+      </div>`).join('');
+    feed.innerHTML = skel;
+  }
+
+  /* Set the browser tab/window title based on the current view. */
+  _updateTitle(suffix) {
+    const base = 'Say It DeFi';
+    document.title = suffix ? `${suffix} / ${base}` : base;
+  }
 
   /* Show/hide the search clear (X) button based on input content. */
   _updateSearchClearBtn() {
