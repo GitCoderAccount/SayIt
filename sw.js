@@ -32,7 +32,28 @@ const BYPASS_CACHE_HOSTS = new Set([
   'scan.pulsechain.com',
 ]);
 
+/* Skip caching cross-origin responses larger than this — prevents the cache
+   from growing unbounded when users browse channels with lots of large
+   images, videos, or IPFS payloads. Same-origin responses (the app shell)
+   are always cached regardless of size. */
+const MAX_CACHE_BYTES = 5 * 1024 * 1024; /* 5 MB */
+
+/* Allowed cross-origin host prefixes for static cache. Tight match so a
+   future ethers version bump doesn't accidentally cache a different lib. */
+const STATIC_CDN_PATHS = [
+  'https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/',
+];
+
 let currentCacheName = CACHE_NAME_PREFIX + 'v1'; /* overwritten by CACHE_VER message */
+
+/* Fetch with a hard timeout — prevents a hung network from blocking
+   indefinitely before falling back to cache. */
+function fetchWithTimeout(request, ms = 10000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  return fetch(request, { signal: ctrl.signal })
+    .finally(() => clearTimeout(timer));
+}
 
 /* ── Install: pre-cache the shell ───────────────────────────────────────── */
 self.addEventListener('install', event => {
@@ -79,16 +100,19 @@ self.addEventListener('fetch', event => {
 
   event.respondWith(
     caches.open(currentCacheName).then(async cache => {
-      /* Cache-First for static assets (same origin + ethers CDN) */
+      /* Cache-First for static assets (same origin + whitelisted CDN paths).
+         Exact-prefix match on CDN URLs avoids accidentally caching a
+         different library when the ethers path/version changes. */
       const isStatic = url.origin === self.location.origin ||
-        url.href.includes('cdnjs.cloudflare.com/ajax/libs/ethers');
+        STATIC_CDN_PATHS.some(prefix => url.href.startsWith(prefix));
 
       if (isStatic) {
         const cached = await cache.match(request);
         if (cached) return cached;
-        /* Not in cache yet — fetch and store */
+        /* Not in cache yet — fetch and store. 10s timeout prevents a
+           hung CDN from blocking the page indefinitely. */
         try {
-          const fresh = await fetch(request);
+          const fresh = await fetchWithTimeout(request, 10000);
           safeCachePut(cache, request, fresh);
           return fresh;
         } catch (err) {
@@ -100,9 +124,11 @@ self.addEventListener('fetch', event => {
         }
       }
 
-      /* Network-First for everything else (third-party images, IPFS, etc.) */
+      /* Network-First for everything else (third-party images, IPFS, etc.).
+         10s timeout — if the network is slow, fall back to cache instead
+         of hanging. */
       try {
-        const fresh = await fetch(request);
+        const fresh = await fetchWithTimeout(request, 10000);
         safeCachePut(cache, request, fresh);
         return fresh;
       } catch {
@@ -116,12 +142,29 @@ self.addEventListener('fetch', event => {
 /* Safely put a response in the cache. Skips when the response is not
    cacheable: non-2xx status, opaque (status 0), error type, or when the
    request scheme is chrome-extension://, blob://, etc. cache.put would
-   otherwise throw a TypeError that we'd silently swallow. */
+   otherwise throw a TypeError that we'd silently swallow.
+
+   Also skips cross-origin responses larger than MAX_CACHE_BYTES so the
+   cache can't grow unbounded from browsing many image-heavy channels. */
 function safeCachePut(cache, request, response) {
   if (!response || !response.ok) return;
   if (response.type === 'opaque' || response.type === 'error') return;
   /* Cache API only supports http(s) schemes */
   if (!request.url.startsWith('http')) return;
+
+  /* Size check — only for cross-origin responses. Same-origin app shell
+     files are always cached (typically small). Uses Content-Length when
+     present; absence is treated as "unknown, allow" to avoid skipping
+     legitimate small responses on servers that don't send the header. */
+  const isSameOrigin = (() => {
+    try { return new URL(request.url).origin === self.location.origin; }
+    catch { return false; }
+  })();
+  if (!isSameOrigin) {
+    const cl = response.headers.get('content-length');
+    if (cl && parseInt(cl, 10) > MAX_CACHE_BYTES) return;
+  }
+
   /* Clone first — body can only be consumed once */
   try { cache.put(request, response.clone()); }
   catch (err) { /* TypeError on unsupported request — silent */ }
