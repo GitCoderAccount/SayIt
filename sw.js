@@ -173,7 +173,13 @@ function safeCachePut(cache, request, response) {
 /* ── Message: receive SW_CACHE_VER from the page ────────────────────────── */
 self.addEventListener('message', event => {
   if (event.data?.type !== 'CACHE_VER') return;
-  const newCacheName = CACHE_NAME_PREFIX + event.data.ver;
+  /* Sanitize ver — strip anything that isn't alphanumeric/dash so a
+     compromised page can't poison the cache namespace with path traversal
+     or special characters. Reject empty/oversized values too. */
+  const rawVer = String(event.data.ver || '');
+  const cleanVer = rawVer.replace(/[^A-Za-z0-9\-]/g, '').slice(0, 32);
+  if (!cleanVer) return;
+  const newCacheName = CACHE_NAME_PREFIX + cleanVer;
   if (newCacheName === currentCacheName) return;
 
   console.log(`[SW] Cache version changed: ${currentCacheName} -> ${newCacheName}`);
