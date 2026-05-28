@@ -269,17 +269,6 @@ nav { flex:1; padding:4px 0; }
 }
 .compose-body { flex:1; min-width:0; }
 
-#audience-btn {
-  display:none; align-items:center; gap:4px;
-  padding:3px 12px; margin-bottom:8px;
-  background:transparent; border:1px solid var(--primary);
-  border-radius:9999px; color:var(--primary-lt);
-  font-size:13px; font-weight:700; cursor:pointer;
-  transition:background 0.18s;
-}
-#audience-btn:hover { background:var(--primary-dim); }
-#compose-area.focused #audience-btn { display:inline-flex; }
-
 #compose-text {
   width:100%; min-height:52px; max-height:400px;
   padding:4px 0; background:transparent; border:none;
@@ -1012,9 +1001,6 @@ nav { flex:1; padding:4px 0; }
 .auto-textarea:focus { outline:none; border-color:var(--primary); }
 .auto-textarea::placeholder { color:var(--muted); }
 .thread-reply-item { padding:12px 0; border-bottom:1px solid var(--border); }
-#thread-loading {
-  padding:16px; text-align:center; color:var(--muted); font-size:14px; display:none;
-}
 
 /* Toast */
 #toast {
@@ -1913,7 +1899,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260527-3';
+const SW_CACHE_VER = '20260527-4';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -2799,6 +2785,24 @@ class DeFiX {
       if (addr) utils.copyToClipboard(addr, 'Address copied!');
     };
 
+    /* Escape in the search input clears the search (Twitter parity).
+       Global keydown handler early-returns for INPUT/TEXTAREA, so we wire
+       Escape on the input itself. */
+    const _searchInputEl = g('search-input');
+    if (_searchInputEl) {
+      _searchInputEl.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && _searchInputEl.value) {
+          e.preventDefault();
+          _searchInputEl.value = '';
+          this.state.searchTerm = '';
+          this.state.activeTag  = null;
+          this._updateSearchClearBtn();
+          if (!this._selfManagedModes.has(this.state.mode)) this.renderFeed();
+          _searchInputEl.blur();
+        }
+      });
+    }
+
     /* Search clear (X) button — wire BEFORE the oninput handler so it's
        available when the handler calls _updateSearchClearBtn. */
     const searchClear = g('search-clear');
@@ -2813,22 +2817,23 @@ class DeFiX {
         inp.focus();
       };
     }
-    g('search-input').oninput = utils.debounce(() => {
+    g('search-input').oninput = utils.debounce(async () => {
       const term = g('search-input').value.trim();
       this.state.searchTerm = term.toLowerCase();
       this.state.activeTag  = null;
       /* Search input is dead on self-managed pages (renderFeed bails early).
          If the user is typing and we're on Notifications/Bookmarks/etc,
-         switch to home so they can actually see results. */
+         switch to home so they can actually see results. We await goHome()
+         so resetAndFetch finishes clearing state BEFORE we re-apply the
+         search term — otherwise resetAndFetch would clobber it (race). */
       if (term && this._selfManagedModes.has(this.state.mode)) {
-        this.goHome();
-        /* Re-apply the term after goHome resets it */
-        setTimeout(() => {
-          this.state.searchTerm = term.toLowerCase();
-          g('search-input').value = term;
-          this._updateSearchClearBtn();
-          this.renderFeed();
-        }, 50);
+        await this.goHome();
+        /* goHome / resetAndFetch already cleared state.searchTerm and the
+           input value. Re-apply, then render. */
+        this.state.searchTerm = term.toLowerCase();
+        g('search-input').value = term;
+        this._updateSearchClearBtn();
+        this.renderFeed();
         return;
       }
       this._updateSearchClearBtn();
@@ -3239,6 +3244,7 @@ class DeFiX {
         this.state.activeTag  = null;
         const si = this.g('search-input');
         if (si) si.value = '';
+        this._updateSearchClearBtn();
         this.renderFeed();
       }
       window.scrollTo({ top: 0, behavior: 'smooth' }); return;
@@ -3258,11 +3264,6 @@ class DeFiX {
     this.setChActive('ch-main');
     this.updateChLabel();
     await this.resetAndFetch();
-  }
-
-  async goInbox() {
-    /* Legacy — redirect to Channels view */
-    this.goChannels();
   }
 
   async goNotifications() {
@@ -3605,17 +3606,19 @@ class DeFiX {
     }
     /* Show a loading state immediately, then resolve bookmarks from
        memory + IDB. Avoids the dead "Bookmarks loading…" state when the
-       posts aren't in current state.posts. */
+       posts aren't in current state.posts. The _bkLoadToken guards against
+       two rapid Bookmarks clicks racing to write feed.innerHTML. */
     this.g('feed').innerHTML = bkHeader +
       `<div class="placeholder-view"><span class="ph-icon">🔖</span><h2>Loading bookmarks…</h2><p>Pulling from your local cache.</p></div>`;
-    this._loadBookmarksFromCache(bkHeader);
+    this._bkLoadToken = (this._bkLoadToken || 0) + 1;
+    this._loadBookmarksFromCache(bkHeader, this._bkLoadToken);
   }
 
   /* Resolve every bookmark hash against state.posts first, then fall back
      to IDB. Posts found only in IDB are added to _postMap so action menus
      work normally. Bookmarks pointing to chain-only data (never cached)
      are listed as a small placeholder at the end. */
-  async _loadBookmarksFromCache(bkHeader) {
+  async _loadBookmarksFromCache(bkHeader, myToken) {
     const wantedHashes = [...this.state.bookmarks];
     const inMemory = new Map();
     this.state.posts.forEach(p => {
@@ -3630,8 +3633,11 @@ class DeFiX {
         cached.forEach(p => { if (!inMemory.has(p.txHash)) fromIDB.set(p.txHash, p); });
       } catch { /* IDB unavailable — skip */ }
     }
-    /* Only proceed if the user is still on the Bookmarks view */
+    /* Only proceed if (a) the user is still on Bookmarks AND (b) we haven't
+       been superseded by a later click. Either condition failing means our
+       writes would clobber a more recent state. */
     if (this.state.mode !== 'bookmarks') return;
+    if (myToken !== this._bkLoadToken) return;
     /* Combine, sort newest-first by timestamp */
     const all = [...inMemory.values(), ...fromIDB.values()]
       .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
@@ -5376,9 +5382,6 @@ class DeFiX {
 
     g('profile-modal').classList.add('open');
   }
-
-  /* Replaces old showProfileView — no longer needed as page view */
-  showProfileView() { this.openProfileModal(); }
 
   async saveProfile() {
     const g = this.g.bind(this);
