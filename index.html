@@ -486,6 +486,13 @@ nav { flex:1; padding:4px 0; }
   display:flex; align-items:center; justify-content:center;
   font-size:17px; transition:background 0.18s;
 }
+/* On touch devices, hit area expands to 44px (Apple/Google accessibility
+   minimum). Icon stays the same visual size; the radius/padding grow so
+   fat-finger taps land reliably without making the icon look oversized. */
+@media (hover: none) {
+  .act-icon { width:44px; height:44px; }
+  .post-menu-btn { width:44px; height:44px; }
+}
 .act-count { font-size:13px; }
 .act-reply:hover           { color:var(--primary-lt); }
 .act-reply:hover .act-icon { background:var(--primary-dim); }
@@ -647,6 +654,43 @@ nav { flex:1; padding:4px 0; }
   color:var(--muted); font-size:14px;
 }
 .empty-state { padding:64px 32px; text-align:center; color:var(--muted); }
+/* Mobile search affordance on the Explore page — sidebar search is hidden
+   below 900px so users would otherwise have no way to search. Hidden on
+   desktop where the sidebar search input is available. */
+.explore-search-wrap {
+  position:relative;
+  margin:12px 16px;
+  display:none;
+}
+.explore-search-wrap .search-icon {
+  position:absolute; left:14px; top:50%;
+  transform:translateY(-50%); font-size:16px;
+  color:var(--muted); pointer-events:none;
+}
+.explore-search-input {
+  width:100%; padding:10px 36px 10px 44px;
+  background:rgba(255,255,255,0.1); border:1px solid transparent;
+  border-radius:9999px; color:var(--text);
+  font-size:15px; outline:none; transition:all 0.2s;
+}
+.explore-search-input:focus {
+  background:var(--bg-dark); border-color:var(--primary);
+}
+.explore-search-input::placeholder { color:var(--muted); }
+.explore-search-clear {
+  position:absolute; right:6px; top:50%;
+  transform:translateY(-50%);
+  width:24px; height:24px; border-radius:50%;
+  background:var(--primary); color:#fff; border:none;
+  font-size:12px; line-height:1;
+  cursor:pointer; display:flex;
+  align-items:center; justify-content:center;
+  transition:background 0.15s;
+}
+.explore-search-clear:hover { background:var(--primary-lt); }
+@media (max-width:900px) {
+  .explore-search-wrap { display:block; }
+}
 /* Skeleton loader for the feed — mimics post layout while data loads.
    Shimmer animation conveys "actively working" without a spinner. */
 .skel-post {
@@ -727,9 +771,10 @@ nav { flex:1; padding:4px 0; }
 .search-wrap input.has-value { padding-right:38px; }
 
 .sb-card {
-  /* X/Twitter: "What's happening" cards have the same background as sidebar,
-     just a subtle border. bg-card is slightly lighter than bg-dark. */
-  background:var(--bg-card); border:1px solid var(--border);
+  /* Match the main column / sidebar background (pure black) so the cards
+     blend into the page instead of appearing as a separate elevated
+     surface. The border is what separates them visually. */
+  background:var(--bg-dark); border:1px solid var(--border);
   border-radius:16px;
   /* Flex column so title stays pinned and inner list scrolls.
      NO overflow:hidden — that was clipping content in cards that don't
@@ -1953,7 +1998,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260528-2';
+const SW_CACHE_VER = '20260528-3';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -2521,7 +2566,7 @@ class Cache {
     });
   }
   async pruneIfStale(maxAgeDays = 7) {
-    const last = parseInt(localStorage.getItem(PRUNE_KEY) || '0', 10);
+    const last = parseInt(utils.safeLS.get(PRUNE_KEY, '0'), 10);
     if (Date.now() - last < 86_400_000) return;
     await this._ready;
     const cutoff = new Date(Date.now() - maxAgeDays * 86_400_000).toISOString();
@@ -2689,8 +2734,8 @@ class DeFiX {
   }
   _restoreDraft() {
     /* Try per-channel key first, then fall back to legacy global key */
-    const draft = localStorage.getItem(this._draftKey())
-                || localStorage.getItem(DRAFT_KEY)
+    const draft = utils.safeLS.get(this._draftKey())
+                || utils.safeLS.get(DRAFT_KEY)
                 || '';
     if (!draft) return;
     this.g('compose-text').value = draft;
@@ -3701,8 +3746,22 @@ class DeFiX {
         }).join('')
       : '<div style="padding:16px;color:var(--muted)">Visit some channels to see them here.</div>';
 
+    /* Mobile search affordance — sidebar search is hidden at ≤900px so
+       this is the only way to search on mobile. Visible via CSS media query;
+       desktop users see the sidebar search instead. */
+    const searchTermVal = utils.safe(this.state.searchTerm || '');
+    const mobileSearchHTML = `
+      <div class="explore-search-wrap">
+        <span class="search-icon">🔎</span>
+        <input type="text" id="explore-search-input" class="explore-search-input"
+          placeholder="Search posts" autocomplete="off" value="${searchTermVal}"
+          aria-label="Search posts">
+        ${searchTermVal ? `<button class="explore-search-clear" id="explore-search-clear"
+          type="button" title="Clear search" aria-label="Clear search">✕</button>` : ''}
+      </div>`;
     this.g('feed').innerHTML = _headerHTML + `
       <div class="explore-page">
+        ${mobileSearchHTML}
         <div class="explore-section">
           <div class="explore-section-title">📈 Trending</div>
           ${tagHTML}
@@ -3721,6 +3780,55 @@ class DeFiX {
           </button>
         </div>
       </div>`;
+    /* Wire the mobile search input now that the DOM exists. */
+    setTimeout(() => this._wireExploreSearch(), 0);
+  }
+
+  /* Wire the mobile search input on Explore. Same behavior as the sidebar
+     search: typing routes to Home with the search term applied. Both
+     inputs stay synced. */
+  _wireExploreSearch() {
+    const inp = this.g('explore-search-input');
+    const clr = this.g('explore-search-clear');
+    if (!inp) return;
+    inp.oninput = utils.debounce(async () => {
+      const term = inp.value.trim();
+      this.state.searchTerm = term.toLowerCase();
+      this.state.activeTag  = null;
+      const si = this.g('search-input');
+      if (si) si.value = term;
+      this._updateSearchClearBtn();
+      if (term) {
+        await this.goHome();
+        this.state.searchTerm = term.toLowerCase();
+        if (si) si.value = term;
+        this._updateSearchClearBtn();
+        this.renderFeed();
+      }
+    }, 250);
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && inp.value) {
+        e.preventDefault();
+        inp.value = '';
+        this.state.searchTerm = '';
+        const si = this.g('search-input');
+        if (si) si.value = '';
+        this._updateSearchClearBtn();
+        inp.blur();
+      }
+    });
+    if (clr) {
+      clr.onclick = () => {
+        inp.value = '';
+        this.state.searchTerm = '';
+        this.state.activeTag  = null;
+        const si = this.g('search-input');
+        if (si) si.value = '';
+        this._updateSearchClearBtn();
+        if (this.state.mode === 'explore') this.goExplore();
+        inp.focus();
+      };
+    }
   }
 
   goBookmarks() {
@@ -4048,7 +4156,7 @@ class DeFiX {
 
   /* ── Settings page ──────────────────────────────────────────────────── */
   _getSettings() {
-    try { return JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); }
+    try { return JSON.parse(utils.safeLS.get(SETTINGS_KEY, '{}')); }
     catch { return {}; }
   }
   _getPostCap() {
@@ -4360,7 +4468,7 @@ class DeFiX {
 
   async checkNotifBadge() {
     if (!this.state.signerAddr) return;
-    const lastCheck = parseInt(localStorage.getItem(LAST_CHECK_KEY) || '0', 10);
+    const lastCheck = parseInt(utils.safeLS.get(LAST_CHECK_KEY, '0'), 10);
     try {
       const raw   = await this.apiFetch(this.state.signerAddr, 1);
       const count = raw.filter(tx => {
@@ -4435,7 +4543,7 @@ class DeFiX {
     try {
       const prov = new ethers.providers.Web3Provider(eth);
       const accs = await prov.listAccounts();
-      if (accs.length && localStorage.getItem('defixConnected') === '1') {
+      if (accs.length && utils.safeLS.get('defixConnected') === '1') {
         this.signer = prov.getSigner();
         this.state.signerAddr = (await this.signer.getAddress()).toLowerCase();
         this._registerWalletListeners();
@@ -4462,9 +4570,20 @@ class DeFiX {
       await this.afterConnect();
       utils.toast('Wallet connected ✓');
     } catch (err) {
+      const msg = err.message || String(err);
+      /* User rejected the MetaMask popup. EIP-1193 code 4001 or
+         'ACTION_REJECTED' / common message patterns. Show a friendly
+         toast instead of dumping the raw error text. */
+      const isRejection = err.code === 4001 ||
+        err.code === 'ACTION_REJECTED' ||
+        /user (denied|rejected)/i.test(msg) ||
+        /rejected (the )?(transaction|request)/i.test(msg);
+      if (isRejection) {
+        utils.toast('Connection cancelled');
+        return;
+      }
       /* Extension conflict errors look like "Cannot redefine property" —
          they come from third-party extensions, not from our code. */
-      const msg = err.message || String(err);
       if (msg.includes('redefine') || msg.includes('defineProperty')) {
         utils.toast('Wallet extension conflict detected. Try disabling other wallet extensions and reload.');
       } else {
@@ -4493,7 +4612,7 @@ class DeFiX {
     ]);
     this.checkNotifBadge();
     /* Background: rebuild channel history if not scanned recently */
-    const lastScan = parseInt(localStorage.getItem(CHANNELS_KEY) || '0', 10);
+    const lastScan = parseInt(utils.safeLS.get(CHANNELS_KEY, '0'), 10);
     if (Date.now() - lastScan > 86_400_000) {
       setTimeout(() => this.rebuildChannelHistory(), 3000);
     }
@@ -5602,6 +5721,12 @@ class DeFiX {
     if (coverUrl && !coverUrl.startsWith('https://')) {
       utils.toast('Cover photo must be an https:// URL'); return;
     }
+    /* Website: must be http(s)://, or empty. Renders are defensively
+       sanitized via utils.safeUrl in round 34, but catching it here gives
+       the user feedback instead of silently dropping their entry. */
+    if (website && !/^https?:\/\//i.test(website)) {
+      utils.toast('Website must start with http:// or https://'); return;
+    }
     if (picUrl) {
       /* Check image loads AND is not excessively large (> 8MB of pixels) */
       const loadOk = await new Promise(r => {
@@ -5811,7 +5936,7 @@ class DeFiX {
 
   parseTxs(txs) {
     const { mode, channel, signerAddr } = this.state;
-    const lastCheck = parseInt(localStorage.getItem(LAST_CHECK_KEY) || '0', 10);
+    const lastCheck = parseInt(utils.safeLS.get(LAST_CHECK_KEY, '0'), 10);
     return txs.reduce((acc, tx) => {
       if (!tx.input || tx.input === '0x') return acc;
       const from = tx.from?.toLowerCase();
@@ -7326,7 +7451,7 @@ class DeFiX {
      indexPost() is idempotent (it appends; we check before running). */
   _rebuildSearchIndex() {
     const key = 'sayit_idx_v1';
-    if (localStorage.getItem(key)) return;
+    if (utils.safeLS.get(key)) return;
     const run = async () => {
       try {
         const posts = await this.cache.getPosts(() => true);
