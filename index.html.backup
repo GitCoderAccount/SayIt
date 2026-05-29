@@ -4,6 +4,18 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Say It DeFi</title>
+<meta name="description" content="Uncensorable social media on PulseChain. Post on-chain, own your voice. No accounts, no servers, no middlemen — just your wallet and the chain.">
+<!-- Open Graph / Facebook / Discord / Telegram link previews -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Say It DeFi">
+<meta property="og:title" content="Say It DeFi — uncensorable social on PulseChain">
+<meta property="og:description" content="Post on-chain, own your voice. No accounts, no servers, no middlemen.">
+<meta property="og:image" content="image1.jpeg">
+<!-- Twitter Card -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Say It DeFi — uncensorable social on PulseChain">
+<meta name="twitter:description" content="Post on-chain, own your voice. No accounts, no servers, no middlemen.">
+<meta name="twitter:image" content="image1.jpeg">
 <link rel="icon" type="image/jpeg" href="image1.jpeg">
 <link rel="manifest" href="./manifest.json">
 <link rel="apple-touch-icon" href="./image1.jpeg">
@@ -49,28 +61,27 @@ a { color:inherit; text-decoration:none; }
   position:sticky; top:0; height:100vh;
   display:flex; flex-direction:column;
   background:var(--bg-dark);
-  border-right:1px solid var(--border);
   padding:0;
-  /* Twitter left sidebar never scrolls independently */
+  /* Twitter left sidebar never scrolls independently. The divider line
+     between left sidebar and main is owned by #main (border-left) to
+     match X's canonical structure — the line "belongs to" the center
+     column, not the sidebar. */
   overflow:hidden;
 }
 .logo-wrap {
-  display:flex; align-items:center; gap:10px;
+  display:flex; align-items:center;
   padding:12px 16px 8px; cursor:pointer;
+  border-radius:9999px;
+  width:fit-content;
+  transition:background 0.2s;
 }
-.logo-img-wrap {
-  width:52px; height:52px; border-radius:50%;
-  display:flex; align-items:center; justify-content:center;
-  transition:background 0.2s; flex-shrink:0;
-}
-.logo-wrap:hover .logo-img-wrap { background:var(--primary-hov); }
-.logo-wrap img {
-  width:44px; height:44px; border-radius:50%;
-  border:2px solid var(--primary); object-fit:cover;
-}
-.site-name {
-  font-size:12px; font-weight:800; letter-spacing:1.5px;
-  text-transform:uppercase; color:var(--primary-lt); line-height:1.2;
+.logo-wrap:hover { background:var(--primary-hov); }
+/* SVG wordmark — sits where the old logo+text combo was.
+   Fixed dimensions matched to viewBox aspect ratio so the SVG scales
+   crisply at any DPR. */
+.logo-svg {
+  width:170px; height:34px;
+  display:block; flex-shrink:0;
 }
 nav { flex:1; padding:4px 0; }
 .nav-btn {
@@ -154,6 +165,11 @@ nav { flex:1; padding:4px 0; }
 #main {
   flex:0 0 600px; width:600px;
   background:var(--bg-dark);
+  /* Both side borders — matches X canonical: center column is bracketed
+     by two vertical lines. The left line was previously owned by
+     sidebar-left's border-right; we moved ownership to main so the
+     divider visually moves with the center column. */
+  border-left:1px solid var(--border);
   border-right:1px solid var(--border);
   display:flex; flex-direction:column;
 }
@@ -289,10 +305,10 @@ nav { flex:1; padding:4px 0; }
   width:36px; height:36px; border-radius:50%;
   background:transparent; border:none;
   display:flex; align-items:center; justify-content:center;
-  font-size:18px; cursor:pointer; color:var(--primary-lt);
-  transition:background 0.18s;
+  font-size:18px; cursor:pointer; color:var(--muted);
+  transition:background 0.18s, color 0.18s;
 }
-.cmp-icon:hover { background:var(--primary-dim); }
+.cmp-icon:hover { background:var(--primary-dim); color:var(--primary-lt); }
 .compose-right { display:flex; align-items:center; gap:10px; }
 
 .char-ring {
@@ -474,6 +490,13 @@ nav { flex:1; padding:4px 0; }
   display:flex; align-items:center; justify-content:center;
   font-size:17px; transition:background 0.18s;
 }
+/* On touch devices, hit area expands to 44px (Apple/Google accessibility
+   minimum). Icon stays the same visual size; the radius/padding grow so
+   fat-finger taps land reliably without making the icon look oversized. */
+@media (hover: none) {
+  .act-icon { width:44px; height:44px; }
+  .post-menu-btn { width:44px; height:44px; }
+}
 .act-count { font-size:13px; }
 .act-reply:hover           { color:var(--primary-lt); }
 .act-reply:hover .act-icon { background:var(--primary-dim); }
@@ -635,6 +658,70 @@ nav { flex:1; padding:4px 0; }
   color:var(--muted); font-size:14px;
 }
 .empty-state { padding:64px 32px; text-align:center; color:var(--muted); }
+/* Mobile search affordance on the Explore page — sidebar search is hidden
+   below 900px so users would otherwise have no way to search. Hidden on
+   desktop where the sidebar search input is available. */
+.explore-search-wrap {
+  position:relative;
+  margin:12px 16px;
+  display:none;
+}
+.explore-search-wrap .search-icon {
+  position:absolute; left:14px; top:50%;
+  transform:translateY(-50%); font-size:16px;
+  color:var(--muted); pointer-events:none;
+}
+.explore-search-input {
+  width:100%; padding:10px 36px 10px 44px;
+  background:rgba(255,255,255,0.1); border:1px solid transparent;
+  border-radius:9999px; color:var(--text);
+  font-size:15px; outline:none; transition:all 0.2s;
+}
+.explore-search-input:focus {
+  background:var(--bg-dark); border-color:var(--primary);
+}
+.explore-search-input::placeholder { color:var(--muted); }
+.explore-search-clear {
+  position:absolute; right:6px; top:50%;
+  transform:translateY(-50%);
+  width:24px; height:24px; border-radius:50%;
+  background:var(--primary); color:#fff; border:none;
+  font-size:12px; line-height:1;
+  cursor:pointer; display:flex;
+  align-items:center; justify-content:center;
+  transition:background 0.15s;
+}
+.explore-search-clear:hover { background:var(--primary-lt); }
+@media (max-width:900px) {
+  .explore-search-wrap { display:block; }
+}
+/* Skeleton loader for the feed — mimics post layout while data loads.
+   Shimmer animation conveys "actively working" without a spinner. */
+.skel-post {
+  padding:12px 16px; border-bottom:1px solid var(--border);
+  display:flex; gap:12px;
+}
+.skel-avatar {
+  width:40px; height:40px; border-radius:50%;
+  background:linear-gradient(90deg, var(--bg-mid) 0%, #1f2226 50%, var(--bg-mid) 100%);
+  background-size:200% 100%;
+  animation:skel-shimmer 1.5s ease-in-out infinite;
+  flex-shrink:0;
+}
+.skel-body { flex:1; display:flex; flex-direction:column; gap:8px; padding-top:4px; }
+.skel-line {
+  height:12px; border-radius:6px;
+  background:linear-gradient(90deg, var(--bg-mid) 0%, #1f2226 50%, var(--bg-mid) 100%);
+  background-size:200% 100%;
+  animation:skel-shimmer 1.5s ease-in-out infinite;
+}
+.skel-line.short  { width:30%; }
+.skel-line.medium { width:70%; }
+.skel-line.long   { width:90%; }
+@keyframes skel-shimmer {
+  0%   { background-position:200% 0; }
+  100% { background-position:-200% 0; }
+}
 .empty-icon  { font-size:52px; margin-bottom:20px; display:block; }
 .empty-state h3 { font-size:20px; color:var(--text); margin-bottom:8px; font-weight:700; }
 .empty-state p  { font-size:15px; max-width:280px; margin:0 auto; }
@@ -688,9 +775,10 @@ nav { flex:1; padding:4px 0; }
 .search-wrap input.has-value { padding-right:38px; }
 
 .sb-card {
-  /* X/Twitter: "What's happening" cards have the same background as sidebar,
-     just a subtle border. bg-card is slightly lighter than bg-dark. */
-  background:var(--bg-card); border:1px solid var(--border);
+  /* Match the main column / sidebar background (pure black) so the cards
+     blend into the page instead of appearing as a separate elevated
+     surface. The border is what separates them visually. */
+  background:var(--bg-dark); border:1px solid var(--border);
   border-radius:16px;
   /* Flex column so title stays pinned and inner list scrolls.
      NO overflow:hidden — that was clipping content in cards that don't
@@ -734,7 +822,8 @@ nav { flex:1; padding:4px 0; }
 }
 .sb-card-row {
   display:flex; align-items:flex-start; gap:12px;
-  padding:10px 16px; cursor:pointer; transition:background 0.15s;
+  /* X uses 12px vertical padding on these rows */
+  padding:12px 16px; cursor:pointer; transition:background 0.15s;
 }
 .sb-card-row:hover { background:rgba(255,255,255,0.03); }
 .sb-card-row + .sb-card-row { border-top:1px solid var(--border); }
@@ -1041,7 +1130,7 @@ nav { flex:1; padding:4px 0; }
 @media (max-width:1100px) { .sb-card-title { font-size:18px; } }
 @media (max-width:900px)  {
   #sidebar-right { display:none; }
-  #main { flex:1; width:auto; max-width:none; border-right:none; }
+  #main { flex:1; width:auto; max-width:none; border-left:none; border-right:none; }
 }
 @media (max-width:768px) {
   #sidebar-left { display:none; }
@@ -1119,6 +1208,58 @@ nav { flex:1; padding:4px 0; }
   display:flex; align-items:center; justify-content:center;
   flex-shrink:0;
 }
+
+/* Featured channels — large promo cards inside the Channels tab.
+   Replaced the right-sidebar Wave + Say It DeFi cards in round 38. */
+.featured-channels-section {
+  padding:12px 16px 16px;
+  border-bottom:8px solid var(--bg-mid);
+}
+.featured-channels-title {
+  font-size:14px; font-weight:800; color:var(--muted);
+  text-transform:uppercase; letter-spacing:1px;
+  margin-bottom:10px;
+}
+.featured-channel-card {
+  border:1px solid var(--border); border-radius:16px;
+  padding:14px 16px; margin-bottom:10px;
+  cursor:pointer; transition:transform 0.15s, border-color 0.15s;
+}
+.featured-channel-card:hover {
+  border-color:var(--primary);
+  transform:translateY(-1px);
+}
+.featured-channel-card:last-child { margin-bottom:0; }
+.fc-row {
+  display:flex; align-items:center; gap:12px;
+  margin-bottom:8px;
+}
+.fc-icon {
+  width:44px; height:44px; border-radius:12px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:24px; flex-shrink:0;
+  border:1px solid var(--border);
+}
+.fc-body { flex:1; min-width:0; }
+.fc-name {
+  font-size:16px; font-weight:800; line-height:1.2;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.fc-sub { font-size:13px; color:var(--muted); margin-top:2px; }
+.fc-cta {
+  font-size:13px; font-weight:700; flex-shrink:0;
+  white-space:nowrap;
+}
+.fc-desc {
+  font-size:14px; color:var(--text); line-height:1.5;
+  margin-bottom:6px;
+}
+.fc-link {
+  font-size:12px; text-decoration:none;
+  display:inline-block; margin-top:4px;
+  transition:opacity 0.15s;
+}
+.fc-link:hover { opacity:0.8; }
 
 /* New channel input row at top of channels view */
 .ch-new-row {
@@ -1393,15 +1534,64 @@ nav { flex:1; padding:4px 0; }
 </style>
 </head>
 <body>
+<!-- Icon sprite — symbols defined once, referenced via <use> from every post.
+     Biggest DOM-weight win: 12 SVGs per post × 2000 posts collapses to
+     one sprite + 12 small <use> elements per post. -->
+<svg width="0" height="0" style="position:absolute;overflow:hidden" aria-hidden="true">
+  <defs>
+    <symbol id="ic-reply" viewBox="0 0 24 24"><path fill="currentColor" d="M1.751 10c0-4.42 3.584-8 8.005-8h4.366c4.49 0 8.129 3.64 8.129 8.13 0 2.96-1.607 5.68-4.196 7.11l-8.054 4.46v-3.69h-.067c-4.49.1-8.183-3.51-8.183-8.01zm8.005-6c-3.317 0-6.005 2.69-6.005 6 0 3.37 2.77 6.08 6.138 6.01l.351-.01h1.761v2.3l5.087-2.81c1.951-1.08 3.163-3.13 3.163-5.36 0-3.39-2.744-6.13-6.129-6.13H9.756z"/></symbol>
+    <symbol id="ic-repost" viewBox="0 0 24 24"><path fill="currentColor" d="M4.5 3.88l4.432 4.14-1.364 1.46L5.5 7.55V16c0 1.1.896 2 2 2H13v2H7.5c-2.209 0-4-1.79-4-4V7.55L1.432 9.48.068 8.02 4.5 3.88zM16.5 6H11V4h5.5c2.209 0 4 1.79 4 4v8.45l2.068-1.93 1.364 1.46L19.5 20.12l-4.432-4.14 1.364-1.46 2.068 1.93V8c0-1.1-.896-2-2-2z"/></symbol>
+    <symbol id="ic-heart-empty" viewBox="0 0 24 24"><path fill="currentColor" d="M16.697 5.5c-1.222-.06-2.679.51-3.89 2.16l-.805 1.09-.806-1.09C9.984 6.01 8.526 5.44 7.304 5.5c-1.243.07-2.349.78-2.91 1.91-.552 1.12-.633 2.78.479 4.82 1.074 1.97 3.257 4.27 7.129 6.61 3.87-2.34 6.052-4.64 7.126-6.61 1.111-2.04 1.03-3.7.477-4.82-.561-1.13-1.666-1.84-2.908-1.91zm4.187 7.69c-1.351 2.48-4.001 5.12-8.379 7.67l-.503.3-.504-.3c-4.379-2.55-7.029-5.19-8.382-7.67-1.36-2.5-1.41-4.86-.514-6.67.887-1.79 2.647-2.91 4.601-3.01 1.651-.09 3.368.56 4.798 2.01 1.429-1.45 3.146-2.1 4.796-2.01 1.954.1 3.714 1.22 4.601 3.01.896 1.81.846 4.17-.514 6.67z"/></symbol>
+    <symbol id="ic-heart-full" viewBox="0 0 24 24"><path fill="#f91880" d="M20.884 13.19c-1.351 2.48-4.001 5.12-8.379 7.67l-.503.3-.504-.3c-4.379-2.55-7.029-5.19-8.382-7.67-1.36-2.5-1.41-4.86-.514-6.67.887-1.79 2.647-2.91 4.601-3.01 1.651-.09 3.368.56 4.798 2.01 1.429-1.45 3.146-2.1 4.796-2.01 1.954.1 3.714 1.22 4.601 3.01.896 1.81.846 4.17-.514 6.67z"/></symbol>
+    <symbol id="ic-bookmark-empty" viewBox="0 0 24 24"><path fill="currentColor" d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5zM6.5 4c-.276 0-.5.22-.5.5v14.56l6-4.29 6 4.29V4.5c0-.28-.224-.5-.5-.5h-11z"/></symbol>
+    <symbol id="ic-bookmark-full" viewBox="0 0 24 24"><path fill="#1d9bf0" d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5z"/></symbol>
+    <symbol id="ic-share" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2.59l5.7 5.7-1.41 1.42L13 6.41V16h-2V6.41l-3.3 3.3-1.41-1.42L12 2.59zM21 15l-.02 3.51c0 1.38-1.12 2.49-2.5 2.49H5.5C4.11 21 3 19.88 3 18.5V15h2v3.5c0 .28.22.5.5.5h12.98c.28 0 .5-.22.5-.5L19 15h2z"/></symbol>
+    <symbol id="ic-menu" viewBox="0 0 24 24"><path fill="currentColor" d="M3 12c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zm9 2c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm7 0c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2z"/></symbol>
+  </defs>
+</svg>
 <div id="app">
 
   <!-- Left sidebar -->
   <div id="sidebar-left">
-    <div class="logo-wrap" id="logo-wrap">
-      <div class="logo-img-wrap">
-        <img src="image1.jpeg" alt="Say It DeFi">
-      </div>
-      <span class="site-name">Say It DeFi</span>
+    <div class="logo-wrap" id="logo-wrap" aria-label="Say It DeFi — Home">
+      <!-- Inline SVG wordmark: chat bubble + lightning bolt mark, then the
+           wordmark in bold sans-serif. The icon uses CSS variables so the
+           colors stay in sync with the rest of the site if --primary
+           changes. Compact: fits inside the 275px sidebar. -->
+      <svg class="logo-svg" viewBox="0 0 220 44" xmlns="http://www.w3.org/2000/svg"
+           aria-hidden="true" focusable="false">
+        <defs>
+          <linearGradient id="logoG" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%"  stop-color="#7c4dff"/>
+            <stop offset="100%" stop-color="#b388ff"/>
+          </linearGradient>
+          <linearGradient id="logoText" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%"   stop-color="#ffffff"/>
+            <stop offset="100%" stop-color="#b388ff"/>
+          </linearGradient>
+        </defs>
+        <!-- Speech bubble silhouette -->
+        <path d="M22 4
+                 C 12 4, 4 11, 4 20
+                 C 4 27, 8.5 32, 14 34
+                 L 13 41
+                 L 21 35
+                 L 30 35
+                 C 38 35, 44 28, 44 21
+                 C 44 11, 36 4, 26 4
+                 Z"
+              fill="url(#logoG)"/>
+        <!-- Lightning bolt inside the bubble -->
+        <path d="M26 11 L 18 23 L 23 23 L 22 31 L 30 18 L 25 18 L 26 11 Z"
+              fill="#ffffff" opacity="0.95"/>
+        <!-- Wordmark: "Say It DeFi" — two-tone for visual depth -->
+        <text x="56" y="22" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif"
+              font-size="15" font-weight="800" letter-spacing="0.3"
+              fill="#ffffff">Say It</text>
+        <text x="56" y="38" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif"
+              font-size="15" font-weight="800" letter-spacing="0.3"
+              fill="url(#logoText)">DeFi</text>
+      </svg>
     </div>
 
     <nav>
@@ -1514,16 +1704,16 @@ nav { flex:1; padding:4px 0; }
         <textarea id="compose-text" placeholder="What's happening on Pulse?"></textarea>
         <div id="compose-toolbar">
           <div class="compose-icons">
-            <button class="cmp-icon" id="cmp-image-btn" title="Attach image">
+            <button class="cmp-icon" id="cmp-image-btn" title="Attach image" aria-label="Attach image">
               <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 5.5C3 4.119 4.119 3 5.5 3h13C19.881 3 21 4.119 21 5.5v13c0 1.381-1.119 2.5-2.5 2.5h-13C4.119 21 3 19.881 3 18.5v-13zM5.5 5c-.276 0-.5.224-.5.5v9.086l3-3 3 3 5-5 3 3V5.5c0-.276-.224-.5-.5-.5h-13zM19 15.414l-3-3-5 5-3-3-3 3V18.5c0 .276.224.5.5.5h13c.276 0 .5-.224.5-.5v-3.086zM9.75 7C8.784 7 8 7.784 8 8.75s.784 1.75 1.75 1.75 1.75-.784 1.75-1.75S10.716 7 9.75 7z"/></svg>
             </button>
-            <button class="cmp-icon" id="cmp-gif-btn" title="Attach GIF">
+            <button class="cmp-icon" id="cmp-gif-btn" title="Attach GIF" aria-label="Attach GIF">
               <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 5.5C3 4.119 4.119 3 5.5 3h13C19.881 3 21 4.119 21 5.5v13c0 1.381-1.119 2.5-2.5 2.5h-13C4.119 21 3 19.881 3 18.5v-13zM5.5 5c-.276 0-.5.224-.5.5v13c0 .276.224.5.5.5h13c.276 0 .5-.224.5-.5v-13c0-.276-.224-.5-.5-.5h-13zM8 13.5v-3h1.5v.75H11v1.5H9.5v.75H8zm4.5-3H14c.552 0 1 .448 1 1v1c0 .552-.448 1-1 1h-1.5V10.5zm1.25 1.25v.5H14v-.5h-.25zM15.5 10.5H17v1.25h-1.5v.25H17v1.25h-1.5c-.552 0-1-.448-1-1v-1.25c0-.552.448-.5 1-.5z"/></svg>
             </button>
-            <button class="cmp-icon" id="cmp-video-btn" title="Attach video URL (mp4, YouTube, Vimeo)">
+            <button class="cmp-icon" id="cmp-video-btn" title="Attach video URL (mp4, YouTube, Vimeo)" aria-label="Attach video URL">
               <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z"/></svg>
             </button>
-            <button class="cmp-icon" id="cmp-emoji-btn" title="Emoji">
+            <button class="cmp-icon" id="cmp-emoji-btn" title="Emoji" aria-label="Insert emoji">
               <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M8 9.5C8 8.672 8.672 8 9.5 8s1.5.672 1.5 1.5S10.328 11 9.5 11 8 10.328 8 9.5zm6.5 1.5c.828 0 1.5-.672 1.5-1.5S15.328 8 14.5 8 13 8.672 13 9.5s.672 1.5 1.5 1.5zM12 16c-2.224 0-3.021-1.4-3.094-1.536l-1.76.992C7.196 15.69 8.638 18 12 18s4.804-2.31 4.854-2.544l-1.76-.992C15.021 14.6 14.224 16 12 16zm-.002-14C6.477 2 2 6.477 2 12s4.477 10 9.998 10C17.523 22 22 17.523 22 12S17.523 2 11.998 2zM12 20C7.582 20 4 16.418 4 12s3.582-8 8-8 8 3.582 8 8-3.582 8-8 8z"/></svg>
             </button>
           </div>
@@ -1595,68 +1785,16 @@ nav { flex:1; padding:4px 0; }
       <div id="sb-w2f-list"><!-- populated by renderWhoToFollow() --></div>
     </div>
 
-    <!-- Wave on Pulse animated card -->
-    <div class="sb-card" style="overflow:visible">
-      <div class="wave-inner" id="wave-card-btn" role="button" tabindex="0"
-        aria-label="Open Wave on Pulse channel">
-        <div class="wave-top">
-          <div class="wave-brand">
-            <div class="wave-icon">📻</div>
-            <div>
-              <div class="wave-name">Wave on Pulse</div>
-              <div class="wave-sub">On-chain live radio</div>
-            </div>
-          </div>
-          <div class="wave-tune">📡 Tune In</div>
-        </div>
-        <div class="wave-bars">
-          <span></span><span></span><span></span><span></span>
-          <span></span><span></span><span></span>
-        </div>
-        <div class="wave-desc">Live free speech radio — permanently archived on PulseChain.</div>
-        <div style="margin-top:10px">
-          <a href="https://waveonpulse.com" target="_blank" rel="noopener noreferrer"
-            onclick="event.stopPropagation()"
-            style="font-size:12px;color:var(--wave-c);text-decoration:none;transition:color 0.18s"
-            onmouseover="this.style.color='#00ccff'" onmouseout="this.style.color='var(--wave-c)'">
-            🌐 waveonpulse.com ↗
-          </a>
-        </div>
-      </div>
-    </div>
-
-    <!-- Say It DeFi channel card -->
-    <div class="sb-card" style="overflow:visible">
-      <div class="defix-inner" id="defix-card-btn" role="button" tabindex="0"
-        aria-label="Open Say It DeFi channel">
-        <div class="defix-top">
-          <div class="defix-brand">
-            <div class="defix-icon">⚡</div>
-            <div>
-              <div class="defix-name">Say It DeFi Channel</div>
-              <div class="defix-sub">Official updates & tech</div>
-            </div>
-          </div>
-          <div class="defix-tag">📡 View</div>
-        </div>
-        <div class="defix-desc">Technical updates, announcements and discussions about Say It DeFi — uncensorable social on PulseChain.</div>
-      </div>
-    </div>
-
-    <!-- Channels card -->
-    <div class="sb-card">
-      <div class="sb-card-title">Channels</div>
-      <button class="ch-btn active" id="ch-main">
-        <span class="ch-btn-icon">🌐</span> Main Channel
-      </button>
-      <button class="ch-btn" id="ch-self">
-        <span class="ch-btn-icon">📡</span> My Channel
-      </button>
-      <div class="custom-row">
-        <input type="text" id="custom-input" placeholder="0x address…">
-        <button class="go-btn" id="ch-go">Go</button>
-      </div>
-      <span class="ch-label" id="ch-label"></span>
+    <!-- Channels card removed — Channels nav tab covers everything.
+         #custom-input is kept as a hidden state-passing field for the
+         many code paths (mention click, explore-row click, programmatic
+         channel switches) that read/write its value. -->
+    <div style="display:none" aria-hidden="true">
+      <input type="text" id="custom-input">
+      <button id="ch-go"></button>
+      <button id="ch-main"></button>
+      <button id="ch-self"></button>
+      <span id="ch-label"></span>
     </div>
 
     <!-- Footer links -->
@@ -1726,13 +1864,13 @@ nav { flex:1; padding:4px 0; }
         <div style="display:flex;justify-content:space-between;align-items:center;
           margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
           <div style="display:flex;gap:4px;align-items:center">
-            <button class="cmp-icon" id="modal-cmp-image-btn" title="Attach image">
+            <button class="cmp-icon" id="modal-cmp-image-btn" title="Attach image" aria-label="Attach image">
               <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 5.5C3 4.119 4.119 3 5.5 3h13C19.881 3 21 4.119 21 5.5v13c0 1.381-1.119 2.5-2.5 2.5h-13C4.119 21 3 19.881 3 18.5v-13zM5.5 5c-.276 0-.5.224-.5.5v9.086l3-3 3 3 5-5 3 3V5.5c0-.276-.224-.5-.5-.5h-13zM19 17.414l-3-3-5 5-3-3-3 3V18.5c0 .276.224.5.5.5h13c.276 0 .5-.224.5-.5v-1.086zM9.75 7C8.784 7 8 7.784 8 8.75s.784 1.75 1.75 1.75 1.75-.784 1.75-1.75S10.716 7 9.75 7z"/></svg>
             </button>
-            <button class="cmp-icon" id="modal-cmp-gif-btn" title="Attach GIF">
+            <button class="cmp-icon" id="modal-cmp-gif-btn" title="Attach GIF" aria-label="Attach GIF">
               <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 5.5C3 4.119 4.119 3 5.5 3h13C19.881 3 21 4.119 21 5.5v13c0 1.381-1.119 2.5-2.5 2.5h-13C4.119 21 3 19.881 3 18.5v-13zM5.5 5c-.276 0-.5.224-.5.5v13c0 .276.224.5.5.5h13c.276 0 .5-.224.5-.5v-13c0-.276-.224-.5-.5-.5h-13zm2.5 6h2v2H8v-2zm0-3h2v2H8V8zm3 0h5v2h-5V8zm0 3h5v2h-5v-2z"/></svg>
             </button>
-            <button class="cmp-icon" id="modal-cmp-video-btn" title="Attach video URL">
+            <button class="cmp-icon" id="modal-cmp-video-btn" title="Attach video URL" aria-label="Attach video URL">
               <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z"/></svg>
             </button>
           </div>
@@ -1899,7 +2037,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260527-4';
+const SW_CACHE_VER = '20260529-2';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -1919,10 +2057,12 @@ const PRUNE_KEY      = 'defixLastPrune';
 const LAST_CHECK_KEY = 'defixLastCheck';
 const WAVE_ADDRESS   = '0x0000000000000000000000000000000000000000';
 const DEFIX_CHANNEL  = '0x0000000000000000000000000000000000000001'; /* placeholder — update with real address */
-const LIKE_PREFIX     = 'LIKE:';
-const BOOKMARK_PREFIX = 'BOOKMARK:';
-const FOLLOW_PREFIX   = 'FOLLOW:';
-const UNFOLLOW_PREFIX = 'UNFOLLOW:';
+const LIKE_PREFIX       = 'LIKE:';
+const UNLIKE_PREFIX     = 'UNLIKE:';
+const BOOKMARK_PREFIX   = 'BOOKMARK:';
+const UNBOOKMARK_PREFIX = 'UNBOOKMARK:';
+const FOLLOW_PREFIX     = 'FOLLOW:';
+const UNFOLLOW_PREFIX   = 'UNFOLLOW:';
 const SETTINGS_KEY    = 'defixSettings';
 const MUTE_KEY        = 'defixMuted';   /* JSON array of muted addresses */
 const CHANNELS_KEY    = 'defixChannelsScan';
@@ -2132,6 +2272,35 @@ const utils = {
     if (uri.startsWith('ipfs://')) return 'https://ipfs.io/ipfs/' + uri.slice(7);
     return uri;
   },
+  /* Defensive URL validation. Returns the URL if safe to render in an
+     <a href>, <img src>, or similar context, otherwise returns ''.
+     Blocks javascript:, data:, vbscript:, file:, and any other scheme
+     not in the allowlist. Critical: chain data is attacker-controlled
+     and CAN contain javascript: URIs that bypass client-side validation.
+     Allowed schemes: http, https, ipfs, ar, arweave, mailto. */
+  safeUrl(url) {
+    if (!url || typeof url !== 'string') return '';
+    const s = url.trim();
+    if (!s) return '';
+    /* Schemeless URLs (no colon before first /) are fine — treated as relative */
+    const colonIdx = s.indexOf(':');
+    const slashIdx = s.indexOf('/');
+    if (colonIdx === -1 || (slashIdx !== -1 && slashIdx < colonIdx)) return s;
+    /* Lowercase the scheme for comparison, strip control chars/whitespace
+       that some browsers tolerate before the colon. */
+    const scheme = s.slice(0, colonIdx).toLowerCase().replace(/[\s\x00-\x1f]/g, '');
+    const allowed = new Set(['http', 'https', 'ipfs', 'ar', 'arweave', 'mailto']);
+    return allowed.has(scheme) ? s : '';
+  },
+  /* Escape a URL for safe interpolation inside a CSS url('...') value.
+     CSS-escapes single quotes, backslashes, newlines, and control chars
+     that could break out of the url() and inject CSS declarations.
+     Returns '' if the URL fails safeUrl validation. */
+  cssUrlValue(url) {
+    const safe = this.safeUrl(url);
+    if (!safe) return '';
+    return safe.replace(/[\\\n\r\f'"]/g, c => '\\' + c.charCodeAt(0).toString(16) + ' ');
+  },
   debounce(fn, ms) {
     let t;
     return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
@@ -2180,6 +2349,23 @@ const utils = {
   },
   copyToClipboard(text, label = 'Copied!') {
     navigator.clipboard?.writeText(text).then(() => this.toast(label)).catch(() => this.toast('Copy failed'));
+  },
+  /* Safe localStorage wrapper — silently no-ops on quota errors,
+     private-mode blocks, or other write failures. Returns true on success,
+     false on failure. Callers that care can branch on the return. */
+  safeLS: {
+    set(key, val) {
+      try { localStorage.setItem(key, val); return true; }
+      catch { return false; }
+    },
+    get(key, fallback = null) {
+      try { return localStorage.getItem(key) ?? fallback; }
+      catch { return fallback; }
+    },
+    remove(key) {
+      try { localStorage.removeItem(key); return true; }
+      catch { return false; }
+    },
   },
   updateCharCount(el, countEl) {
     const n   = el.value.length;
@@ -2251,14 +2437,35 @@ class Cache {
     posts.forEach(p => store.put(p));
     return new Promise((res, rej) => {
       tx.oncomplete = () => {
-        /* Index for search; prune after batch to bound index size */
-        Promise.all(posts.map(p => this.indexPost(p).catch(() => {}))).then(() => {
+        /* Index for search in ONE batched IDB transaction instead of N.
+           Was: 100 posts = 100 transactions = ~1s of overhead. */
+        this.indexPostsBatch(posts).catch(() => {}).then(() => {
           this.pruneSearchIndex().catch(() => {});
         });
         res();
       };
       tx.onerror = () => rej(tx.error);
     });
+  }
+  /* Batched search-index writer. One IDB transaction per call instead of
+     one-per-post. Trigram entries previously accumulated stale duplicates
+     because the original indexPost never deleted old rows (TODO comment
+     in code). This implementation does the delete if the txHash index
+     exists; without it, we skip the delete (acceptable — pruneSearchIndex
+     bounds total size). */
+  async indexPostsBatch(posts) {
+    await this._ready;
+    if (!this._db.objectStoreNames.contains('search_index')) return;
+    const writes = [];
+    posts.forEach(post => {
+      const tris = this._trigrams((post.display || '') + ' ' + (post.reporter || ''));
+      tris.forEach(tri => writes.push({ trigram: tri, txHash: post.txHash }));
+    });
+    if (!writes.length) return;
+    const tx = this._db.transaction('search_index', 'readwrite');
+    const store = tx.objectStore('search_index');
+    writes.forEach(w => store.add(w));
+    return new Promise(res => { tx.oncomplete = res; tx.onerror = res; });
   }
   async pruneSearchIndex(maxRows = 200000) {
     await this._ready;
@@ -2398,7 +2605,7 @@ class Cache {
     });
   }
   async pruneIfStale(maxAgeDays = 7) {
-    const last = parseInt(localStorage.getItem(PRUNE_KEY) || '0', 10);
+    const last = parseInt(utils.safeLS.get(PRUNE_KEY, '0'), 10);
     if (Date.now() - last < 86_400_000) return;
     await this._ready;
     const cutoff = new Date(Date.now() - maxAgeDays * 86_400_000).toISOString();
@@ -2408,7 +2615,7 @@ class Cache {
       const req = s.getAll();
       req.onsuccess = () => {
         (req.result || []).filter(p => p.timestamp < cutoff).forEach(p => s.delete(p.txHash));
-        tx.oncomplete = () => { localStorage.setItem(PRUNE_KEY, Date.now().toString()); res(); };
+        tx.oncomplete = () => { utils.safeLS.set(PRUNE_KEY, Date.now().toString()); res(); };
       };
       req.onerror = () => rej(req.error);
     });
@@ -2438,6 +2645,15 @@ class Cache {
       tx.objectStore('channels').clear();
       tx.oncomplete = res;
       tx.onerror    = () => rej(tx.error);
+    });
+  }
+  async deleteChannel(address) {
+    await this._ready;
+    return new Promise((res, rej) => {
+      const req = this._db.transaction('channels','readwrite')
+        .objectStore('channels').delete(address);
+      req.onsuccess = () => res();
+      req.onerror   = () => rej(req.error);
     });
   }
   async clearAllPosts() {
@@ -2549,16 +2765,16 @@ class DeFiX {
     const v = this.g('compose-text').value;
     const key = this._draftKey();
     if (v.trim()) {
-      localStorage.setItem(key, v);
+      utils.safeLS.set(key, v);
     } else {
-      localStorage.removeItem(key);
-      localStorage.removeItem(DRAFT_KEY); /* clean up legacy key too */
+      utils.safeLS.remove(key);
+      utils.safeLS.remove(DRAFT_KEY); /* clean up legacy key too */
     }
   }
   _restoreDraft() {
     /* Try per-channel key first, then fall back to legacy global key */
-    const draft = localStorage.getItem(this._draftKey())
-                || localStorage.getItem(DRAFT_KEY)
+    const draft = utils.safeLS.get(this._draftKey())
+                || utils.safeLS.get(DRAFT_KEY)
                 || '';
     if (!draft) return;
     this.g('compose-text').value = draft;
@@ -2566,8 +2782,8 @@ class DeFiX {
     utils.updateCharCount(this.g('compose-text'), null);
   }
   _clearDraft() {
-    localStorage.removeItem(this._draftKey());
-    localStorage.removeItem(DRAFT_KEY); /* clean up any legacy key */
+    utils.safeLS.remove(this._draftKey());
+    utils.safeLS.remove(DRAFT_KEY); /* clean up any legacy key */
   }
 
   wireListeners() {
@@ -2662,7 +2878,7 @@ class DeFiX {
 
     const handlePostClick = (e, inModal) => {
       const img = e.target.closest('.post-img-thumb');
-      if (img?.dataset.href) { e.stopPropagation(); window.open(img.dataset.href, '_blank'); return; }
+      if (img?.dataset.href) { e.stopPropagation(); window.open(img.dataset.href, '_blank', 'noopener,noreferrer'); return; }
       const tag = e.target.closest('.post-tag');
       if (tag) { e.stopPropagation(); this.filterByTag(tag.dataset.tag); return; }
       const mention = e.target.closest('.post-mention');
@@ -3166,7 +3382,11 @@ class DeFiX {
             const text = ethers.utils.toUtf8String(tx.input).trim();
             if (text.startsWith(PROFILE_PREFIX)) return;
             const isReaction = text.startsWith(LIKE_PREFIX) ||
-              text.startsWith(BOOKMARK_PREFIX) || text.startsWith(FOLLOW_PREFIX);
+              text.startsWith(UNLIKE_PREFIX) ||
+              text.startsWith(BOOKMARK_PREFIX) ||
+              text.startsWith(UNBOOKMARK_PREFIX) ||
+              text.startsWith(FOLLOW_PREFIX) ||
+              text.startsWith(UNFOLLOW_PREFIX);
             if (isReaction) return;
             const m = text.match(/^REPLY_TO:(0x[a-f0-9]{64})\n\n/i);
             const display = m ? text.slice(m[0].length).trim() : text;
@@ -3238,6 +3458,7 @@ class DeFiX {
   }
 
   async goHome() {
+    this._updateTitle('Home');
     if (this.state.mode === 'main' && this.state.channel === MAIN_CHANNEL) {
       if (this.state.searchTerm || this.state.activeTag) {
         this.state.searchTerm = '';
@@ -3268,6 +3489,7 @@ class DeFiX {
 
   async goNotifications() {
     if (!this.signer) { utils.toast('Connect wallet to view Notifications'); return; }
+    this._updateTitle('Notifications');
     this.setNav('nav-notifs','notifs');
     this.g('feed-tabs').classList.remove('tabs-sticky');
     this.g('feed-tabs').style.display      = 'none';
@@ -3279,7 +3501,7 @@ class DeFiX {
     this.g('new-banner').style.display     = 'none';
     this.g('loading-more').style.display   = 'none';
     this.state.mode = 'notifications';
-    localStorage.setItem(LAST_CHECK_KEY, Date.now().toString());
+    utils.safeLS.set(LAST_CHECK_KEY, Date.now().toString());
     this.clearNotifBadge();
 
     this.g('feed').innerHTML = this._applyPageHeader() +
@@ -3301,7 +3523,9 @@ class DeFiX {
           if (!tx.input || tx.input === '0x') return;
           try {
             const text = ethers.utils.toUtf8String(tx.input).trim();
-            if (text.startsWith(PROFILE_PREFIX) || text.startsWith(BOOKMARK_PREFIX)) return;
+            if (text.startsWith(PROFILE_PREFIX)) return;
+            if (text.startsWith(BOOKMARK_PREFIX) || text.startsWith(UNBOOKMARK_PREFIX)) return;
+            if (text.startsWith(UNLIKE_PREFIX)) return;
             const ts = tx.timeStamp ? new Date(Number(tx.timeStamp)*1000).toISOString() : new Date().toISOString();
             let type = 'message', target = null, preview = '';
             if (text.startsWith(LIKE_PREFIX)) {
@@ -3353,7 +3577,7 @@ class DeFiX {
         const label = labels[n.type] || 'interacted with you';
         const txLink = `https://otter.pulsechain.com/tx/${utils.safe(n.txHash)}`;
         html += `
-          <div class="notif-item" data-from="${utils.safe(n.from)}" onclick="window.open('${txLink}','_blank')">
+          <div class="notif-item" data-from="${utils.safe(n.from)}" onclick="window.open('${txLink}','_blank','noopener,noreferrer')">
             <div class="notif-icon-wrap">${icon}</div>
             <img src="${pic}" class="notif-avatar" onerror="this.src='image1.jpeg'">
             <div class="notif-body">
@@ -3401,6 +3625,7 @@ class DeFiX {
 
   async goSelf() {
     if (!this.signer) { utils.toast('Connect wallet to view your channel'); return; }
+    this._updateTitle('My Channel');
     this.setNav('nav-mychannel', null);
     this.state.mode    = 'self';
     this.state.channel = this.state.signerAddr;
@@ -3437,6 +3662,7 @@ class DeFiX {
   }
 
   async goWave() {
+    this._updateTitle('Wave');
     this.setNav(null, null);
     this.state.mode    = 'wave';
     this.state.channel = WAVE_ADDRESS;
@@ -3470,6 +3696,7 @@ class DeFiX {
 
   /* ── New navigation methods ─────────────────────────────────────────── */
   goExplore() {
+    this._updateTitle('Explore');
     this.setNav('nav-explore','explore');
     this.state.mode = 'explore';
     this.g('feed-tabs').classList.remove('tabs-sticky');
@@ -3558,8 +3785,22 @@ class DeFiX {
         }).join('')
       : '<div style="padding:16px;color:var(--muted)">Visit some channels to see them here.</div>';
 
+    /* Mobile search affordance — sidebar search is hidden at ≤900px so
+       this is the only way to search on mobile. Visible via CSS media query;
+       desktop users see the sidebar search instead. */
+    const searchTermVal = utils.safe(this.state.searchTerm || '');
+    const mobileSearchHTML = `
+      <div class="explore-search-wrap">
+        <span class="search-icon">🔎</span>
+        <input type="text" id="explore-search-input" class="explore-search-input"
+          placeholder="Search posts" autocomplete="off" value="${searchTermVal}"
+          aria-label="Search posts">
+        ${searchTermVal ? `<button class="explore-search-clear" id="explore-search-clear"
+          type="button" title="Clear search" aria-label="Clear search">✕</button>` : ''}
+      </div>`;
     this.g('feed').innerHTML = _headerHTML + `
       <div class="explore-page">
+        ${mobileSearchHTML}
         <div class="explore-section">
           <div class="explore-section-title">📈 Trending</div>
           ${tagHTML}
@@ -3578,10 +3819,60 @@ class DeFiX {
           </button>
         </div>
       </div>`;
+    /* Wire the mobile search input now that the DOM exists. */
+    setTimeout(() => this._wireExploreSearch(), 0);
+  }
+
+  /* Wire the mobile search input on Explore. Same behavior as the sidebar
+     search: typing routes to Home with the search term applied. Both
+     inputs stay synced. */
+  _wireExploreSearch() {
+    const inp = this.g('explore-search-input');
+    const clr = this.g('explore-search-clear');
+    if (!inp) return;
+    inp.oninput = utils.debounce(async () => {
+      const term = inp.value.trim();
+      this.state.searchTerm = term.toLowerCase();
+      this.state.activeTag  = null;
+      const si = this.g('search-input');
+      if (si) si.value = term;
+      this._updateSearchClearBtn();
+      if (term) {
+        await this.goHome();
+        this.state.searchTerm = term.toLowerCase();
+        if (si) si.value = term;
+        this._updateSearchClearBtn();
+        this.renderFeed();
+      }
+    }, 250);
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && inp.value) {
+        e.preventDefault();
+        inp.value = '';
+        this.state.searchTerm = '';
+        const si = this.g('search-input');
+        if (si) si.value = '';
+        this._updateSearchClearBtn();
+        inp.blur();
+      }
+    });
+    if (clr) {
+      clr.onclick = () => {
+        inp.value = '';
+        this.state.searchTerm = '';
+        this.state.activeTag  = null;
+        const si = this.g('search-input');
+        if (si) si.value = '';
+        this._updateSearchClearBtn();
+        if (this.state.mode === 'explore') this.goExplore();
+        inp.focus();
+      };
+    }
   }
 
   goBookmarks() {
     if (!this.signer) { utils.toast('Connect wallet to view Bookmarks'); return; }
+    this._updateTitle('Bookmarks');
     this.setNav('nav-bookmarks', null);
     this.state.mode = 'bookmarks';
     this.g('feed-tabs').classList.remove('tabs-sticky');
@@ -3677,6 +3968,7 @@ class DeFiX {
   }
 
   async goChannels() {
+    this._updateTitle('Channels');
     this.setNav('nav-channels','channels');
     this.g('feed-tabs').classList.remove('tabs-sticky');
     this._pendingPageHeader = this._makePageHeader({ title: 'Channels', noBack: true });
@@ -3699,6 +3991,7 @@ class DeFiX {
   }
 
   goSettings() {
+    this._updateTitle('Settings');
     this.setNav(null, null);
     this.state.mode = 'settings';
     this.g('compose-area').style.display   = 'none';
@@ -3739,8 +4032,16 @@ class DeFiX {
     const idx = this.state.channelHistory.findIndex(c => c.address === address);
     if (idx >= 0) this.state.channelHistory[idx] = updated;
     else this.state.channelHistory.unshift(updated);
-    /* Cap history at 50 entries to prevent unbounded IDB growth */
-    if (this.state.channelHistory.length > 50) this.state.channelHistory.pop();
+    /* Cap history at 50 entries to prevent unbounded IDB growth. Also
+       delete the popped (oldest) entry from IDB — otherwise the in-memory
+       cap is meaningless because getChannels() reloads everything next
+       session. */
+    if (this.state.channelHistory.length > 50) {
+      const popped = this.state.channelHistory.pop();
+      if (popped?.address) {
+        this.cache.deleteChannel(popped.address).catch(() => {});
+      }
+    }
   }
 
   async rebuildChannelHistory() {
@@ -3764,8 +4065,10 @@ class DeFiX {
           if (!partner || partner === this.state.signerAddr || partner === MAIN_CHANNEL) return;
           try {
             const text = ethers.utils.toUtf8String(tx.input).trim();
-            if (text.startsWith(PROFILE_PREFIX) || text.startsWith(LIKE_PREFIX) ||
-                text.startsWith(BOOKMARK_PREFIX) || text.startsWith(FOLLOW_PREFIX)) return;
+            if (text.startsWith(PROFILE_PREFIX)) return;
+            if (text.startsWith(LIKE_PREFIX) || text.startsWith(UNLIKE_PREFIX)) return;
+            if (text.startsWith(BOOKMARK_PREFIX) || text.startsWith(UNBOOKMARK_PREFIX)) return;
+            if (text.startsWith(FOLLOW_PREFIX) || text.startsWith(UNFOLLOW_PREFIX)) return;
             const ts = tx.timeStamp ? new Date(Number(tx.timeStamp) * 1000).toISOString() : '';
             const prev = seen.get(partner);
             if (!prev || ts > prev.lastActivity) {
@@ -3797,13 +4100,66 @@ class DeFiX {
 
     /* Reload and re-render if still in channels view */
     this.state.channelHistory = await this.cache.getChannels();
-    localStorage.setItem(CHANNELS_KEY, Date.now().toString());
+    utils.safeLS.set(CHANNELS_KEY, Date.now().toString());
     if (this.state.mode === 'channels') {
       /* Preserve existing header if already in DOM; don't inject a new one */
       const existingHeader = this.g('feed')?.querySelector('.page-header');
       this.renderChannelHistory(existingHeader ? '' : this._applyPageHeader());
     }
     utils.toast('Channel history updated ✓');
+  }
+
+  /* Featured channels — promoted partner channels surfaced in the
+     Channels tab. Replaces the old right-sidebar promo cards. Each entry
+     is { name, sub, desc, icon, onclick } and renders as a clean card. */
+  _featuredChannelsHTML() {
+    /* Each featured channel is a row with an icon, name, sub-label, and
+       a description on hover/touch. Click opens the channel. */
+    const featured = [
+      {
+        id: 'wave',
+        name: 'Wave on Pulse',
+        sub: 'On-chain live radio',
+        desc: 'Live free speech radio — permanently archived on PulseChain.',
+        icon: '📻',
+        gradient: 'linear-gradient(135deg,rgba(255,60,172,0.18),rgba(43,134,197,0.10))',
+        accent: 'var(--wave-a)',
+        link: 'https://waveonpulse.com',
+        onclick: 'pulse.goWave()',
+      },
+      {
+        id: 'defix',
+        name: 'Say It DeFi Channel',
+        sub: 'Official updates & tech',
+        desc: 'Technical updates, announcements and discussions about Say It DeFi.',
+        icon: '⚡',
+        gradient: 'linear-gradient(135deg,rgba(124,77,255,0.18),rgba(179,136,255,0.10))',
+        accent: 'var(--primary-lt)',
+        link: null,
+        onclick: 'pulse.goDeFiX()',
+      },
+    ];
+    return `
+      <div class="featured-channels-section">
+        <div class="featured-channels-title">⭐ Featured Channels</div>
+        ${featured.map(f => `
+          <div class="featured-channel-card" style="background:${f.gradient}"
+               role="button" tabindex="0" onclick="${f.onclick}"
+               onkeydown="if(event.key==='Enter'||event.key===' '){${f.onclick}}">
+            <div class="fc-row">
+              <div class="fc-icon" style="background:${f.gradient}">${f.icon}</div>
+              <div class="fc-body">
+                <div class="fc-name" style="color:${f.accent}">${utils.safe(f.name)}</div>
+                <div class="fc-sub">${utils.safe(f.sub)}</div>
+              </div>
+              <div class="fc-cta" style="color:${f.accent}">Open →</div>
+            </div>
+            <div class="fc-desc">${utils.safe(f.desc)}</div>
+            ${f.link ? `<a href="${utils.safe(f.link)}" target="_blank" rel="noopener noreferrer"
+              onclick="event.stopPropagation()" class="fc-link" style="color:${f.accent}">
+              🌐 ${utils.safe(f.link.replace(/^https?:\/\//, ''))} ↗</a>` : ''}
+          </div>`).join('')}
+      </div>`;
   }
 
   renderChannelHistory(headerHTML = '') {
@@ -3814,7 +4170,7 @@ class DeFiX {
       <div class="ch-new-row">
         <input type="text" id="ch-new-input" placeholder="Enter 0x address to open a channel…">
         <button class="go-btn" id="ch-new-go">Go</button>
-      </div>`;
+      </div>` + this._featuredChannelsHTML();
 
     if (!history.length) {
       html += `
@@ -3892,7 +4248,7 @@ class DeFiX {
 
   /* ── Settings page ──────────────────────────────────────────────────── */
   _getSettings() {
-    try { return JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); }
+    try { return JSON.parse(utils.safeLS.get(SETTINGS_KEY, '{}')); }
     catch { return {}; }
   }
   _getPostCap() {
@@ -3912,7 +4268,7 @@ class DeFiX {
     return new Promise(res => setTimeout(res, ms));
   }
   _saveSettings(s) {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+    utils.safeLS.set(SETTINGS_KEY, JSON.stringify(s));
     this.state.settings = s;
   }
 
@@ -4103,8 +4459,8 @@ class DeFiX {
     /* Clear posts */
     g('set-clear-posts')?.addEventListener('click', async () => {
       await this.cache.clearAllPosts();
-      localStorage.removeItem(PRUNE_KEY);
-      localStorage.removeItem('sayit_idx_v1'); /* allow search index rebuild */
+      utils.safeLS.remove(PRUNE_KEY);
+      utils.safeLS.remove('sayit_idx_v1'); /* allow search index rebuild */
       this.state.posts = [];
       this._postHashSet = new Set();
       utils.toast('Post cache cleared ✓');
@@ -4113,7 +4469,7 @@ class DeFiX {
     g('set-clear-channels')?.addEventListener('click', async () => {
       await this.cache.clearChannels();
       this.state.channelHistory = [];
-      localStorage.removeItem(CHANNELS_KEY);
+      utils.safeLS.remove(CHANNELS_KEY);
       utils.toast('Channel history cleared ✓');
     });
     g('set-clear-pending')?.addEventListener('click', async () => {
@@ -4156,7 +4512,8 @@ class DeFiX {
       settings:      'App configuration',
       profile:       'Your on-chain profile',
     };
-    this.g('ch-label').textContent = map[mode] || '';
+    const _chLabel = this.g('ch-label');
+    if (_chLabel) _chLabel.textContent = map[mode] || '';
   }
 
   showChannelBanner(address) {
@@ -4186,11 +4543,14 @@ class DeFiX {
     this.g('cb-name').textContent    = profile?.username || this.trunc(address);
     this.g('cb-bio').textContent     = profile?.bio  || '';
     this.g('cb-address').textContent = address || '';
-    /* Show profile cover image in the banner if available */
+    /* Show profile cover image in the banner if available. Use
+       utils.cssUrlValue to fully escape for CSS context AND validate
+       the scheme — chain data is attacker-controlled. */
     const coverEl = document.querySelector('#channel-banner .cb-cover');
     if (coverEl) {
-      if (profile?.coverUrl) {
-        coverEl.style.background = `url('${profile.coverUrl.replace(/'/g,"\\'")}') center/cover no-repeat`;
+      const safeCover = profile?.coverUrl ? utils.cssUrlValue(profile.coverUrl) : '';
+      if (safeCover) {
+        coverEl.style.background = `url('${safeCover}') center/cover no-repeat`;
       } else {
         /* Reset to default gradient if no cover */
         coverEl.style.background = '';
@@ -4201,7 +4561,7 @@ class DeFiX {
 
   async checkNotifBadge() {
     if (!this.state.signerAddr) return;
-    const lastCheck = parseInt(localStorage.getItem(LAST_CHECK_KEY) || '0', 10);
+    const lastCheck = parseInt(utils.safeLS.get(LAST_CHECK_KEY, '0'), 10);
     try {
       const raw   = await this.apiFetch(this.state.signerAddr, 1);
       const count = raw.filter(tx => {
@@ -4215,6 +4575,8 @@ class DeFiX {
           /* Exclude: profile saves, bookmarks, unfollows */
           if (text.startsWith(PROFILE_PREFIX)) return false;
           if (text.startsWith(BOOKMARK_PREFIX)) return false;
+          if (text.startsWith(UNBOOKMARK_PREFIX)) return false;
+          if (text.startsWith(UNLIKE_PREFIX)) return false;
           if (text.startsWith(UNFOLLOW_PREFIX)) return false;
           return text.length > 0;
         } catch { return false; }
@@ -4274,7 +4636,7 @@ class DeFiX {
     try {
       const prov = new ethers.providers.Web3Provider(eth);
       const accs = await prov.listAccounts();
-      if (accs.length && localStorage.getItem('defixConnected') === '1') {
+      if (accs.length && utils.safeLS.get('defixConnected') === '1') {
         this.signer = prov.getSigner();
         this.state.signerAddr = (await this.signer.getAddress()).toLowerCase();
         this._registerWalletListeners();
@@ -4296,14 +4658,25 @@ class DeFiX {
       await prov.send('eth_requestAccounts', []);
       this.signer = prov.getSigner();
       this.state.signerAddr = (await this.signer.getAddress()).toLowerCase();
-      localStorage.setItem('defixConnected', '1');
+      utils.safeLS.set('defixConnected', '1');
       this._registerWalletListeners();
       await this.afterConnect();
       utils.toast('Wallet connected ✓');
     } catch (err) {
+      const msg = err.message || String(err);
+      /* User rejected the MetaMask popup. EIP-1193 code 4001 or
+         'ACTION_REJECTED' / common message patterns. Show a friendly
+         toast instead of dumping the raw error text. */
+      const isRejection = err.code === 4001 ||
+        err.code === 'ACTION_REJECTED' ||
+        /user (denied|rejected)/i.test(msg) ||
+        /rejected (the )?(transaction|request)/i.test(msg);
+      if (isRejection) {
+        utils.toast('Connection cancelled');
+        return;
+      }
       /* Extension conflict errors look like "Cannot redefine property" —
          they come from third-party extensions, not from our code. */
-      const msg = err.message || String(err);
       if (msg.includes('redefine') || msg.includes('defineProperty')) {
         utils.toast('Wallet extension conflict detected. Try disabling other wallet extensions and reload.');
       } else {
@@ -4332,7 +4705,7 @@ class DeFiX {
     ]);
     this.checkNotifBadge();
     /* Background: rebuild channel history if not scanned recently */
-    const lastScan = parseInt(localStorage.getItem(CHANNELS_KEY) || '0', 10);
+    const lastScan = parseInt(utils.safeLS.get(CHANNELS_KEY, '0'), 10);
     if (Date.now() - lastScan > 86_400_000) {
       setTimeout(() => this.rebuildChannelHistory(), 3000);
     }
@@ -4347,6 +4720,16 @@ class DeFiX {
     this.state.likes.clear();
     this.state.bookmarks.clear();
     this.state.following.clear();
+    /* Last-write-wins resolution. API returns newest-first; we mark the
+       first action seen per target as authoritative and skip older actions
+       for the same target. This makes UNLIKE/UNBOOKMARK/UNFOLLOW work
+       correctly — the most recent decision wins.
+
+       Previously: UNFOLLOW followed by an older FOLLOW (newest-first iteration)
+       would re-add to following. That was a pre-existing bug. */
+    const seenLike     = new Set();
+    const seenBookmark = new Set();
+    const seenFollow   = new Set();
     try {
       /* Cap at 40 pages (2000 txs) — covers heavy reactors generously */
       const rxLimit = Math.min(this._getMaxScanPages(), 40);
@@ -4361,17 +4744,26 @@ class DeFiX {
           if (!tx.input || tx.input === '0x') return;
           try {
             const text = ethers.utils.toUtf8String(tx.input).trim();
-            if (text.startsWith(LIKE_PREFIX)) {
-              /* Likes: sent to channel */
-              this.state.likes.add(text.slice(LIKE_PREFIX.length).trim().toLowerCase());
+            /* UNLIKE check before LIKE (defensive ordering — neither
+               startsWith would clash but readability matters). */
+            if (text.startsWith(UNLIKE_PREFIX)) {
+              const h = text.slice(UNLIKE_PREFIX.length).trim().toLowerCase();
+              if (!seenLike.has(h)) seenLike.add(h);
+            } else if (text.startsWith(LIKE_PREFIX)) {
+              const h = text.slice(LIKE_PREFIX.length).trim().toLowerCase();
+              if (!seenLike.has(h)) { seenLike.add(h); this.state.likes.add(h); }
+            } else if (text.startsWith(UNBOOKMARK_PREFIX) && to === from) {
+              const h = text.slice(UNBOOKMARK_PREFIX.length).trim().toLowerCase();
+              if (!seenBookmark.has(h)) seenBookmark.add(h);
             } else if (text.startsWith(BOOKMARK_PREFIX) && to === from) {
-              /* Bookmarks: self-send only */
-              this.state.bookmarks.add(text.slice(BOOKMARK_PREFIX.length).trim().toLowerCase());
-            } else if (text.startsWith(FOLLOW_PREFIX)) {
-              /* Follows: sent TO the target address */
-              this.state.following.add(text.slice(FOLLOW_PREFIX.length).trim().toLowerCase());
+              const h = text.slice(BOOKMARK_PREFIX.length).trim().toLowerCase();
+              if (!seenBookmark.has(h)) { seenBookmark.add(h); this.state.bookmarks.add(h); }
             } else if (text.startsWith(UNFOLLOW_PREFIX)) {
-              this.state.following.delete(text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase());
+              const a = text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase();
+              if (!seenFollow.has(a)) seenFollow.add(a);
+            } else if (text.startsWith(FOLLOW_PREFIX)) {
+              const a = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
+              if (!seenFollow.has(a)) { seenFollow.add(a); this.state.following.add(a); }
             }
           } catch { /* skip */ }
         });
@@ -4395,7 +4787,7 @@ class DeFiX {
     this.g('ap-name').textContent    = 'My Wallet';
     this.g('ap-addr').textContent    = '';
     this.clearNotifBadge();
-    localStorage.removeItem('defixConnected');
+    utils.safeLS.remove('defixConnected');
     this.renderFeed();
     utils.toast('Wallet disconnected');
   }
@@ -4435,8 +4827,10 @@ class DeFiX {
               const bioEl = document.querySelector('.prof-bio');
               if (bioEl && data.bio) bioEl.textContent = data.bio;
               const coverEl = document.querySelector('.prof-cover');
-              if (coverEl && data.coverUrl)
-                coverEl.style.background = `url('${data.coverUrl}') center/cover no-repeat`;
+              if (coverEl && data.coverUrl) {
+                const safeCover = utils.cssUrlValue(data.coverUrl);
+                if (safeCover) coverEl.style.background = `url('${safeCover}') center/cover no-repeat`;
+              }
             }
             /* Update My Channel page-header title if user is on that page */
             if (this.state.mode === 'self' && data.username) {
@@ -4570,13 +4964,19 @@ class DeFiX {
   }
 
   applyProfile(data) {
+    /* Sanitize URL fields at write time — chain data may contain
+       javascript:/data:/etc URIs that we never want to render anywhere.
+       safeUrl returns '' for blocked schemes so the field falls back to default. */
+    const cleanPic   = utils.safeUrl(data.picUrl || data.profilePicUrl) || 'image1.jpeg';
+    const cleanCover = utils.safeUrl(data.coverUrl);
+    const cleanSite  = utils.safeUrl(data.website);
     this.state.profile = {
       username:  data.username  || '',
-      picUrl:    data.picUrl    || data.profilePicUrl || 'image1.jpeg',
+      picUrl:    cleanPic,
       bio:       data.bio       || '',
-      coverUrl:  data.coverUrl  || '',
+      coverUrl:  cleanCover,
       location:  data.location  || '',
-      website:   data.website   || '',
+      website:   cleanSite,
       joinedTs:  data.joinedTs  || null,
     };
     this.g('compose-avatar').src       = this.state.profile.picUrl;
@@ -4597,6 +4997,10 @@ class DeFiX {
 
   async goProfilePage(address, isOwn = false) {
     this.setNav(isOwn ? 'nav-profile' : null, isOwn ? 'profile' : null);
+    /* Title placeholder until profile resolves. Refined below if cached. */
+    const cachedName = this.state.profCache[address]?.username
+      || (isOwn ? this.state.profile?.username : null);
+    this._updateTitle(cachedName ? '@' + cachedName : 'Profile');
     this.state.mode    = 'profile';
     this.state.channel = address; /* prevent renderFeed from overwriting this page */
     this.g('compose-area').style.display   = 'none';
@@ -4711,15 +5115,20 @@ class DeFiX {
     const handle   = utils.safe(address);
     const bio      = utils.safe(prof.bio || '');
     const location = utils.safe(prof.location || '');
-    const website  = prof.website ? utils.safe(prof.website) : '';
+    /* website handled via safeUrl below — see metaItems */
     const joined   = prof.joinedTs
       ? new Date(prof.joinedTs).toLocaleDateString('en-US',{month:'long',year:'numeric'})
       : '';
-    const picUrl   = utils.safe(prof.picUrl   || 'image1.jpeg');
-    const coverUrl = prof.coverUrl ? utils.safe(prof.coverUrl) : '';
+    /* picUrl: validate scheme to block javascript:/data: URIs in <img src>.
+       <img src> + javascript: doesn't execute in modern browsers but defense
+       in depth never hurts. Falls back to default avatar on invalid URL. */
+    const picUrlSafe = utils.safeUrl(prof.picUrl) || 'image1.jpeg';
+    const picUrl   = utils.safe(picUrlSafe);
+    /* coverUrl: validate AND CSS-escape for url() context */
+    const coverCss = prof.coverUrl ? utils.cssUrlValue(prof.coverUrl) : '';
 
-    const coverStyle = coverUrl
-      ? `background:url('${coverUrl}') center/cover no-repeat`
+    const coverStyle = coverCss
+      ? `background:url('${coverCss}') center/cover no-repeat`
       : `background:linear-gradient(135deg,rgba(124,77,255,0.55),rgba(179,136,255,0.25),rgba(43,134,197,0.15))`;
 
     const followBtn = isOwn
@@ -4728,9 +5137,15 @@ class DeFiX {
         ? `<button class="prof-following-btn" id="prof-follow-btn">Following</button>`
         : `<button class="prof-follow-btn" id="prof-follow-btn">Follow</button>`;
 
+    /* Re-validate URL at render time. Chain data is attacker-controlled
+       and client-side saveProfile validation can be bypassed by publishing
+       a PROFILE_DATA tx directly. safeUrl() blocks javascript:, data:, etc. */
+    const websiteHref = prof.website ? utils.safeUrl(prof.website) : '';
+    const websiteHrefSafe = websiteHref ? utils.safe(websiteHref) : '';
+    const websiteDisplay = websiteHref ? utils.safe(websiteHref.replace(/^https?:\/\//, '')) : '';
     const metaItems = [
       location ? `<span class="prof-meta-item">📍 ${location}</span>` : '',
-      website  ? `<span class="prof-meta-item">🔗 <a href="${website}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${website.replace(/^https?:\/\//,'')}</a></span>` : '',
+      websiteHrefSafe ? `<span class="prof-meta-item">🔗 <a href="${websiteHrefSafe}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${websiteDisplay}</a></span>` : '',
       joined   ? `<span class="prof-meta-item">📅 Joined ${utils.safe(joined)}</span>` : '',
     ].filter(Boolean).join('');
 
@@ -5230,8 +5645,9 @@ class DeFiX {
           try {
             const text = ethers.utils.toUtf8String(tx.input).trim();
             if (text.startsWith(PROFILE_PREFIX)) return;
-            if (text.startsWith(LIKE_PREFIX) || text.startsWith(BOOKMARK_PREFIX) ||
-                text.startsWith(FOLLOW_PREFIX) || text.startsWith(UNFOLLOW_PREFIX)) return;
+            if (text.startsWith(LIKE_PREFIX) || text.startsWith(UNLIKE_PREFIX)) return;
+            if (text.startsWith(BOOKMARK_PREFIX) || text.startsWith(UNBOOKMARK_PREFIX)) return;
+            if (text.startsWith(FOLLOW_PREFIX) || text.startsWith(UNFOLLOW_PREFIX)) return;
             const isReply = text.startsWith(REPLY_PREFIX);
             if (tab === 'posts'   &&  isReply) return;
             if (tab === 'replies' && !isReply) return;
@@ -5287,7 +5703,7 @@ class DeFiX {
           imgUrls.slice(0,60).map(({ url, txHash }) =>
             `<img src="${utils.safe(url)}" class="prof-media-thumb" loading="lazy"
               onerror="this.style.display='none'"
-              onclick="window.open('https://otter.pulsechain.com/tx/${utils.safe(txHash)}','_blank')">`
+              onclick="window.open('https://otter.pulsechain.com/tx/${utils.safe(txHash)}','_blank','noopener,noreferrer')">`
           ).join('')
         }</div>`;
         return;
@@ -5397,6 +5813,12 @@ class DeFiX {
     }
     if (coverUrl && !coverUrl.startsWith('https://')) {
       utils.toast('Cover photo must be an https:// URL'); return;
+    }
+    /* Website: must be http(s)://, or empty. Renders are defensively
+       sanitized via utils.safeUrl in round 34, but catching it here gives
+       the user feedback instead of silently dropping their entry. */
+    if (website && !/^https?:\/\//i.test(website)) {
+      utils.toast('Website must start with http:// or https://'); return;
     }
     if (picUrl) {
       /* Check image loads AND is not excessively large (> 8MB of pixels) */
@@ -5607,7 +6029,7 @@ class DeFiX {
 
   parseTxs(txs) {
     const { mode, channel, signerAddr } = this.state;
-    const lastCheck = parseInt(localStorage.getItem(LAST_CHECK_KEY) || '0', 10);
+    const lastCheck = parseInt(utils.safeLS.get(LAST_CHECK_KEY, '0'), 10);
     return txs.reduce((acc, tx) => {
       if (!tx.input || tx.input === '0x') return acc;
       const from = tx.from?.toLowerCase();
@@ -5619,22 +6041,27 @@ class DeFiX {
 
       /* Profile saves (self-send) — never shown anywhere in feed */
       if (raw.startsWith(PROFILE_PREFIX) && from === to) return acc;
-      /* Bookmarks (self-send) — private, only visible in bookmark tab */
+      /* Bookmarks/unbookmarks (self-send) — private, never in feed */
       if (raw.startsWith(BOOKMARK_PREFIX) && from === to) return acc;
+      if (raw.startsWith(UNBOOKMARK_PREFIX) && from === to) return acc;
 
-      /* Reactions: LIKE/FOLLOW/UNFOLLOW — parse as typed posts.
-         renderFeed skips them from display; notifications tab shows them. */
+      /* Reactions: LIKE/UNLIKE/FOLLOW/UNFOLLOW — parse as typed posts.
+         renderFeed skips them from display; notifications tab shows them.
+         UN* checks first to avoid prefix collisions on naive matching. */
       let postType = 'post';
       let reactionTarget = null;
-      if (raw.startsWith(LIKE_PREFIX)) {
+      if (raw.startsWith(UNLIKE_PREFIX)) {
+        postType = 'unlike';
+        reactionTarget = raw.slice(UNLIKE_PREFIX.length).trim().toLowerCase();
+      } else if (raw.startsWith(LIKE_PREFIX)) {
         postType = 'like';
         reactionTarget = raw.slice(LIKE_PREFIX.length).trim().toLowerCase();
-      } else if (raw.startsWith(FOLLOW_PREFIX)) {
-        postType = 'follow';
-        reactionTarget = raw.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
       } else if (raw.startsWith(UNFOLLOW_PREFIX)) {
         postType = 'unfollow';
         reactionTarget = raw.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase();
+      } else if (raw.startsWith(FOLLOW_PREFIX)) {
+        postType = 'follow';
+        reactionTarget = raw.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
       }
 
       /* Mode-based address filtering */
@@ -5784,11 +6211,12 @@ class DeFiX {
     this._postHashSet    = new Set();
     this._postMap.clear();
     this._fetchingQuotes = new Set(); /* clear in-flight quote fetches */
-    /* Clear feed DOM immediately so old channel's posts don't flash
-       while new channel's posts are loading. */
+    /* Clear feed DOM and show skeleton placeholders so old channel's
+       posts don't flash while new channel's posts are loading. The skeleton
+       gets replaced when the first batch lands via loadCached/fetchPosts. */
     const feedEl = this.g('feed');
     if (feedEl && !this._selfManagedModes.has(this.state.mode)) {
-      feedEl.innerHTML = '';
+      this._renderSkeleton(4);
     }
     this.state.expanded.clear();
     this.state.activeTag  = null;
@@ -6069,9 +6497,7 @@ class DeFiX {
         <img src="${utils.safe(picUrl)}" class="post-avatar" alt=""
           loading="lazy" onerror="this.src='image1.jpeg'">
         <button class="post-menu-btn" data-action="menu" title="More options"
-          aria-label="More options">
-          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M3 12c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zm9 2c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm7 0c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2z"/></svg>
-        </button>
+          aria-label="More options">${this.icon('ic-menu')}</button>
         <div class="post-col">
           <div class="post-meta-row">
             <span class="post-name">${displayName}</span>${verifiedBadge}
@@ -6086,7 +6512,7 @@ class DeFiX {
           </div>
           ${toLabel}${replyBadge}
           ${post.repostOf ? `<div class="repost-label">
-            <svg viewBox="0 0 24 24" width="14" height="14" style="vertical-align:middle;margin-right:4px"><path fill="currentColor" d="M4.5 3.88l4.432 4.14-1.364 1.46L5.5 7.55V16c0 1.1.896 2 2 2H13v2H7.5c-2.209 0-4-1.79-4-4V7.55L1.432 9.48.068 8.02 4.5 3.88zM16.5 6H11V4h5.5c2.209 0 4 1.79 4 4v8.45l2.068-1.93 1.364 1.46L19.5 20.12l-4.432-4.14 1.364-1.46 2.068 1.93V8c0-1.1-.896-2-2-2z"/></svg>
+            <svg width="14" height="14" style="vertical-align:middle;margin-right:4px" aria-hidden="true"><use href="#ic-repost"/></svg>
             <span class="post-name">${displayName}</span> reposted</div>` : ''}
           <div class="post-body">${bodyHtml}</div>
           ${repostCard}
@@ -6094,37 +6520,27 @@ class DeFiX {
           ${imgHtml ? `<div class="post-images">${imgHtml}</div>` : ''}
           <div class="post-actions">
             <div class="post-actions-left">
-            <button class="act-btn act-reply" data-action="reply" title="Reply">
-              <span class="act-icon"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M1.751 10c0-4.42 3.584-8 8.005-8h4.366c4.49 0 8.129 3.64 8.129 8.13 0 2.96-1.607 5.68-4.196 7.11l-8.054 4.46v-3.69h-.067c-4.49.1-8.183-3.51-8.183-8.01zm8.005-6c-3.317 0-6.005 2.69-6.005 6 0 3.37 2.77 6.08 6.138 6.01l.351-.01h1.761v2.3l5.087-2.81c1.951-1.08 3.163-3.13 3.163-5.36 0-3.39-2.744-6.13-6.129-6.13H9.756z"/></svg></span>
+            <button class="act-btn act-reply" data-action="reply" title="Reply" aria-label="Reply to this post">
+              <span class="act-icon">${this.icon('ic-reply')}</span>
               <span class="act-count">${rcLabel}</span>
             </button>
-            <button class="act-btn act-repost" data-action="repost" title="Repost or Quote">
-              <span class="act-icon"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M4.5 3.88l4.432 4.14-1.364 1.46L5.5 7.55V16c0 1.1.896 2 2 2H13v2H7.5c-2.209 0-4-1.79-4-4V7.55L1.432 9.48.068 8.02 4.5 3.88zM16.5 6H11V4h5.5c2.209 0 4 1.79 4 4v8.45l2.068-1.93 1.364 1.46L19.5 20.12l-4.432-4.14 1.364-1.46 2.068 1.93V8c0-1.1-.896-2-2-2z"/></svg></span>
+            <button class="act-btn act-repost" data-action="repost" title="Repost or Quote" aria-label="Repost or quote">
+              <span class="act-icon">${this.icon('ic-repost')}</span>
               <span class="act-count">${rpcLabel}</span>
             </button>
-            <button class="act-btn act-like ${isLiked ? 'liked' : ''}" data-action="like" title="${isLiked ? 'Unlike' : 'Like'}">
-              <span class="act-icon">
-                ${isLiked
-                  ? `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="#f91880" d="M20.884 13.19c-1.351 2.48-4.001 5.12-8.379 7.67l-.503.3-.504-.3c-4.379-2.55-7.029-5.19-8.382-7.67-1.36-2.5-1.41-4.86-.514-6.67.887-1.79 2.647-2.91 4.601-3.01 1.651-.09 3.368.56 4.798 2.01 1.429-1.45 3.146-2.1 4.796-2.01 1.954.1 3.714 1.22 4.601 3.01.896 1.81.846 4.17-.514 6.67z"/></svg>`
-                  : `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M16.697 5.5c-1.222-.06-2.679.51-3.89 2.16l-.805 1.09-.806-1.09C9.984 6.01 8.526 5.44 7.304 5.5c-1.243.07-2.349.78-2.91 1.91-.552 1.12-.633 2.78.479 4.82 1.074 1.97 3.257 4.27 7.129 6.61 3.87-2.34 6.052-4.64 7.126-6.61 1.111-2.04 1.03-3.7.477-4.82-.561-1.13-1.666-1.84-2.908-1.91zm4.187 7.69c-1.351 2.48-4.001 5.12-8.379 7.67l-.503.3-.504-.3c-4.379-2.55-7.029-5.19-8.382-7.67-1.36-2.5-1.41-4.86-.514-6.67.887-1.79 2.647-2.91 4.601-3.01 1.651-.09 3.368.56 4.798 2.01 1.429-1.45 3.146-2.1 4.796-2.01 1.954.1 3.714 1.22 4.601 3.01.896 1.81.846 4.17-.514 6.67z"/></svg>`}
-              </span>
+            <button class="act-btn act-like ${isLiked ? 'liked' : ''}" data-action="like" title="${isLiked ? 'Unlike' : 'Like'}" aria-label="${isLiked ? 'Unlike this post' : 'Like this post'}" aria-pressed="${isLiked ? 'true' : 'false'}">
+              <span class="act-icon">${this.icon(isLiked ? 'ic-heart-full' : 'ic-heart-empty')}</span>
               <span class="act-count">${lcLabel}</span>
             </button>
             ${engagementHTML}
             </div><!-- /.post-actions-left -->
             <div class="post-actions-right">
-            <button class="act-btn act-bookmark ${isBookmarked ? 'bookmarked' : ''}" data-action="bookmark" title="${isBookmarked ? 'Remove bookmark' : 'Bookmark'}">
-              <span class="act-icon">
-                ${isBookmarked
-                  ? `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="#1d9bf0" d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5z"/></svg>`
-                  : `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5zM6.5 4c-.276 0-.5.22-.5.5v14.56l6-4.29 6 4.29V4.5c0-.28-.224-.5-.5-.5h-11z"/></svg>`}
-              </span>
+            <button class="act-btn act-bookmark ${isBookmarked ? 'bookmarked' : ''}" data-action="bookmark" title="${isBookmarked ? 'Remove bookmark' : 'Bookmark'}" aria-label="${isBookmarked ? 'Remove bookmark' : 'Bookmark this post'}" aria-pressed="${isBookmarked ? 'true' : 'false'}">
+              <span class="act-icon">${this.icon(isBookmarked ? 'ic-bookmark-full' : 'ic-bookmark-empty')}</span>
             </button>
             <a href="https://otter.pulsechain.com/tx/${utils.safe(post.txHash)}"
-              target="_blank" class="otter-link" title="Share / View on OtterScan" onclick="event.stopPropagation()">
-              <span class="act-icon">
-                <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2.59l5.7 5.7-1.41 1.42L13 6.41V16h-2V6.41l-3.3 3.3-1.41-1.42L12 2.59zM21 15l-.02 3.51c0 1.38-1.12 2.49-2.5 2.49H5.5C4.11 21 3 19.88 3 18.5V15h2v3.5c0 .28.22.5.5.5h12.98c.28 0 .5-.22.5-.5L19 15h2z"/></svg>
-              </span>
+              target="_blank" class="otter-link" title="Share / View on OtterScan" aria-label="Share / View transaction on OtterScan" onclick="event.stopPropagation()">
+              <span class="act-icon">${this.icon('ic-share')}</span>
             </a>
             </div><!-- /.post-actions-right -->
           </div><!-- /.post-actions -->
@@ -6152,7 +6568,9 @@ class DeFiX {
       const hash    = receipt.transactionHash.toLowerCase();
       if (!body.startsWith(PROFILE_PREFIX) &&
           !body.startsWith(LIKE_PREFIX) &&
+          !body.startsWith(UNLIKE_PREFIX) &&
           !body.startsWith(BOOKMARK_PREFIX) &&
+          !body.startsWith(UNBOOKMARK_PREFIX) &&
           !body.startsWith(FOLLOW_PREFIX) &&
           !body.startsWith(UNFOLLOW_PREFIX)) {
         const post = {
@@ -6170,6 +6588,17 @@ class DeFiX {
       return true;
     } catch (err) {
       const msg = err.reason || err.message || 'Unknown error';
+      /* Detect user rejection (MetaMask "user rejected transaction" or
+         EIP-1193 code 4001 / 'ACTION_REJECTED'). Show a friendly toast
+         instead of dumping the raw error string. */
+      const isRejection = err.code === 4001 ||
+        err.code === 'ACTION_REJECTED' ||
+        /user (denied|rejected)/i.test(msg) ||
+        /rejected (the )?(transaction|request)/i.test(msg);
+      if (isRejection) {
+        utils.toast('Transaction cancelled');
+        return false;
+      }
       /* On network errors, save to offline queue so we can retry later */
       const isOffline = !navigator.onLine || msg.includes('network') ||
         msg.includes('timeout') || msg.includes('fetch');
@@ -6199,14 +6628,22 @@ class DeFiX {
   async publishPost() {
     const text = this.g('compose-text').value.trim();
     if (!text) return false;
-    const ok = await this.publish(text);
-    if (ok) {
-      this.g('compose-text').value = '';
-      this.g('compose-text').style.height = '';
-      utils.updateCharCount(this.g('compose-text'), null);
-      this._clearDraft();
+    /* Disable the Post button during the publish round-trip so users can't
+       double-click and fire two transactions. Re-enable in finally. */
+    const btn = this.g('post-btn');
+    if (btn) btn.disabled = true;
+    try {
+      const ok = await this.publish(text);
+      if (ok) {
+        this.g('compose-text').value = '';
+        this.g('compose-text').style.height = '';
+        utils.updateCharCount(this.g('compose-text'), null);
+        this._clearDraft();
+      }
+      return ok;
+    } finally {
+      if (btn) btn.disabled = false;
     }
-    return ok;
   }
 
   openReplyModal(post) {
@@ -6227,19 +6664,28 @@ class DeFiX {
     const btn  = itemEl.querySelector('[data-action="like"]');
     const icon = btn?.querySelector('.act-icon');
 
-    const heartFull  = `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="#f91880" d="M20.884 13.19c-1.351 2.48-4.001 5.12-8.379 7.67l-.503.3-.504-.3c-4.379-2.55-7.029-5.19-8.382-7.67-1.36-2.5-1.41-4.86-.514-6.67.887-1.79 2.647-2.91 4.601-3.01 1.651-.09 3.368.56 4.798 2.01 1.429-1.45 3.146-2.1 4.796-2.01 1.954.1 3.714 1.22 4.601 3.01.896 1.81.846 4.17-.514 6.67z"/></svg>`;
-    const heartEmpty = `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M16.697 5.5c-1.222-.06-2.679.51-3.89 2.16l-.805 1.09-.806-1.09C9.984 6.01 8.526 5.44 7.304 5.5c-1.243.07-2.349.78-2.91 1.91-.552 1.12-.633 2.78.479 4.82 1.074 1.97 3.257 4.27 7.129 6.61 3.87-2.34 6.052-4.64 7.126-6.61 1.111-2.04 1.03-3.7.477-4.82-.561-1.13-1.666-1.84-2.908-1.91zm4.187 7.69c-1.351 2.48-4.001 5.12-8.379 7.67l-.503.3-.504-.3c-4.379-2.55-7.029-5.19-8.382-7.67-1.36-2.5-1.41-4.86-.514-6.67.887-1.79 2.647-2.91 4.601-3.01 1.651-.09 3.368.56 4.798 2.01 1.429-1.45 3.146-2.1 4.796-2.01 1.954.1 3.714 1.22 4.601 3.01.896 1.81.846 4.17-.514 6.67z"/></svg>`;
+    const heartFull  = this.icon('ic-heart-full');
+    const heartEmpty = this.icon('ic-heart-empty');
 
+    const destination = post.to || this.state.channel;
     if (this.state.likes.has(hash)) {
+      /* Toggle off — publish UNLIKE so the change persists across sessions.
+         Optimistic UI: remove immediately, revert on tx failure. */
       this.state.likes.delete(hash);
       if (btn)  btn.classList.remove('liked');
       if (icon) icon.innerHTML = heartEmpty;
-      utils.toast('Like removed');
+      const ok = await this.publish(UNLIKE_PREFIX + hash, null, destination);
+      if (!ok) {
+        this.state.likes.add(hash);
+        if (btn)  btn.classList.add('liked');
+        if (icon) icon.innerHTML = heartFull;
+      } else {
+        utils.toast('Like removed on-chain');
+      }
     } else {
       this.state.likes.add(hash);
       if (btn)  btn.classList.add('liked');
       if (icon) icon.innerHTML = heartFull;
-      const destination = post.to || this.state.channel;
       const ok = await this.publish(LIKE_PREFIX + hash, null, destination);
       if (!ok) {
         this.state.likes.delete(hash);
@@ -6258,14 +6704,22 @@ class DeFiX {
     const btn  = itemEl.querySelector('[data-action="bookmark"]');
     const icon = btn?.querySelector('.act-icon');
 
-    const bmFull  = `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="#1d9bf0" d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5z"/></svg>`;
-    const bmEmpty = `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5zM6.5 4c-.276 0-.5.22-.5.5v14.56l6-4.29 6 4.29V4.5c0-.28-.224-.5-.5-.5h-11z"/></svg>`;
+    const bmFull  = this.icon('ic-bookmark-full');
+    const bmEmpty = this.icon('ic-bookmark-empty');
 
     if (this.state.bookmarks.has(hash)) {
+      /* Toggle off — publish UNBOOKMARK so the change persists. */
       this.state.bookmarks.delete(hash);
       if (btn)  btn.classList.remove('bookmarked');
       if (icon) icon.innerHTML = bmEmpty;
-      utils.toast('Bookmark removed');
+      const ok = await this.publish(UNBOOKMARK_PREFIX + hash, null, this.state.signerAddr);
+      if (!ok) {
+        this.state.bookmarks.add(hash);
+        if (btn)  btn.classList.add('bookmarked');
+        if (icon) icon.innerHTML = bmFull;
+      } else {
+        utils.toast('Bookmark removed on-chain');
+      }
     } else {
       this.state.bookmarks.add(hash);
       if (btn)  btn.classList.add('bookmarked');
@@ -6445,6 +6899,7 @@ class DeFiX {
 
   openThread(post) {
     if (!post) { utils.toast('Post not loaded yet — try again'); return; }
+    this._updateTitle('Post');
     /* Save previous view so back button can restore it */
     this._prevMode    = this.state.mode;
     this._prevChannel = this.state.channel;
@@ -6954,7 +7409,7 @@ class DeFiX {
         label: 'Copy post link', action: () => utils.copyToClipboard(`https://otter.pulsechain.com/tx/${post.txHash}`, 'Link copied!'), danger: false },
       /* View on OtterScan */
       { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18.36 5.64c-1.95-1.96-5.11-1.96-7.07 0L9.88 7.05 8.46 5.64l1.42-1.42c2.73-2.73 7.16-2.73 9.9 0 2.73 2.74 2.73 7.17 0 9.9l-1.42 1.42-1.41-1.42 1.41-1.41c1.96-1.96 1.96-5.12 0-7.07zm-2.12 3.53l-7.07 7.07-1.41-1.41 7.07-7.07 1.41 1.41zm-12.02.71l1.42-1.42 1.41 1.42-1.41 1.41c-1.96 1.96-1.96 5.12 0 7.07 1.95 1.96 5.11 1.96 7.07 0l1.41-1.41 1.42 1.41-1.42 1.42c-2.73 2.73-7.16 2.73-9.9 0-2.73-2.74-2.73-7.17 0-9.9z"/></svg>',
-        label: 'View on OtterScan', action: () => window.open(`https://otter.pulsechain.com/tx/${post.txHash}`, '_blank'), danger: false },
+        label: 'View on OtterScan', action: () => window.open(`https://otter.pulsechain.com/tx/${post.txHash}`, '_blank', 'noopener,noreferrer'), danger: false },
     );
     /* Own posts get a note about on-chain permanence */
     if (isOwn) {
@@ -7089,7 +7544,7 @@ class DeFiX {
      indexPost() is idempotent (it appends; we check before running). */
   _rebuildSearchIndex() {
     const key = 'sayit_idx_v1';
-    if (localStorage.getItem(key)) return;
+    if (utils.safeLS.get(key)) return;
     const run = async () => {
       try {
         const posts = await this.cache.getPosts(() => true);
@@ -7098,7 +7553,7 @@ class DeFiX {
           await this.cache.indexPost(posts[i]);
           if (i % 50 === 49) await new Promise(res => setTimeout(res, 0));
         }
-        localStorage.setItem(key, '1');
+        utils.safeLS.set(key, '1');
         console.log('[search] Indexed ' + posts.length + ' cached posts');
       } catch (err) { console.warn('[search] Rebuild failed:', err); }
     };
@@ -7485,7 +7940,7 @@ class DeFiX {
               img.className = 'prof-media-thumb';
               img.loading = 'lazy';
               img.onerror = function(){ this.style.display = 'none'; };
-              img.onclick = () => window.open('https://otter.pulsechain.com/tx/' + p.txHash, '_blank');
+              img.onclick = () => window.open('https://otter.pulsechain.com/tx/' + p.txHash, '_blank', 'noopener,noreferrer');
               const grid = feedEl.querySelector('.prof-media-grid') || (() => {
                 const g = document.createElement('div');
                 g.className = 'prof-media-grid';
@@ -7544,8 +7999,9 @@ class DeFiX {
       try {
         const text = ethers.utils.toUtf8String(tx.input).trim();
         if (text.startsWith(PROFILE_PREFIX)) return;
-        if (text.startsWith(LIKE_PREFIX) || text.startsWith(BOOKMARK_PREFIX) ||
-            text.startsWith(FOLLOW_PREFIX) || text.startsWith(UNFOLLOW_PREFIX)) return;
+        if (text.startsWith(LIKE_PREFIX) || text.startsWith(UNLIKE_PREFIX)) return;
+        if (text.startsWith(BOOKMARK_PREFIX) || text.startsWith(UNBOOKMARK_PREFIX)) return;
+        if (text.startsWith(FOLLOW_PREFIX) || text.startsWith(UNFOLLOW_PREFIX)) return;
         const isReply = text.startsWith(REPLY_PREFIX);
         if (tab === 'posts'   &&  isReply) return;
         if (tab === 'replies' && !isReply) return;
@@ -7799,7 +8255,7 @@ class DeFiX {
     if (this.state.muted.has(addr)) { utils.toast('Already muted'); return; }
     this.state.muted.add(addr);
     const list = [...this.state.muted];
-    localStorage.setItem(MUTE_KEY, JSON.stringify(list));
+    utils.safeLS.set(MUTE_KEY, JSON.stringify(list));
     this.cache.saveMuted(list).catch(err => console.warn('Mute IDB save:', err));
     utils.toast(`Muted ${this.trunc(addr)}`);
     this.renderFeed();
@@ -7808,12 +8264,41 @@ class DeFiX {
     addr = addr.toLowerCase();
     this.state.muted.delete(addr);
     const list = [...this.state.muted];
-    localStorage.setItem(MUTE_KEY, JSON.stringify(list));
+    utils.safeLS.set(MUTE_KEY, JSON.stringify(list));
     this.cache.saveMuted(list).catch(err => console.warn('Unmute IDB save:', err));
     utils.toast(`Unmuted ${this.trunc(addr)}`);
     this.renderFeed();
   }
   isMuted(addr) { return !!(addr && this.state.muted.has(addr.toLowerCase())); }
+
+  /* Build a <svg><use> reference to a sprite symbol. Returns the HTML
+     string for inline injection. Defaults to 18px square. */
+  icon(id, sz = 18) {
+    return `<svg width="${sz}" height="${sz}" aria-hidden="true"><use href="#${id}"/></svg>`;
+  }
+
+  /* Render N skeleton post placeholders into the feed. Used during initial
+     fetch so the user sees structure immediately instead of a spinner. */
+  _renderSkeleton(count = 4) {
+    const feed = this.g('feed');
+    if (!feed) return;
+    const skel = Array(count).fill(0).map(() => `
+      <div class="skel-post">
+        <div class="skel-avatar"></div>
+        <div class="skel-body">
+          <div class="skel-line short"></div>
+          <div class="skel-line long"></div>
+          <div class="skel-line medium"></div>
+        </div>
+      </div>`).join('');
+    feed.innerHTML = skel;
+  }
+
+  /* Set the browser tab/window title based on the current view. */
+  _updateTitle(suffix) {
+    const base = 'Say It DeFi';
+    document.title = suffix ? `${suffix} / ${base}` : base;
+  }
 
   /* Show/hide the search clear (X) button based on input content. */
   _updateSearchClearBtn() {
