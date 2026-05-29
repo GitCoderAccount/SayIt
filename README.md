@@ -1,4 +1,4 @@
-# The Pulse Underground
+# Say It DeFi
 
 ![Pulse Underground](image1.jpeg)
 
@@ -10,7 +10,7 @@
 
 ## Vision
 
-**The Pulse Underground** is a fully decentralized social news and messaging platform built natively on **PulseChain**.  
+**Say It DeFi** is a fully decentralized social news and messaging platform built natively on **PulseChain**.  
 
 Instead of relying on centralized servers, databases, or Web2 platforms that can censor, shadow-ban, or shut you down, Pulse Underground turns **zero-value transactions** into immutable public posts and private channels.
 
