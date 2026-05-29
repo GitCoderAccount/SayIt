@@ -47,6 +47,10 @@ body {
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
   background:var(--bg-dark); color:var(--text);
   line-height:1.5; font-size:15px; min-height:100vh;
+  /* Reserve scrollbar space at all times. Without this, the layout shifts
+     horizontally when the page grows tall enough for a scrollbar to appear.
+     X.com uses the same technique. */
+  scrollbar-gutter:stable;
 }
 button,input,textarea { font-family:inherit; }
 a { color:inherit; text-decoration:none; }
@@ -837,6 +841,42 @@ nav { flex:1; padding:4px 0; }
   color:var(--primary-lt); font-size:15px; cursor:pointer;
   text-align:left; transition:background 0.15s;
 }
+/* Today's News card rows — larger format than trend rows.
+   Headline-style preview text + optional thumbnail on the right. */
+.news-row {
+  display:flex; gap:12px;
+  padding:12px 16px; cursor:pointer;
+  transition:background 0.15s;
+  border-top:1px solid var(--border);
+}
+.news-row:first-child { border-top:none; }
+.news-row:hover { background:rgba(255,255,255,0.03); }
+.news-body { flex:1; min-width:0; }
+.news-label {
+  font-size:12px; color:var(--muted);
+  margin-bottom:2px;
+}
+.news-headline {
+  font-size:14px; font-weight:700; color:var(--text);
+  line-height:1.35;
+  /* 3-line clamp — looks like X's news headlines */
+  display:-webkit-box; -webkit-line-clamp:3;
+  -webkit-box-orient:vertical; overflow:hidden;
+  word-break:break-word;
+}
+.news-meta {
+  font-size:12px; color:var(--muted);
+  margin-top:4px;
+  display:flex; align-items:center; gap:4px;
+}
+.news-meta-engagement {
+  display:inline-flex; align-items:center; gap:3px;
+}
+.news-thumb {
+  width:68px; height:68px; border-radius:12px;
+  object-fit:cover; flex-shrink:0;
+  background:var(--bg-mid);
+}
 .sb-show-more:hover { background:rgba(255,255,255,0.03); }
 
 .ch-btn {
@@ -1125,9 +1165,76 @@ nav { flex:1; padding:4px 0; }
 #ptr-pill.show { top:72px; }
 
 /* ── Responsive ─────────────────────────────────────────────────────────── */
-@media (max-width:1280px) { #sidebar-right { flex:0 0 310px; width:310px; } }
-@media (max-width:1100px) { #sidebar-right { flex:0 0 260px; width:260px; padding:12px 10px 24px; } }
-@media (max-width:1100px) { .sb-card-title { font-size:18px; } }
+/* X-style narrow-viewport response:
+   - At ≤1300px: collapse left sidebar to icon-only mode (~88px) and KEEP
+     the right sidebar at full width. This matches what X does and is what
+     gives X its consistent feed-center positioning. Previously we shrank
+     the right sidebar instead, which pushed the feed center too far right.
+   - At ≤1100px: also begin reducing right sidebar width gracefully.
+   - Below 900px and 768px we hit the existing mobile breakpoints. */
+@media (max-width:1300px) {
+  /* Icon-only nav: hide labels, shrink container width, round the buttons.
+     Logo SVG also shrinks to just the bubble+bolt mark. */
+  #sidebar-left { width:88px; flex:0 0 88px; }
+  .nav-label { display:none; }
+  .site-name { display:none; }
+  /* Nav buttons become equal-size rounded squares centered on their icons */
+  .nav-btn {
+    width:50px; height:50px;
+    padding:0; gap:0;
+    justify-content:center; margin:2px auto;
+    border-radius:9999px;
+  }
+  /* Post button: rounded circle with just the ✦ icon */
+  #nav-post-btn {
+    width:50px; height:50px;
+    margin:12px auto;
+    padding:0;
+    font-size:24px; font-weight:400;
+    border-radius:50%;
+    /* Hide the text "Post"; show a + icon via ::before */
+    color:transparent; position:relative;
+  }
+  #nav-post-btn::before {
+    content:'✦';
+    position:absolute; inset:0;
+    display:flex; align-items:center; justify-content:center;
+    color:#fff; font-size:22px;
+  }
+  /* Logo: hide the wordmark portion of the SVG, show just the icon. We
+     achieve this by clipping the SVG width so only the bubble shows. */
+  .logo-svg { width:44px; }
+  .logo-wrap { padding:12px 0 8px; margin:0 auto; width:50px; justify-content:center; }
+  /* Account pill: hide text, show just the avatar */
+  #ap-info, #ap-dots { display:none; }
+  #account-pill {
+    width:50px; height:50px; margin:0 auto;
+    padding:0; justify-content:center;
+  }
+  #ap-avatar { margin:0; }
+  #connect-btn {
+    width:50px; height:50px; padding:0;
+    font-size:0; margin:12px auto;
+    border-radius:50%; position:relative;
+  }
+  #connect-btn::before {
+    content:'🔗';
+    position:absolute; inset:0;
+    display:flex; align-items:center; justify-content:center;
+    font-size:20px;
+  }
+  /* Notification badge: reposition to fit the smaller nav buttons */
+  .notif-badge {
+    top:2px; right:2px;
+  }
+}
+@media (max-width:1100px) {
+  #sidebar-right { flex:0 0 310px; width:310px; }
+  .sb-card-title { font-size:18px; }
+}
+@media (max-width:980px) {
+  #sidebar-right { flex:0 0 280px; width:280px; padding:12px 12px 24px; }
+}
 @media (max-width:900px)  {
   #sidebar-right { display:none; }
   #main { flex:1; width:auto; max-width:none; border-left:none; border-right:none; }
@@ -1779,6 +1886,15 @@ nav { flex:1; padding:4px 0; }
       </div>
     </div>
 
+    <!-- Today's News — top engagement posts from the last 24h.
+         Differs from "What's happening" (hashtag-focused, small rows) by
+         showing larger rows with optional image thumbnails and headline-
+         style post previews. Hidden until populated. -->
+    <div class="sb-card" id="sb-news-card" style="display:none">
+      <div class="sb-card-title">Today's News</div>
+      <div id="sb-news-list"><!-- populated by renderTodaysNews() --></div>
+    </div>
+
     <!-- Who to follow — derived from active addresses in current feed -->
     <div class="sb-card" id="sb-w2f-card" style="display:none">
       <div class="sb-card-title">Who to follow</div>
@@ -2037,7 +2153,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260529-2';
+const SW_CACHE_VER = '20260529-3';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -7689,7 +7805,98 @@ class DeFiX {
      Cheap: all data comes from in-memory state.posts and state.profCache. */
   _refreshSidebarPanels() {
     try { this.renderTrending(); } catch (err) { console.warn('Trending render:', err); }
+    try { this.renderTodaysNews(); } catch (err) { console.warn('News render:', err); }
     try { this.renderWhoToFollow(); } catch (err) { console.warn('W2F render:', err); }
+  }
+
+  /* Today's News — surfaces top-engagement posts from the recent feed.
+     Differs from renderTrending (hashtags) and renderWhoToFollow (addresses):
+     this card shows actual posts as headline-style cards.
+
+     Ranking heuristic (we don't have a true engagement index):
+       1. Posts from the last 24 hours
+       2. With substantive content (text length > 40)
+       3. Prefer posts with hashtags (more topical/newsy)
+       4. Prefer posts with media (image thumbnails make the card look right)
+       5. Newer wins ties
+
+     Max 3 entries — matches X's news card density. */
+  renderTodaysNews() {
+    const list = this.g('sb-news-list');
+    const card = this.g('sb-news-card');
+    if (!list || !card) return;
+
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000; /* 24h window */
+    const imgRe = /https?:\/\/[^\s<>"{}|\\^[\]`]+\.(jpg|jpeg|png|gif|webp|avif)/i;
+    const ipfsRe = /(ipfs:\/\/|\/ipfs\/)\S+/i;
+
+    const score = (p) => {
+      let s = 0;
+      const ts = new Date(p.timestamp).getTime();
+      const ageHours = (Date.now() - ts) / 3_600_000;
+      /* Newer = higher base score */
+      s += Math.max(0, 24 - ageHours) * 2;
+      /* Hashtag bonus */
+      if ((p.display || '').match(/#[A-Za-z0-9_]{2,30}/)) s += 8;
+      /* Media bonus */
+      if (imgRe.test(p.display || '') || ipfsRe.test(p.display || '')) s += 10;
+      /* Substantive bonus */
+      if ((p.display || '').length > 80) s += 4;
+      return s;
+    };
+
+    const candidates = this.state.posts
+      .filter(p => {
+        if (p.postType && p.postType !== 'post') return false; /* skip likes/follows */
+        if (!p.display || p.display.length < 40) return false;
+        const ts = new Date(p.timestamp).getTime();
+        return ts >= cutoff;
+      })
+      .map(p => ({ post: p, score: score(p) }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3)
+      .map(x => x.post);
+
+    if (candidates.length === 0) { card.style.display = 'none'; return; }
+    card.style.display = '';
+
+    list.innerHTML = candidates.map(p => {
+      const author = this.state.profCache[p.reporter];
+      const authorName = author?.username
+        ? utils.safe(author.username)
+        : this.trunc(p.reporter || '');
+      /* Extract first hashtag for label, or fall back to author */
+      const tagMatch = (p.display || '').match(/#([A-Za-z0-9_]{2,30})/);
+      const label = tagMatch ? '#' + utils.safe(tagMatch[1]) + ' · Trending' : authorName;
+      /* First image URL for thumbnail, if any */
+      const imgMatch = (p.display || '').match(/https?:\/\/[^\s<>"{}|\\^[\]`]+\.(jpg|jpeg|png|gif|webp|avif)/i);
+      const thumb = imgMatch ? utils.safeUrl(imgMatch[0]) : '';
+      /* Headline: strip URLs from the display for cleaner preview */
+      const headlineRaw = (p.display || '').replace(/https?:\/\/\S+/g, '').trim();
+      const headline = utils.safe(headlineRaw.slice(0, 140));
+      const time = this.relTime(p.timestamp);
+      return `
+        <div class="news-row" onclick="pulse.openThreadByHash('${utils.safe(p.txHash)}')">
+          <div class="news-body">
+            <div class="news-label">${label}</div>
+            <div class="news-headline">${headline}</div>
+            <div class="news-meta">
+              <span>${utils.safe(authorName)}</span>
+              <span>·</span>
+              <span>${time}</span>
+            </div>
+          </div>
+          ${thumb ? `<img src="${utils.safe(thumb)}" class="news-thumb"
+            alt="" loading="lazy" onerror="this.style.display='none'">` : ''}
+        </div>`;
+    }).join('');
+  }
+
+  /* Helper for news card row clicks — looks up the post and opens its thread. */
+  openThreadByHash(hash) {
+    const post = this._postMap.get(hash) ||
+                 this.state.posts.find(p => p.txHash === hash);
+    if (post) this.openThread(post);
   }
 
   renderTrending() {
