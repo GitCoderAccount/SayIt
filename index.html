@@ -236,16 +236,48 @@ nav { flex:1; padding:4px 0; }
   transition:transform 0.2s ease;
 }
 
+/* New posts pill — sticky floating pill at top center of feed when
+   poll detects new posts. X-style: rounded, primary background, with
+   subtle slide-in animation. Click to prepend posts and scroll up. */
 #new-banner {
-  display:none; width:100%; padding:14px 16px;
-  background:transparent; border:none;
-  border-bottom:1px solid var(--border);
-  /* X-style: centered text, primary color, full-width tap target */
-  color:var(--primary-lt); font-size:15px; font-weight:500;
-  cursor:pointer; text-align:center;
-  transition:background 0.15s;
+  display:none;
+  position:sticky; top:62px; z-index:15;
+  margin:8px auto;
+  width:max-content; max-width:calc(100% - 32px);
+  padding:8px 16px;
+  background:var(--primary);
+  border:none; border-radius:9999px;
+  color:#fff; font-size:14px; font-weight:700;
+  cursor:pointer;
+  align-items:center; gap:8px;
+  box-shadow:0 4px 14px rgba(124,77,255,0.4);
+  transition:background 0.18s, transform 0.18s, box-shadow 0.18s;
 }
-#new-banner:hover { background:rgba(29,155,240,0.05); }
+#new-banner.visible {
+  display:flex;
+  animation:newpost-slidein 0.3s ease-out;
+}
+#new-banner:hover {
+  background:var(--primary-lt);
+  transform:translateY(-1px);
+  box-shadow:0 6px 18px rgba(124,77,255,0.5);
+}
+#new-banner .new-banner-avatars {
+  display:flex; align-items:center;
+}
+#new-banner .new-banner-avatars img {
+  width:24px; height:24px; border-radius:50%;
+  border:2px solid var(--primary);
+  object-fit:cover;
+  margin-left:-6px;
+}
+#new-banner .new-banner-avatars img:first-child { margin-left:0; }
+#new-banner:hover .new-banner-avatars img { border-color:var(--primary-lt); }
+#new-banner .new-banner-text { white-space:nowrap; }
+@keyframes newpost-slidein {
+  from { opacity:0; transform:translateY(-8px); }
+  to   { opacity:1; transform:translateY(0); }
+}
 
 #channel-banner { display:none; border-bottom:1px solid var(--border); }
 .cb-cover {
@@ -1862,7 +1894,10 @@ nav { flex:1; padding:4px 0; }
 
   <!-- Main feed -->
   <div id="main">
-    <button id="new-banner">✦ New posts — click to load</button>
+    <button id="new-banner" aria-label="Show new posts">
+      <span class="new-banner-avatars" id="new-banner-avatars"></span>
+      <span class="new-banner-text" id="new-banner-text">New posts</span>
+    </button>
 
     <div id="feed-tabs">
       <button class="feed-tab active" id="tab-foryou">For You</button>
@@ -2241,7 +2276,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-2';
+const SW_CACHE_VER = '20260530-3';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -3728,7 +3763,7 @@ class DeFiX {
     /* Inject sticky header at top of feed */
     this._pendingPageHeader = this._makePageHeader({
       title: 'Notifications', noBack: true });
-    this.g('new-banner').style.display     = 'none';
+    this.g('new-banner').classList.remove('visible');
     this.g('loading-more').style.display   = 'none';
     this.state.mode = 'notifications';
     utils.safeLS.set(LAST_CHECK_KEY, Date.now().toString());
@@ -5243,7 +5278,7 @@ class DeFiX {
     this.g('compose-area').style.display   = 'none';
     this.g('channel-banner').style.display = 'none';
     this.g('feed-tabs').style.display      = 'none';
-    this.g('new-banner').style.display     = 'none';
+    this.g('new-banner').classList.remove('visible');
     this.g('loading-more').style.display   = 'none';
     /* Set a real title so the header isn't blank */
     /* page header via _makePageHeader handles the title now */
@@ -5301,9 +5336,13 @@ class DeFiX {
     this.g('feed').innerHTML = profHeaderHTML + this._profilePageHTML(address, prof, isOwn);
     this._wireProfilePageListeners(address, isOwn);
 
-    /* Scan more pages for own profile — they likely have many reaction
-       txs (likes, follows) interleaved with actual posts. */
-    const maxPages = isOwn ? 30 : 15;
+    /* Profile scan depth comes from the global Max scan pages setting.
+       This way users who bump it to 200 or unlimited get correspondingly
+       deeper profile history without having to set per-page values.
+       Other users get scanned a bit less aggressively (half the cap) to
+       avoid pounding the API on every profile visit. */
+    const globalLimit = this._getMaxScanPages();
+    const maxPages    = isOwn ? globalLimit : Math.min(globalLimit, Math.max(50, Math.floor(globalLimit / 2)));
     this.loadProfileTab(address, isOwn, 'posts', maxPages).then(() => {
       this._updateProfileSubtitle(address);
     }).catch(() => {});
@@ -5436,10 +5475,9 @@ class DeFiX {
         this.toggleFollowAddr(address, fbtn);
       };
     }
-    /* Tab switching */
-    /* Scan more pages so tabs populate without needing 'Load more'.
-       Profile pages mix posts/replies/reactions — more pages = less blank tabs. */
-    const maxPages = isOwn ? 30 : 15;
+    /* Tab switching — same depth rule as initial load. */
+    const _globalLimit = this._getMaxScanPages();
+    const maxPages = isOwn ? _globalLimit : Math.min(_globalLimit, Math.max(50, Math.floor(_globalLimit / 2)));
     document.querySelectorAll('.prof-tab').forEach(btn => {
       btn.onclick = () => {
         document.querySelectorAll('.prof-tab').forEach(t => t.classList.remove('active'));
@@ -5819,7 +5857,7 @@ class DeFiX {
 
   /* ── Profile tab content ────────────────────────────────────────────── */
   /* Returns a Promise that resolves when the initial tab content is rendered */
-  async loadProfileTab(address, isOwn, tab, maxPages = 4) {
+  async loadProfileTab(address, isOwn, tab, maxPages = 50) {
     const feedEl = document.getElementById('prof-feed');
     if (!feedEl) return;
     feedEl.innerHTML = `<div class="prof-empty"><span>⏳</span><h3>Loading…</h3></div>`;
@@ -6392,19 +6430,48 @@ class DeFiX {
       );
       if (fresh.length) {
         this.state.pending = [...fresh, ...this.state.pending];
-        const n = this.state.pending.length;
-        const btn = this.g('new-banner');
-        btn.textContent   = `Show ${n} post${n > 1 ? 's' : ''}`;
-        btn.style.display = 'block';
+        this._updateNewBanner();
       }
       if (this.state.signerAddr) this.checkNotifBadge();
     } catch (err) { console.warn('Poll error', err); }
   }
 
+  /* Update the floating "new posts" pill — populates the avatars
+     (up to 3 unique posters from pending) and the count text. Called
+     whenever state.pending changes via pollNew. */
+  _updateNewBanner() {
+    const btn       = this.g('new-banner');
+    const avatarsEl = this.g('new-banner-avatars');
+    const textEl    = this.g('new-banner-text');
+    if (!btn || !avatarsEl || !textEl) return;
+    const n = this.state.pending.length;
+    if (n === 0) {
+      btn.classList.remove('visible');
+      return;
+    }
+    /* Up to 3 unique posters, newest first. Dedupe by reporter address. */
+    const seen = new Set();
+    const unique = [];
+    for (const post of this.state.pending) {
+      const addr = (post.reporter || '').toLowerCase();
+      if (!addr || seen.has(addr)) continue;
+      seen.add(addr);
+      const profile = this.state.profCache[addr];
+      const pic = profile?.picUrl || 'image1.jpeg';
+      unique.push({ addr, pic });
+      if (unique.length >= 3) break;
+    }
+    avatarsEl.innerHTML = unique.map(u =>
+      `<img src="${utils.safe(u.pic)}" alt="" onerror="this.src='image1.jpeg'">`
+    ).join('');
+    textEl.textContent = `Show ${n} post${n > 1 ? 's' : ''}`;
+    btn.classList.add('visible');
+  }
+
   loadPending() {
     this.state.posts   = [...this.state.pending, ...this.state.posts];
     this.state.pending = [];
-    this.g('new-banner').style.display = 'none';
+    this.g('new-banner').classList.remove('visible');
     this.renderFeed();
     window.scrollTo({ top: 0, behavior: 'smooth' });
     /* Wire video autoplay observer for newly prepended posts */
@@ -6427,7 +6494,7 @@ class DeFiX {
     this.state.searchTerm = '';
     const search = this.g('search-input');
     if (search) search.value = '';
-    this.g('new-banner').style.display = 'none';
+    this.g('new-banner').classList.remove('visible');
     /* Loading flag may have been left true by a fetch we just cancelled. */
     this.state.loading = false;
     await this.fetchPosts(true);
@@ -6464,7 +6531,7 @@ class DeFiX {
     this.state.searchTerm = '';
     this.g('search-input').value = '';
     this._updateSearchClearBtn();
-    this.g('new-banner').style.display = 'none';
+    this.g('new-banner').classList.remove('visible');
     /* Restore draft for the new channel (set by caller before resetAndFetch) */
     this.g('compose-text').value = '';
     this._restoreDraft();
@@ -7352,7 +7419,7 @@ class DeFiX {
     this.g('compose-area').style.display   = 'none';
     this.g('channel-banner').style.display = 'none';
     this.g('feed-tabs').style.display      = 'none';
-    this.g('new-banner').style.display     = 'none';
+    this.g('new-banner').classList.remove('visible');
     this.g('loading-more').style.display   = 'none';
     /* Thread page header: back arrow + "Post" title, exactly like X */
     this._pendingPageHeader = this._makePageHeader({
