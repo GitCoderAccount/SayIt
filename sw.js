@@ -69,16 +69,29 @@ self.addEventListener('install', event => {
   );
 });
 
-/* ── Activate: clean up old caches ──────────────────────────────────────── */
+/* ── Activate: recover real cache version, clean up old caches ──────────── */
 self.addEventListener('activate', event => {
   event.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(
+    caches.keys().then(keys => {
+      /* Recover the real current cache name from existing caches. A fresh
+         SW worker starts with currentCacheName = prefix+'v1' (placeholder).
+         If we don't recover the real version, the next CACHE_VER message
+         from the page looks like a version change and false-fires the
+         "new version available" toast on every single reload. */
+      const ours = keys.filter(k => k.startsWith(CACHE_NAME_PREFIX));
+      if (ours.length && currentCacheName === CACHE_NAME_PREFIX + 'v1') {
+        /* Adopt the most recent existing cache as current. There's normally
+           just one; if multiple, the newest by name sort wins. */
+        ours.sort();
+        currentCacheName = ours[ours.length - 1];
+        console.log('[SW] Recovered current cache:', currentCacheName);
+      }
+      return Promise.all(
         keys
           .filter(k => k.startsWith(CACHE_NAME_PREFIX) && k !== currentCacheName)
           .map(k => { console.log('[SW] Deleting old cache:', k); return caches.delete(k); })
-      )
-    ).then(() => self.clients.claim())
+      );
+    }).then(() => self.clients.claim())
   );
 });
 
@@ -182,9 +195,25 @@ self.addEventListener('message', event => {
   const newCacheName = CACHE_NAME_PREFIX + cleanVer;
   if (newCacheName === currentCacheName) return;
 
+  /* Was the previous version a REAL version, or just the 'v1' startup
+     placeholder? If placeholder, this is a first-seen version (or the
+     activate handler couldn't recover) — adopt it silently WITHOUT
+     showing the "new version available" toast. The toast should only
+     appear when a genuinely newer version supersedes a known older one. */
+  const wasPlaceholder = currentCacheName === CACHE_NAME_PREFIX + 'v1';
+
   console.log(`[SW] Cache version changed: ${currentCacheName} -> ${newCacheName}`);
   const oldName = currentCacheName;
   currentCacheName = newCacheName;
+
+  if (wasPlaceholder) {
+    /* Silently adopt — pre-cache under the new name, drop the old, no toast. */
+    caches.open(newCacheName).then(cache =>
+      cache.addAll(STATIC_ASSETS.map(url => new Request(url, { cache: 'reload' })))
+        .catch(err => console.warn('[SW] Silent adopt pre-fetch partial:', err))
+    ).then(() => { if (oldName !== newCacheName) caches.delete(oldName); });
+    return;
+  }
 
   /* Pre-cache with the new name */
   caches.open(newCacheName).then(cache =>
