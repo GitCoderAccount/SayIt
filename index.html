@@ -1444,7 +1444,11 @@ nav { flex:1; padding:4px 0; }
 .ch-new-row {
   display:flex; gap:8px; padding:12px 16px;
   border-bottom:1px solid var(--border);
-  background:var(--bg-dark); position:sticky; top:53px; z-index:5;
+  background:var(--bg-dark);
+  /* Not sticky — sticking it below the page-header caused the featured
+     channel cards to visually scroll UNDER the search bar as they passed
+     through. The new-channel input is only needed on first entry to type
+     an address; scrolling away is the expected behavior. */
 }
 .ch-new-row input {
   flex:1; padding:9px 14px; background:rgba(255,255,255,0.07);
@@ -2237,7 +2241,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-1';
+const SW_CACHE_VER = '20260530-2';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -6813,10 +6817,11 @@ class DeFiX {
     videos.forEach(v => this._vidObserver.observe(v));
   }
 
-  postHTML(post, inModal, replyMap, likeMap, repostMap, engagerMap = null) {
-    const isOwn    = post.reporter === this.state.signerAddr;
-    const expanded = this.state.expanded.has(post.txHash);
-
+  /* Resolve display info (avatar, name, verified badge) for a post.
+     Pulls from this.state.profile if it's our own post, otherwise from
+     this.state.profCache. Returns the bits needed by postHTML. */
+  _postProfileFields(post) {
+    const isOwn = post.reporter === this.state.signerAddr;
     let picUrl, displayName, hasProfile;
     if (isOwn) {
       picUrl      = this.state.profile.picUrl || 'image1.jpeg';
@@ -6830,66 +6835,94 @@ class DeFiX {
       displayName = c?.username ? utils.safe(c.username) : this.trunc(post.reporter);
       hasProfile  = !!c?.username;
     }
-    /* On-chain "verified" — small ✓ next to names that have published a
-       PROFILE_DATA on-chain transaction. Free differentiator over Twitter:
-       no payment, no gatekeeper, just chain proof of identity. */
+    /* On-chain "verified" — ✓ next to names that have published a
+       PROFILE_DATA tx. Free differentiator over Twitter: no payment,
+       no gatekeeper, just chain proof of identity. */
     const verifiedBadge = hasProfile
       ? '<span class="verified-icon" title="On-chain profile verified"><svg viewBox="0 0 22 22" width="14" height="14" style="vertical-align:-2px"><path fill="#1d9bf0" d="M20.396 11c-.018-.646-.215-1.275-.57-1.816-.354-.54-.852-.972-1.438-1.246.223-.607.27-1.264.14-1.897-.131-.634-.437-1.218-.882-1.687-.47-.445-1.053-.75-1.687-.882-.633-.13-1.29-.083-1.897.14-.273-.587-.704-1.086-1.245-1.44S11.647 1.62 11 1.604c-.646.017-1.273.213-1.813.568s-.969.854-1.24 1.44c-.608-.223-1.267-.272-1.902-.14-.635.13-1.22.436-1.69.882-.445.47-.749 1.055-.878 1.688-.13.633-.08 1.29.144 1.896-.587.274-1.087.705-1.443 1.245-.356.54-.555 1.17-.574 1.817.02.647.218 1.276.574 1.817.356.54.856.972 1.443 1.245-.224.606-.274 1.263-.144 1.896.13.634.433 1.218.877 1.688.47.443 1.054.747 1.687.878.633.132 1.29.084 1.897-.136.274.586.705 1.084 1.246 1.439.54.354 1.17.551 1.816.569.647-.016 1.276-.213 1.817-.567s.972-.854 1.245-1.44c.604.239 1.266.296 1.903.164.636-.132 1.22-.447 1.68-.907.46-.46.776-1.044.908-1.681s.075-1.299-.165-1.903c.586-.274 1.084-.705 1.439-1.246.354-.54.551-1.17.569-1.816zM9.662 14.85l-3.429-3.428 1.293-1.302 2.072 2.072 4.4-4.794 1.347 1.246z"/></svg></span>'
       : '';
+    return { isOwn, picUrl, displayName, verifiedBadge };
+  }
 
+  /* Build the embedded repost/quote card showing the original post.
+     If the original is in _postMap, render the quote inline.
+     If not, render a loading placeholder and trigger a background fetch. */
+  _postRepostCard(post) {
+    if (!post.repostOf) return '';
+    const orig = this._postMap.get(post.repostOf);
+    if (orig) {
+      const origC    = this.state.profCache[orig.reporter];
+      const origName = origC?.username ? utils.safe(origC.username) : this.trunc(orig.reporter);
+      const origPic  = origC?.picUrl || 'image1.jpeg';
+      const origBody = utils.safe(orig.display.slice(0, 200) + (orig.display.length > 200 ? '…' : ''));
+      return `
+        <div class="repost-card" data-open-quote="${utils.safe(post.repostOf)}" onclick="event.stopPropagation();pulse._openQuotedPost('${utils.safe(post.repostOf)}', '${utils.safe(post.to || this.state.channel || '')}')">
+          <div class="repost-card-hdr">
+            <img src="${utils.safe(origPic)}" class="repost-card-avatar" onerror="this.src='image1.jpeg'">
+            <span class="repost-card-name">${origName}</span>
+            <span style="color:var(--muted);font-size:13px;margin-left:4px">· ${this.relTime(orig.timestamp)}</span>
+          </div>
+          <div class="repost-card-body">${origBody}</div>
+        </div>`;
+    }
+    /* Original not in _postMap — render placeholder and trigger fetch */
+    const qid = utils.safe(post.repostOf);
+    this._fetchQuotedPost(post.repostOf, post.to || this.state.channel);
+    return `<div class="repost-card repost-card-missing" data-fetch-quote="${qid}" id="qc-${qid.slice(2,8)}">
+      <svg viewBox="0 0 24 24" width="14" height="14" style="flex-shrink:0"><path fill="currentColor" d="M4.5 3.88l4.432 4.14-1.364 1.46L5.5 7.55V16c0 1.1.896 2 2 2H13v2H7.5c-2.209 0-4-1.79-4-4V7.55L1.432 9.48.068 8.02 4.5 3.88zM16.5 6H11V4h5.5c2.209 0 4 1.79 4 4v8.45l2.068-1.93 1.364 1.46L19.5 20.12l-4.432-4.14 1.364-1.46 2.068 1.93V8c0-1.1-.896-2-2-2z"/></svg>
+      <span>Loading quoted post…</span>
+    </div>`;
+  }
+
+  /* Build the small "engagement" indicator (eye icon + interaction count)
+     shown in the action row. Returns '' if there's no engagement and no
+     block number; returns a faded indicator if only block info is available. */
+  _postEngagementHTML(post, engagerMap) {
+    const engagers = engagerMap ? engagerMap.get(post.txHash) : null;
+    const count    = engagers ? engagers.size : 0;
+    const eyeSvg   = '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>';
+    if (count > 0) {
+      return '<span class="act-views" title="' + (count === 1 ? '1 interaction' : count + ' interactions') +
+             '"><span class="act-icon">' + eyeSvg + '</span><span class="act-count">' + count + '</span></span>';
+    }
+    if (post.blockNumber) {
+      return '<span class="act-views" title="Block #' + post.blockNumber + '" style="opacity:0.4"><span class="act-icon">' + eyeSvg + '</span></span>';
+    }
+    return '';
+  }
+
+  /* Build the small badges shown above the body (direction, to:, replying to). */
+  _postBadges(post) {
+    return {
+      dirBadge: post.direction
+        ? `<span class="dir-badge dir-${post.direction}">${post.direction === 'sent' ? '↑ sent' : '↓ received'}</span>`
+        : '',
+      toLabel: (post.direction === 'sent' && post.to)
+        ? `<span class="to-label">To: ${this.trunc(post.to)}</span>`
+        : '',
+      replyBadge: post.parentTx
+        ? `<span class="reply-badge">↳ Replying to ${this.trunc(post.parentTx)}</span>`
+        : '',
+    };
+  }
+
+  postHTML(post, inModal, replyMap, likeMap, repostMap, engagerMap = null) {
+    const expanded = this.state.expanded.has(post.txHash);
+    /* Profile + verified badge (own profile vs. cached other-user profile) */
+    const { picUrl, displayName, verifiedBadge } = this._postProfileFields(post);
+    /* Body text + image extraction. Always run linkify on full text so
+       media below the 500-char preview still renders in the feed. */
     const textToRender = (!inModal && !expanded && post.display.length > MAX_PREVIEW)
       ? post.display.slice(0, MAX_PREVIEW) + '…'
       : post.display;
-
-    /* Always extract images from full text — never truncated —
-       so media below the 500-char preview still renders in feed */
     const { text: bodyHtml, images: imgHtml } = utils.linkify(textToRender, post.display);
-    const needsMore = !inModal && !expanded && post.display.length > MAX_PREVIEW;
-
-    /* Repost quote card — look up the original post */
-    let repostCard = '';
-    if (post.repostOf) {
-      const orig = this._postMap.get(post.repostOf);
-      if (orig) {
-        const origC    = this.state.profCache[orig.reporter];
-        const origName = origC?.username ? utils.safe(origC.username) : this.trunc(orig.reporter);
-        const origPic  = origC?.picUrl || 'image1.jpeg';
-        const origBody = utils.safe(orig.display.slice(0, 200) + (orig.display.length > 200 ? '…' : ''));
-        repostCard = `
-          <div class="repost-card" data-open-quote="${utils.safe(post.repostOf)}" onclick="event.stopPropagation();pulse._openQuotedPost('${utils.safe(post.repostOf)}', '${utils.safe(post.to || this.state.channel || '')}')">
-            <div class="repost-card-hdr">
-              <img src="${utils.safe(origPic)}" class="repost-card-avatar" onerror="this.src='image1.jpeg'">
-              <span class="repost-card-name">${origName}</span>
-              <span style="color:var(--muted);font-size:13px;margin-left:4px">· ${this.relTime(orig.timestamp)}</span>
-            </div>
-            <div class="repost-card-body">${origBody}</div>
-          </div>`;
-      } else {
-        /* Original not in _postMap yet — show placeholder and fetch */
-        const qid = utils.safe(post.repostOf);
-        repostCard = `<div class="repost-card repost-card-missing" data-fetch-quote="${qid}" id="qc-${qid.slice(2,8)}">
-          <svg viewBox="0 0 24 24" width="14" height="14" style="flex-shrink:0"><path fill="currentColor" d="M4.5 3.88l4.432 4.14-1.364 1.46L5.5 7.55V16c0 1.1.896 2 2 2H13v2H7.5c-2.209 0-4-1.79-4-4V7.55L1.432 9.48.068 8.02 4.5 3.88zM16.5 6H11V4h5.5c2.209 0 4 1.79 4 4v8.45l2.068-1.93 1.364 1.46L19.5 20.12l-4.432-4.14 1.364-1.46 2.068 1.93V8c0-1.1-.896-2-2-2z"/></svg>
-          <span>Loading quoted post…</span>
-        </div>`;
-        /* Fetch the original post in the background */
-        this._fetchQuotedPost(post.repostOf, post.to || this.state.channel);
-      }
-    }
-
-    const dirBadge = post.direction
-      ? `<span class="dir-badge dir-${post.direction}">${post.direction === 'sent' ? '↑ sent' : '↓ received'}</span>`
-      : '';
-
-    const toLabel = (post.direction === 'sent' && post.to)
-      ? `<span class="to-label">To: ${this.trunc(post.to)}</span>`
-      : '';
-
-    const replyBadge = post.parentTx
-      ? `<span class="reply-badge">↳ Replying to ${this.trunc(post.parentTx)}</span>`
-      : '';
-
-    const rc = replyMap  ? (replyMap.get(post.txHash)  || 0) : 0;
-    const lc = likeMap   ? (likeMap.get(post.txHash)   || 0) : 0;
+    const needsMore  = !inModal && !expanded && post.display.length > MAX_PREVIEW;
+    /* Repost / quote card + badges */
+    const repostCard = this._postRepostCard(post);
+    const { dirBadge, toLabel, replyBadge } = this._postBadges(post);
+    /* Engagement counts */
+    const rc  = replyMap  ? (replyMap.get(post.txHash)  || 0) : 0;
+    const lc  = likeMap   ? (likeMap.get(post.txHash)   || 0) : 0;
     const rpc = repostMap ? (repostMap.get(post.txHash) || 0) : 0;
     const rcLabel  = rc  > 0 ? String(rc)  : '';
     const lcLabel  = lc  > 0 ? String(lc)  : '';
@@ -6898,17 +6931,7 @@ class DeFiX {
     const relT     = this.relTime(post.timestamp);
     const isLiked      = this.state.likes.has(post.txHash);
     const isBookmarked = this.state.bookmarks.has(post.txHash);
-
-    const isMuted = this.isMuted(post.reporter);
-    /* Pre-compute engagement slot (outside template literal for clean parsing) */
-    const _engagers = engagerMap ? engagerMap.get(post.txHash) : null;
-    const _eCount   = _engagers ? _engagers.size : 0;
-    const _svgEye   = '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>';
-    const engagementHTML = _eCount > 0
-      ? '<span class="act-views" title="' + (_eCount === 1 ? '1 interaction' : _eCount + ' interactions') + '"><span class="act-icon">' + _svgEye + '</span><span class="act-count">' + _eCount + '</span></span>'
-      : post.blockNumber
-        ? '<span class="act-views" title="Block #' + post.blockNumber + '" style="opacity:0.4"><span class="act-icon">' + _svgEye + '</span></span>'
-        : '';
+    const engagementHTML = this._postEngagementHTML(post, engagerMap);
 
     return `
       <div class="post-hdr">
