@@ -358,6 +358,15 @@ nav { flex:1; padding:4px 0; }
   cursor:pointer; transition:background 0.15s;
   position:relative;
 }
+/* Virtualization placeholder — reserves scroll space for posts not yet
+   mounted as real .post-item elements. Hidden from interaction; the
+   IntersectionObserver swaps these for real .post-item as they enter
+   the buffer zone (~2 viewports above/below the visible area). */
+.post-placeholder {
+  border-bottom:1px solid var(--border);
+  pointer-events:none;
+  /* No background — invisible placeholder, just reserves height */
+}
 /* X: no bottom border on the very last post */
 .post-item:last-child { border-bottom:0; }
 .pending-post { border-left:3px solid var(--primary) !important; }
@@ -699,6 +708,69 @@ nav { flex:1; padding:4px 0; }
 @media (max-width:900px) {
   .explore-search-wrap { display:block; }
 }
+/* PWA install prompt card — appears at top of right sidebar when the
+   beforeinstallprompt event has fired (Chromium-based browsers on
+   installable sites). Hidden by default; show via JS when the event
+   captures the prompt. */
+#sb-install-card {
+  display:none;
+  padding:16px;
+  background:linear-gradient(135deg,rgba(124,77,255,0.12),rgba(179,136,255,0.04));
+}
+#sb-install-card.visible { display:block; }
+.install-title {
+  font-size:17px; font-weight:800; color:var(--text);
+  margin-bottom:6px;
+}
+.install-desc {
+  font-size:14px; color:var(--muted);
+  line-height:1.4; margin-bottom:12px;
+}
+.install-actions { display:flex; gap:8px; }
+.install-btn {
+  flex:1; padding:8px 12px;
+  border-radius:9999px;
+  background:var(--primary); color:#fff;
+  border:none; cursor:pointer;
+  font-size:14px; font-weight:700;
+  transition:background 0.15s;
+}
+.install-btn:hover { background:var(--primary-lt); }
+.install-dismiss {
+  padding:8px 12px;
+  border-radius:9999px;
+  background:transparent;
+  border:1px solid var(--border);
+  color:var(--muted);
+  cursor:pointer;
+  font-size:14px;
+  transition:border-color 0.15s;
+}
+.install-dismiss:hover { border-color:var(--text); color:var(--text); }
+
+/* Scroll-to-top button — floating circular button that appears when
+   scrollY > 800 and scrolls smoothly back to the top. Bottom-right
+   on desktop; above the mobile-nav (which is at bottom:0) on mobile. */
+#scroll-top-btn {
+  position:fixed;
+  bottom:20px; right:20px;
+  width:48px; height:48px;
+  border-radius:50%;
+  background:var(--primary); color:#fff;
+  border:none; cursor:pointer;
+  display:none; align-items:center; justify-content:center;
+  font-size:22px; line-height:1;
+  box-shadow:0 4px 12px rgba(0,0,0,0.4);
+  transition:background 0.18s, transform 0.18s, opacity 0.18s;
+  z-index:90;
+  opacity:0.85;
+}
+#scroll-top-btn:hover { background:var(--primary-lt); transform:translateY(-2px); opacity:1; }
+#scroll-top-btn.visible { display:flex; }
+@media (max-width:768px) {
+  #scroll-top-btn { bottom:80px; right:16px; }
+}
+
 /* Skeleton loader for the feed — mimics post layout while data loads.
    Shimmer animation conveys "actively working" without a spinner. */
 .skel-post {
@@ -1886,6 +1958,17 @@ nav { flex:1; padding:4px 0; }
       </div>
     </div>
 
+    <!-- PWA install prompt — visible when beforeinstallprompt fires.
+         Replaces what X uses for the "Subscribe to Premium" slot. -->
+    <div class="sb-card" id="sb-install-card">
+      <div class="install-title">📱 Install Say It DeFi</div>
+      <div class="install-desc">Add to your home screen for instant access, offline support, and a native app feel.</div>
+      <div class="install-actions">
+        <button class="install-btn" id="install-btn">Install</button>
+        <button class="install-dismiss" id="install-dismiss">Not now</button>
+      </div>
+    </div>
+
     <!-- Today's News — top engagement posts from the last 24h.
          Differs from "What's happening" (hashtag-focused, small rows) by
          showing larger rows with optional image thumbnails and headline-
@@ -2107,7 +2190,8 @@ nav { flex:1; padding:4px 0; }
       <button class="modal-close" id="close-repost">✕</button>
     </div>
     <textarea class="auto-textarea" id="repost-input"
-      placeholder="Add your quote…" style="margin-bottom:12px"></textarea>
+      placeholder="Add your quote…" style="margin-bottom:4px"></textarea>
+    <div style="text-align:right;font-size:13px;color:var(--muted);margin-bottom:12px" id="repost-count"></div>
     <div id="repost-quote"></div>
     <div class="btn-row" style="margin-top:12px">
       <button class="btn-pri" id="post-repost-btn">?? Quote</button>
@@ -2153,7 +2237,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260529-3';
+const SW_CACHE_VER = '20260530-1';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -2824,6 +2908,22 @@ class DeFiX {
     this._walletReg    = false;
     this._postMap      = new Map();
     this._postHashSet  = new Set(); /* O(1) dedup — kept in sync with state.posts */
+    /* Virtualization state. Posts outside the visible window render as
+       placeholders with reserved height; an IntersectionObserver swaps
+       them for real .post-item elements as the user scrolls into range. */
+    this._vfHeightMap  = new Map(); /* txHash → measured pixel height */
+    this._vfMaps       = null;      /* { replyMap, likeMap, repostMap, engagerMap } */
+    this._vfObserver   = null;      /* IntersectionObserver instance */
+    /* Persistent engagement maps — built from full IDB cache, not just
+       state.posts. Without these, counts are limited to what's in memory:
+       a post with 1000 likes shows as 50 if only 50 like-txs are loaded.
+       Refreshed from IDB on init and on channel switch; updated
+       incrementally when new reactions arrive. */
+    this._engagement   = { replyMap: new Map(), likeMap: new Map(),
+                           repostMap: new Map(), engagerMap: new Map() };
+    this._engagementReady = false;
+    this._vfEstHeight  = 200;       /* default estimate per post */
+    this._vfMountedRef = new WeakMap(); /* element → post reference */
     this.g             = id => document.getElementById(id);
     /* Profile-triggered re-renders: instead of rebuilding the entire feed,
        patch only the avatar+name elements for the address that just loaded.
@@ -2866,6 +2966,14 @@ class DeFiX {
     });
     setTimeout(() => { this.pollNew(); this.startPolling(); }, POLL_FIRST_MS);
     this._loadPendingPostsIntoFeed();
+    /* Kick off engagement-from-IDB build during idle time. Posts already
+       loaded into state.posts will be merged on first render via
+       _mergeEngagement; this catches the rest from IDB. */
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(() => this._refreshEngagementFromCache(), { timeout: 3000 });
+    } else {
+      setTimeout(() => this._refreshEngagementFromCache(), 1500);
+    }
     /* One-time idle-time search index rebuild for posts cached before r18. */
     this._rebuildSearchIndex();
   }
@@ -3325,6 +3433,7 @@ class DeFiX {
     g('post-repost-btn').onclick   = () => this.postRepost();
     g('repost-input').oninput = () => {
       utils.autoGrow(g('repost-input'));
+      utils.updateCharCount(g('repost-input'), g('repost-count'));
     };
 
     /* Compose toolbar — Image / GIF / Emoji */
@@ -3559,6 +3668,7 @@ class DeFiX {
     utils.updateCharCount(this.g('modal-compose-text'), this.g('modal-char-count'));
     this.g('modal-compose-avatar').src = this.state.profile.picUrl || 'image1.jpeg';
     this.g('compose-modal').classList.add('open');
+    this._trapFocus(this.g('compose-modal'));
     setTimeout(() => this.g('modal-compose-text').focus(), 100);
   }
 
@@ -4369,7 +4479,12 @@ class DeFiX {
   }
   _getPostCap() {
     const s = this._getSettings();
-    return Number(s.postCap) || 2000;
+    /* No cap by default — block gas limit caps individual post size, and
+       IndexedDB has plenty of room for any realistic feed. Users can set
+       a manual cap in Settings if they want to bound memory usage on
+       very long-lived sessions. */
+    if (s.postCap === 'unlimited' || s.postCap === '0' || s.postCap === 0) return Infinity;
+    return Number(s.postCap) || Infinity;
   }
   /* Max API pages for deep scans. 0 = Infinity (unlimited).
      Default 100 pages = 5000 txs. */
@@ -4437,8 +4552,9 @@ class DeFiX {
             <span>Max posts kept in memory per session. Higher = more history while scrolling, more RAM used.</span>
           </div>
           <select class="settings-btn" id="set-post-cap" style="padding:9px 12px">
-            ${[500,1000,2000,5000,10000].map(n =>
-              `<option value="${n}" ${(s.postCap||2000)==n?'selected':''}>${n.toLocaleString()} posts</option>`
+            <option value="unlimited" ${(!s.postCap || s.postCap==='unlimited' || s.postCap==='0')?'selected':''}>Unlimited (recommended)</option>
+            ${[500,1000,2000,5000,10000,50000].map(n =>
+              `<option value="${n}" ${s.postCap==n?'selected':''}>${n.toLocaleString()} posts</option>`
             ).join('')}
           </select>
         </div>
@@ -4559,7 +4675,8 @@ class DeFiX {
     });
     g('set-post-cap')?.addEventListener('change', () => {
       const s = this._getSettings();
-      s.postCap = Number(g('set-post-cap').value) || 2000;
+      const capVal = g('set-post-cap').value;
+      s.postCap = (capVal === 'unlimited') ? 'unlimited' : (Number(capVal) || 'unlimited');
       this._saveSettings(s);
       utils.toast('Feed cap saved ✓');
     });
@@ -5913,6 +6030,7 @@ class DeFiX {
     }
 
     g('profile-modal').classList.add('open');
+    this._trapFocus(g('profile-modal'));
   }
 
   async saveProfile() {
@@ -6329,9 +6447,12 @@ class DeFiX {
     this._fetchingQuotes = new Set(); /* clear in-flight quote fetches */
     /* Clear feed DOM and show skeleton placeholders so old channel's
        posts don't flash while new channel's posts are loading. The skeleton
-       gets replaced when the first batch lands via loadCached/fetchPosts. */
+       gets replaced when the first batch lands via loadCached/fetchPosts.
+       Also disconnect the virtualization observer so we don't leak
+       references to the old channel's elements. */
     const feedEl = this.g('feed');
     if (feedEl && !this._selfManagedModes.has(this.state.mode)) {
+      if (this._vfObserver) { this._vfObserver.disconnect(); this._vfObserver = null; }
       this._renderSkeleton(4);
     }
     this.state.expanded.clear();
@@ -6421,7 +6542,7 @@ class DeFiX {
             if (fresh.length) {
               this.state.posts = [...this.state.posts, ...fresh]
                 .sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp))
-                .slice(0, 2000);
+                .slice(0, this._getPostCap());
               fresh.forEach(p => { if (this._postHashSet) this._postHashSet.add(p.txHash); });
               this.renderFeed();
             }
@@ -6430,30 +6551,16 @@ class DeFiX {
         }
       }
     }
-    const replyMap   = new Map();
-    const likeMap    = new Map();
-    const repostMap  = new Map();
-    /* engagerMap: txHash -> count of unique addresses who engaged
-       (liked, replied, or reposted). Used in the "views" slot. */
-    const engagerMap = new Map();
-    this.state.posts.forEach(p => {
-      if (p.parentTx) {
-        replyMap.set(p.parentTx, (replyMap.get(p.parentTx) || 0) + 1);
-        /* Count replier as an engager of the parent */
-        if (!engagerMap.has(p.parentTx)) engagerMap.set(p.parentTx, new Set());
-        engagerMap.get(p.parentTx).add(p.reporter);
-      }
-      if (p.postType === 'like' && p.reactionTarget) {
-        likeMap.set(p.reactionTarget, (likeMap.get(p.reactionTarget) || 0) + 1);
-        if (!engagerMap.has(p.reactionTarget)) engagerMap.set(p.reactionTarget, new Set());
-        engagerMap.get(p.reactionTarget).add(p.reporter);
-      }
-      if (p.postType === 'repost' && p.repostOf) {
-        repostMap.set(p.repostOf, (repostMap.get(p.repostOf) || 0) + 1);
-        if (!engagerMap.has(p.repostOf)) engagerMap.set(p.repostOf, new Set());
-        engagerMap.get(p.repostOf).add(p.reporter);
-      }
-    });
+    /* Engagement maps: prefer the persistent IDB-derived maps (which
+       include reactions from across all sessions, not just what's loaded
+       into state.posts right now). Merge in any state.posts entries that
+       aren't yet in the persistent maps (e.g. new reactions just received
+       from the chain but not yet flushed to IDB). */
+    this._mergeEngagement(this.state.posts, /*reset=*/false);
+    const replyMap   = this._engagement.replyMap;
+    const likeMap    = this._engagement.likeMap;
+    const repostMap  = this._engagement.repostMap;
+    const engagerMap = this._engagement.engagerMap;
 
     /* Filter muted addresses */
     if (this.state.muted.size > 0) {
@@ -6478,20 +6585,215 @@ class DeFiX {
         </div>`;
       return;
     }
-    const frag = document.createDocumentFragment();
+    /* Virtualized render. The first batch (INITIAL_MOUNT) is mounted as
+       real .post-item DOM so the user sees content immediately. Everything
+       after is a .post-placeholder with reserved height; the
+       IntersectionObserver promotes them to real items as they enter the
+       buffer zone (2 viewports above/below visible). This dramatically
+       reduces DOM weight on long feeds (2000-post cap goes from ~6MB of
+       DOM to <500KB). */
+    const INITIAL_MOUNT = 20;
     this._postMap.clear();
-    displayList.forEach(post => {
+    /* Cache the engagement maps so observer swap-ins can call postHTML
+       with the same data the initial render used. */
+    this._vfMaps = { replyMap, likeMap, repostMap, engagerMap };
+
+    const frag = document.createDocumentFragment();
+    displayList.forEach((post, idx) => {
       this._postMap.set(post.txHash, post);
-      const el = document.createElement('div');
-      el.className      = 'post-item';
-      el.dataset.txhash = post.txHash;
-      el.innerHTML      = this.postHTML(post, false, replyMap, likeMap, repostMap, engagerMap);
+      const el = (idx < INITIAL_MOUNT)
+        ? this._vfMountReal(post)
+        : this._vfMountPlaceholder(post);
       frag.appendChild(el);
-      if (post.reporter !== this.state.signerAddr) this.fetchOtherProfile(post.reporter);
+      if (idx < INITIAL_MOUNT && post.reporter !== this.state.signerAddr) {
+        this.fetchOtherProfile(post.reporter);
+      }
     });
     feed.innerHTML = '';
     feed.appendChild(frag);
     this._wireVideoObserver(feed);
+    /* Initialize the observer AFTER the DOM is in place so it can compute
+       intersection rects against the freshly-rendered elements. */
+    this._vfInitObserver(feed);
+    /* Measure the mounted posts so future swaps use real heights. */
+    this._vfMeasureMounted(feed);
+  }
+
+  /* Build engagement maps from the full IDB cache. Counts every reply,
+     like, and repost we've ever observed across all sessions — not just
+     what's currently in state.posts. Lazy-called; result cached on the
+     class. Filtered by channel/mode so different views show the right
+     scope. Cost: one IDB scan per channel switch; amortized over many
+     renders. */
+  async _refreshEngagementFromCache() {
+    try {
+      const all = await this.cache.getPosts(() => true);
+      this._mergeEngagement(all, /*reset=*/true);
+      this._engagementReady = true;
+      /* Re-render the feed so visible posts pick up the fresh counts. */
+      if (!this._selfManagedModes.has(this.state.mode)) this.renderFeed();
+    } catch (err) {
+      console.warn('Engagement rebuild failed:', err);
+    }
+  }
+
+  /* Merge a batch of posts into the engagement maps. If reset=true, the
+     maps are cleared first (used on channel switch). Otherwise this is
+     incremental — new posts just add to the existing counts. Idempotent
+     via engagerMap which tracks unique addresses. */
+  _mergeEngagement(posts, reset = false) {
+    const eng = this._engagement;
+    if (reset) {
+      eng.replyMap.clear(); eng.likeMap.clear();
+      eng.repostMap.clear(); eng.engagerMap.clear();
+    }
+    /* Track which (target, engager) pairs we've already counted so
+       incremental updates don't double-count. The engagerMap value is a
+       Set of addresses; .add() is naturally idempotent. */
+    posts.forEach(p => {
+      if (p.parentTx) {
+        if (!eng.engagerMap.has(p.parentTx)) eng.engagerMap.set(p.parentTx, new Set());
+        const set = eng.engagerMap.get(p.parentTx);
+        if (!set.has(p.reporter)) {
+          set.add(p.reporter);
+          eng.replyMap.set(p.parentTx, (eng.replyMap.get(p.parentTx) || 0) + 1);
+        }
+      }
+      if (p.postType === 'like' && p.reactionTarget) {
+        if (!eng.engagerMap.has(p.reactionTarget)) eng.engagerMap.set(p.reactionTarget, new Set());
+        const set = eng.engagerMap.get(p.reactionTarget);
+        if (!set.has(p.reporter)) {
+          set.add(p.reporter);
+          eng.likeMap.set(p.reactionTarget, (eng.likeMap.get(p.reactionTarget) || 0) + 1);
+        }
+      }
+      if (p.postType === 'repost' && p.repostOf) {
+        if (!eng.engagerMap.has(p.repostOf)) eng.engagerMap.set(p.repostOf, new Set());
+        const set = eng.engagerMap.get(p.repostOf);
+        if (!set.has(p.reporter)) {
+          set.add(p.reporter);
+          eng.repostMap.set(p.repostOf, (eng.repostMap.get(p.repostOf) || 0) + 1);
+        }
+      }
+    });
+  }
+
+  /* Build a real .post-item element. Used by the initial render and by
+     the observer when promoting a placeholder. */
+  _vfMountReal(post) {
+    const el = document.createElement('div');
+    el.className      = 'post-item';
+    el.dataset.txhash = post.txHash;
+    const maps = this._vfMaps || {};
+    el.innerHTML = this.postHTML(post, false,
+      maps.replyMap, maps.likeMap, maps.repostMap, maps.engagerMap);
+    this._vfMountedRef.set(el, post);
+    return el;
+  }
+
+  /* Build a .post-placeholder element with reserved height. The height
+     uses the cached measured height if known, otherwise an estimate.
+     Without this height reservation, swapping placeholder→real on
+     scroll would shift everything below. */
+  _vfMountPlaceholder(post) {
+    const el = document.createElement('div');
+    el.className      = 'post-placeholder';
+    el.dataset.txhash = post.txHash;
+    const h = this._vfHeightMap.get(post.txHash) || this._vfEstHeight;
+    el.style.height = h + 'px';
+    return el;
+  }
+
+  /* Set up the IntersectionObserver. Uses a 200% rootMargin so posts
+     mount well before they're visible (smooth scroll, no pop-in). */
+  _vfInitObserver(feed) {
+    if (this._vfObserver) this._vfObserver.disconnect();
+    if (!('IntersectionObserver' in window)) {
+      /* Browser doesn't support — mount everything. Graceful degradation. */
+      feed.querySelectorAll('.post-placeholder').forEach(ph => {
+        this._vfPromote(ph);
+      });
+      return;
+    }
+    this._vfObserver = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        const el = entry.target;
+        if (entry.isIntersecting) {
+          if (el.classList.contains('post-placeholder')) {
+            this._vfPromote(el);
+          }
+        } else {
+          if (el.classList.contains('post-item')) {
+            this._vfDemote(el);
+          }
+        }
+      });
+    }, {
+      root: null,
+      /* Mount/unmount window: roughly 2 viewports above and below */
+      rootMargin: '200% 0px 200% 0px',
+      threshold: 0,
+    });
+    feed.querySelectorAll('.post-placeholder, .post-item').forEach(el => {
+      this._vfObserver.observe(el);
+    });
+  }
+
+  /* Measure mounted .post-item heights and cache them. Called after
+     initial render and after each promote. Uses requestAnimationFrame
+     so layout is settled when we read offsetHeight. */
+  _vfMeasureMounted(feed) {
+    requestAnimationFrame(() => {
+      feed.querySelectorAll('.post-item').forEach(el => {
+        const h = el.offsetHeight;
+        const txHash = el.dataset.txhash;
+        if (txHash && h > 0) this._vfHeightMap.set(txHash, h);
+      });
+    });
+  }
+
+  /* Promote a placeholder to a real .post-item. Preserves scroll
+     position by leaving the element in-place (only innerHTML and
+     class swap). */
+  _vfPromote(placeholder) {
+    const txHash = placeholder.dataset.txhash;
+    if (!txHash) return;
+    const post = this._postMap.get(txHash);
+    if (!post) return;
+    const maps = this._vfMaps || {};
+    /* Convert in-place — don't replaceChild because that would lose the
+       observer registration. Just swap class + content. */
+    placeholder.className = 'post-item';
+    placeholder.style.height = '';
+    placeholder.innerHTML = this.postHTML(post, false,
+      maps.replyMap, maps.likeMap, maps.repostMap, maps.engagerMap);
+    this._vfMountedRef.set(placeholder, post);
+    /* Measure once layout settles */
+    requestAnimationFrame(() => {
+      const h = placeholder.offsetHeight;
+      if (h > 0) this._vfHeightMap.set(txHash, h);
+    });
+    /* Lazy-load author profile for newly mounted posts */
+    if (post.reporter !== this.state.signerAddr) {
+      this.fetchOtherProfile(post.reporter);
+    }
+  }
+
+  /* Demote a .post-item back to a .post-placeholder. Caches the current
+     height so the swap doesn't shift content below. Skips demotion for
+     pending posts (those at the top of the feed that aren't on-chain
+     yet — keep them mounted so the user sees their post status). */
+  _vfDemote(item) {
+    if (item.classList.contains('pending-post')) return;
+    const txHash = item.dataset.txhash;
+    if (!txHash) return;
+    /* Capture height BEFORE clearing innerHTML */
+    const h = item.offsetHeight;
+    if (h > 0) this._vfHeightMap.set(txHash, h);
+    item.className = 'post-placeholder';
+    item.style.height = (h || this._vfEstHeight) + 'px';
+    item.innerHTML = '';
+    this._vfMountedRef.delete(item);
   }
 
   _wireVideoObserver(container) {
@@ -6770,6 +7072,7 @@ class DeFiX {
     this.g('reply-input').style.height = '';
     this.g('reply-count').textContent  = '';
     this.g('reply-modal').classList.add('open');
+    this._trapFocus(this.g('reply-modal'));
     this.g('reply-input').focus();
   }
 
@@ -6959,6 +7262,7 @@ class DeFiX {
     this.g('repost-input').value        = '';
     this.g('repost-input').style.height = '';
     this.g('repost-modal').classList.add('open');
+    this._trapFocus(this.g('repost-modal'));
     this.g('repost-input').focus();
   }
 
@@ -7276,6 +7580,7 @@ class DeFiX {
     preview.innerHTML = '';
     preview.style.display = 'none';
     this.g('media-modal').classList.add('open');
+    this._trapFocus(this.g('media-modal'));
     setTimeout(() => this.g('media-url-input').focus(), 80);
   }
 
@@ -7385,7 +7690,9 @@ class DeFiX {
   }
 
   closeModal(id) {
-    this.g(id).classList.remove('open');
+    const _modalEl = this.g(id);
+    _modalEl.classList.remove('open');
+    this._releaseFocus(_modalEl);
     if (id === 'compose-modal') {
       const modalText = this.g('modal-compose-text').value;
       if (modalText.trim()) {
@@ -7967,17 +8274,37 @@ class DeFiX {
       counts.set(r, (counts.get(r) || 0) + 1);
     });
     /* Prefer addresses we have profile info for — nicer cards, real names. */
-    const candidates = [...counts.entries()]
+    const _w2fSorted = [...counts.entries()]
       .sort((a, b) => {
         const aHasProfile = this.state.profCache[a[0]]?.username ? 1 : 0;
         const bHasProfile = this.state.profCache[b[0]]?.username ? 1 : 0;
         if (aHasProfile !== bHasProfile) return bHasProfile - aHasProfile;
         return b[1] - a[1];
-      })
-      .slice(0, 3);
+      });
+    this._w2fTotal = _w2fSorted.length;
+    /* Default: 3 visible; Show more reveals 6. Matches X's W2F card density. */
+    const candidates = _w2fSorted.slice(0, this._w2fExpanded ? 6 : 3);
 
     if (candidates.length === 0) { card.style.display = 'none'; return; }
     card.style.display = '';
+    /* Append a Show more / Show less footer link if there are more
+       candidates than currently shown. Removed and re-added each render. */
+    setTimeout(() => {
+      const _card = this.g('sb-w2f-card');
+      if (!_card) return;
+      const existing = _card.querySelector('.w2f-show-more');
+      if (existing) existing.remove();
+      if ((this._w2fTotal || 0) > 3) {
+        const btn = document.createElement('button');
+        btn.className = 'sb-show-more w2f-show-more';
+        btn.textContent = this._w2fExpanded ? 'Show less' : 'Show more';
+        btn.onclick = () => {
+          this._w2fExpanded = !this._w2fExpanded;
+          this.renderWhoToFollow();
+        };
+        _card.appendChild(btn);
+      }
+    }, 0);
     list.innerHTML = candidates.map(([addr]) => {
       const c = this.state.profCache[addr];
       const name = c?.username ? utils.safe(c.username) : this.trunc(addr);
@@ -8484,6 +8811,65 @@ class DeFiX {
     return `<svg width="${sz}" height="${sz}" aria-hidden="true"><use href="#${id}"/></svg>`;
   }
 
+  /* Focus trap for modals — keeps Tab/Shift+Tab focus inside the modal
+     while it's open, returns focus to the previously-focused element on
+     close. Called by classList.add('open') sites via openModal() if you
+     want the trap; falls back gracefully if the modal has no focusable
+     children. */
+  _trapFocus(modalEl) {
+    if (!modalEl) return;
+    /* Save the element that triggered the modal so we can restore focus */
+    modalEl._previousFocus = document.activeElement;
+    /* Find focusable children */
+    const focusableSel = 'a[href], button:not([disabled]), input:not([disabled]), ' +
+                         'textarea:not([disabled]), select:not([disabled]), ' +
+                         '[tabindex]:not([tabindex="-1"])';
+    const focusables = Array.from(modalEl.querySelectorAll(focusableSel))
+      .filter(el => !el.hasAttribute('hidden') && el.offsetParent !== null);
+    if (!focusables.length) return;
+    const first = focusables[0];
+    const last  = focusables[focusables.length - 1];
+    /* Focus the first focusable element. Wrapped in rAF so it lands AFTER
+       any close animations of other modals finish. */
+    requestAnimationFrame(() => {
+      try { first.focus(); } catch {}
+    });
+    /* Wire keydown handler. Stored on the element so we can remove it on close. */
+    const onKeyDown = (e) => {
+      if (e.key !== 'Tab') return;
+      if (focusables.length === 1) {
+        e.preventDefault();
+        return;
+      }
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    modalEl._focusTrapHandler = onKeyDown;
+    modalEl.addEventListener('keydown', onKeyDown);
+  }
+
+  /* Release focus trap and restore prior focus. Called when a modal closes. */
+  _releaseFocus(modalEl) {
+    if (!modalEl) return;
+    if (modalEl._focusTrapHandler) {
+      modalEl.removeEventListener('keydown', modalEl._focusTrapHandler);
+      modalEl._focusTrapHandler = null;
+    }
+    if (modalEl._previousFocus && modalEl._previousFocus.focus) {
+      try { modalEl._previousFocus.focus(); } catch {}
+      modalEl._previousFocus = null;
+    }
+  }
+
   /* Render N skeleton post placeholders into the feed. Used during initial
      fetch so the user sees structure immediately instead of a spinner. */
   _renderSkeleton(count = 4) {
@@ -8583,6 +8969,80 @@ pulse.init().catch(err => {
   if (err.stack) console.error('Stack:', err.stack);
   utils.toast('Startup failed — reload and check console');
 });
+/* PWA install prompt — captures the beforeinstallprompt event on
+   Chromium-based browsers so we can offer Install via our own UI later.
+   Hidden if the user already installed or dismissed the prompt. */
+(function wirePWAInstall() {
+  let deferredPrompt = null;
+  const DISMISS_KEY = 'sayit_install_dismissed';
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    /* Respect the user's previous dismiss for 14 days */
+    try {
+      const dismissed = parseInt(localStorage.getItem(DISMISS_KEY) || '0', 10);
+      if (Date.now() - dismissed < 14 * 24 * 60 * 60 * 1000) return;
+    } catch {}
+    const card = document.getElementById('sb-install-card');
+    if (card) card.classList.add('visible');
+  });
+  function bindButtons() {
+    const installBtn = document.getElementById('install-btn');
+    const dismissBtn = document.getElementById('install-dismiss');
+    const card = document.getElementById('sb-install-card');
+    if (installBtn) {
+      installBtn.onclick = async () => {
+        if (!deferredPrompt) return;
+        deferredPrompt.prompt();
+        try { await deferredPrompt.userChoice; } catch {}
+        deferredPrompt = null;
+        if (card) card.classList.remove('visible');
+      };
+    }
+    if (dismissBtn) {
+      dismissBtn.onclick = () => {
+        try { localStorage.setItem(DISMISS_KEY, String(Date.now())); } catch {}
+        if (card) card.classList.remove('visible');
+      };
+    }
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bindButtons);
+  } else {
+    bindButtons();
+  }
+  /* Hide the card once installation completes */
+  window.addEventListener('appinstalled', () => {
+    const card = document.getElementById('sb-install-card');
+    if (card) card.classList.remove('visible');
+  });
+})();
+/* Scroll-to-top button: shown when user scrolls past 800px.
+   Click smoothly returns to the feed top. */
+(function wireScrollTop() {
+  function init() {
+    const btn = document.createElement('button');
+    btn.id = 'scroll-top-btn';
+    btn.setAttribute('aria-label', 'Scroll to top');
+    btn.title = 'Scroll to top';
+    btn.textContent = '↑';
+    btn.onclick = () => window.scrollTo({ top: 0, behavior: 'smooth' });
+    document.body.appendChild(btn);
+    let lastY = 0;
+    function onScroll() {
+      const y = window.scrollY;
+      if (y > 800 && lastY <= 800) btn.classList.add('visible');
+      else if (y <= 800 && lastY > 800) btn.classList.remove('visible');
+      lastY = y;
+    }
+    window.addEventListener('scroll', onScroll, { passive: true });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
 </script>
 </body>
 </html>
