@@ -2276,7 +2276,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-3';
+const SW_CACHE_VER = '20260530-4';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -3013,6 +3013,18 @@ class DeFiX {
     } else {
       setTimeout(() => this._refreshEngagementFromCache(), 1500);
     }
+    /* Pre-warm the profile cache from IDB for the authors of already-loaded
+       posts. Without this, avatars/names flash the default placeholder on
+       reload until each profile lazy-loads. fetchOtherProfile reads IDB
+       first (fast) and patches the feed in place when done. */
+    {
+      const authors = new Set();
+      for (const p of this.state.posts) {
+        if (p.reporter && p.reporter !== this.state.signerAddr) authors.add(p.reporter);
+        if (authors.size >= 30) break; /* only the first screenful matters */
+      }
+      authors.forEach(addr => this.fetchOtherProfile(addr));
+    }
     /* One-time idle-time search index rebuild for posts cached before r18. */
     this._rebuildSearchIndex();
   }
@@ -3681,7 +3693,7 @@ class DeFiX {
     if (myToken !== this._followingFetchToken) return;
     this.state.posts = [...this.state.posts, ...newPosts]
       .sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp))
-      .slice(0, 2000);
+      .slice(0, this._getPostCap());
     /* Update _postHashSet with new posts */
     if (this._postHashSet) newPosts.forEach(p => this._postHashSet.add(p.txHash));
     await this.cache.savePosts(newPosts);
@@ -5348,41 +5360,35 @@ class DeFiX {
     }).catch(() => {});
 
     /* Background-refresh own profile from chain. When it lands, re-render
-       the page header in-place. */
+       the page header in-place. We DON'T save/restore the feed's innerHTML
+       — doing so used to capture a transient scan-progress block and freeze
+       it on screen (the "page 4 — 150 txs" bug). Instead we only touch the
+       header, leaving the already-rendered tab content untouched. */
     if (isOwn) {
       this.fetchMyProfile().then(() => {
-        if (this.state.mode === 'profile' && this.state.channel === address) {
-          /* Re-render header section only — preserves the loaded feed below */
-          const feed = this.g('feed');
-          if (feed && feed.querySelector('.prof-page')) {
-            /* Save current tab + scroll position */
-            const currentTab = feed.querySelector('.prof-tab.active')?.dataset.ptab || 'posts';
-            const profFeed   = feed.querySelector('.prof-feed');
-            const savedHTML  = profFeed ? profFeed.innerHTML : '';
-            /* Rebuild header + profile page, preserving loaded tab content */
-            const newProfHeaderHTML = this._makePageHeader({
-              title: this.state.profile.username || this.trunc(address),
-              subtitle: '',
-              back: true,
-              searchAddr: address,
-            });
-            feed.innerHTML = newProfHeaderHTML + this._profilePageHTML(address, this.state.profile, isOwn);
-            this._wireProfilePageListeners(address, isOwn);
-            /* Wire back button */
-            const hdrBack = feed.querySelector('.page-header-back');
-            if (hdrBack) hdrBack.onclick = () => this._navBack();
-            /* Restore active tab + previously-rendered feed content */
-            const restoredTab = feed.querySelector(`.prof-tab[data-ptab="${currentTab}"]`);
-            if (restoredTab) {
-              feed.querySelectorAll('.prof-tab').forEach(t => t.classList.remove('active'));
-              restoredTab.classList.add('active');
-            }
-            if (savedHTML && feed.querySelector('.prof-feed')) {
-              feed.querySelector('.prof-feed').innerHTML = savedHTML;
-            }
-          }
+        if (this.state.mode !== 'profile' || this.state.channel !== address) return;
+        const feed = this.g('feed');
+        if (!feed || !feed.querySelector('.prof-page')) return;
+        /* Patch only the header text bits in-place — name, avatar, bio —
+           without rebuilding the whole page (which would disturb the feed
+           and any in-flight scan progress). */
+        const nameEl = feed.querySelector('.prof-display-name');
+        if (nameEl && this.state.profile.username) {
+          nameEl.textContent = this.state.profile.username;
         }
-      });
+        const titleEl = feed.querySelector('.page-header-title');
+        if (titleEl && this.state.profile.username) {
+          titleEl.textContent = this.state.profile.username;
+        }
+        const avatarEl = feed.querySelector('.prof-page-avatar');
+        if (avatarEl && this.state.profile.picUrl && this.state.profile.picUrl !== 'image1.jpeg') {
+          avatarEl.src = this.state.profile.picUrl;
+        }
+        const bioEl = feed.querySelector('.prof-bio');
+        if (bioEl && this.state.profile.bio) {
+          bioEl.textContent = this.state.profile.bio;
+        }
+      }).catch(() => {});
     }
   }
 
@@ -7089,6 +7095,9 @@ class DeFiX {
           txHash: hash, channel: this.state.channel, mode: this.state.mode,
         };
         this.state.posts.unshift(post);
+        /* Add to the dedup set so the next poll doesn't treat our own
+           just-published post as "new" and create a duplicate row. */
+        if (this._postHashSet) this._postHashSet.add(hash);
         await this.cache.savePosts([post]);
         this.renderFeed();
       }
@@ -7642,7 +7651,8 @@ class DeFiX {
     if (newFound.length > 0) {
       this.state.posts = [...this.state.posts, ...newFound]
         .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-        .slice(0, 2000);
+        .slice(0, this._getPostCap());
+      if (this._postHashSet) newFound.forEach(p => this._postHashSet.add(p.txHash));
       await this.cache.savePosts(newFound);
       if (this.state.threadPost?.txHash === targetHash && this.state.mode === 'thread') {
         this._renderThreadPage(post);
@@ -8704,6 +8714,25 @@ class DeFiX {
     this._positionPopup(popup, anchorEl);
     popup.classList.add('open');
     requestAnimationFrame(() => popup.classList.add('visible'));
+
+    /* Close the popup when the mouse leaves it (hover-opened popups only).
+       Without this, moving the mouse off the popup — rather than back onto
+       the trigger — left the popup stuck open. A short grace delay lets
+       the user move between trigger and popup without flicker. */
+    if (trigger === 'hover') {
+      popup.onmouseleave = () => {
+        clearTimeout(popup._pendingClose);
+        popup._pendingClose = setTimeout(() => {
+          /* Only close if the mouse isn't back over the popup or its trigger */
+          if (!popup.matches(':hover')) this.hideProfilePopup();
+        }, 200);
+      };
+      popup.onmouseenter = () => {
+        /* Re-entered the popup — cancel any pending close */
+        clearTimeout(popup._pendingClose);
+        popup._pendingClose = null;
+      };
+    }
 
     this._wirePopupDismiss();
   }
