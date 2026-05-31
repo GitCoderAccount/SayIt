@@ -1793,9 +1793,16 @@ nav { flex:1; padding:4px 0; }
 .thread-reply-item:last-child { border-bottom:0; }
 .thread-compose {
   display:flex; gap:12px; padding:12px 16px;
-  border-top:1px solid var(--border);
-  position:sticky; bottom:0;
-  background:rgba(0,0,0,0.92); backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--border);
+}
+.thread-reply-to {
+  padding:4px 16px 8px 68px;
+  font-size:14px; color:var(--muted);
+}
+.thread-reply-to span { color:var(--primary-lt); }
+.thread-compose-bar {
+  display:flex; align-items:center; justify-content:space-between;
+  margin-top:8px;
 }
 
 /* ── Repost card ────────────────────────────────────────────────────────── */
@@ -2182,7 +2189,8 @@ nav { flex:1; padding:4px 0; }
       <div id="sb-trending-list">
         <!-- Dynamic trending hashtags inserted by renderTrending().
              Pinned partner rows always shown at the bottom. -->
-        <div class="sb-card-row" id="sb-wave-row" style="cursor:pointer">
+        <div class="sb-card-row" id="sb-wave-row" style="cursor:pointer"
+          onclick="pulse.goWave()">
           <div style="flex:1">
             <span class="trend-label">Featured partner</span>
             <span class="trend-name">Wave on Pulse 📻</span>
@@ -2190,7 +2198,8 @@ nav { flex:1; padding:4px 0; }
           </div>
           <span style="font-size:20px;align-self:center">🎙️</span>
         </div>
-        <div class="sb-card-row" id="sb-pulsechain-row" style="cursor:pointer">
+        <div class="sb-card-row" id="sb-pulsechain-row" style="cursor:pointer"
+          onclick="window.open('https://pulsechain.com','_blank','noopener,noreferrer')">
           <div style="flex:1">
             <span class="trend-label">Powered by</span>
             <span class="trend-name">PulseChain ⚡</span>
@@ -2487,7 +2496,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-12';
+const SW_CACHE_VER = '20260530-13';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -3324,9 +3333,9 @@ class DeFiX {
     };
 
     g('logo-wrap').onclick     = () => this.goHome();
-    /* Wave on Pulse sidebar → filter current feed for #Wave content */
-    w('sb-wave-row',      'onclick', () => this.filterByTag('Wave'));
-    w('sb-pulsechain-row', 'onclick', () => this.filterByTag('PulseChain'));
+    /* Wave / PulseChain pinned rows are wired via inline onclick in the
+       HTML (so they survive renderTrending's outerHTML rebuild). Wave opens
+       the Wave channel; PulseChain opens pulsechain.com. */
     g('connect-btn').onclick   = () => this.toggleWallet();
     g('nav-post-btn').onclick  = () => this.openComposeModal();
     g('mobile-fab').onclick    = () => this.openComposeModal();
@@ -5391,6 +5400,10 @@ class DeFiX {
     /* Only re-render feed if we're actually on a feed view */
     const feedModes = ['main', 'self', 'custom', 'wave'];
     if (feedModes.includes(this.state.mode)) this.renderFeed();
+    /* Refresh the sidebar panels (Who to follow, trending, polls) now that
+       we know who the user follows — otherwise Who-to-follow stays empty
+       until the next render (which is why it needed a reload before). */
+    this._refreshSidebarPanels();
   }
 
   /* Load likes, bookmarks, follows from chain */
@@ -8267,30 +8280,45 @@ class DeFiX {
     });
 
     const threadHeader = this._applyPageHeader();
+    /* X-canonical thread layout: original post at top, the reply composer
+       directly beneath it, then the replies below. */
+    const replyingToName = this.state.profCache[post.reporter]?.username
+      || this.trunc(post.reporter);
     this.g('feed').innerHTML = threadHeader + `
       <div class="thread-page">
         <div class="post-item thread-orig-item" data-txhash="${utils.safe(post.txHash)}"
-          style="cursor:default;border-bottom:2px solid var(--border)">
+          style="cursor:default">
           ${origHTML}
         </div>
-        ${repliesHTML ? '<div class="thread-connector" style="height:12px"></div>' : ''}
-        <div id="thread-replies-page">
-          ${repliesHTML || '<div class="prof-empty" style="padding:32px"><span>💬</span><h3>No replies yet</h3><p>Be the first to reply.</p></div>'}
-        </div>
-        <div id="thread-loading-page" style="display:none;padding:16px;text-align:center;color:var(--muted);font-size:14px">
-          ⟳ Fetching replies from chain…
-        </div>
-        <div class="thread-compose" style="border-top:1px solid var(--border);margin-top:0">
+        <div class="thread-reply-to">Replying to <span>@${utils.safe(replyingToName)}</span></div>
+        <div class="thread-compose">
           <img src="${utils.safe(this.state.profile.picUrl || 'image1.jpeg')}"
             class="compose-avatar" onerror="this.src='image1.jpeg'">
           <div style="flex:1">
             <textarea class="auto-textarea" id="thread-page-input"
-              placeholder="Post your reply…" style="min-height:60px"></textarea>
-            <div style="display:flex;justify-content:flex-end;margin-top:8px">
-              <button class="btn-pri" id="thread-page-reply-btn"
-                style="padding:9px 20px">Reply</button>
+              placeholder="Post your reply…" style="min-height:54px"></textarea>
+            <div class="thread-compose-bar">
+              <div class="compose-icons">
+                <button class="cmp-icon" id="thread-media-btn" title="Add photos or video" aria-label="Add media">
+                  <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 5.5C3 4.119 4.119 3 5.5 3h13C19.881 3 21 4.119 21 5.5v13c0 1.381-1.119 2.5-2.5 2.5h-13C4.119 21 3 19.881 3 18.5v-13zM5.5 5c-.276 0-.5.224-.5.5v9.086l3-3 3 3 5-5 3 3V5.5c0-.276-.224-.5-.5-.5h-13zM19 15.414l-3-3-5 5-3-3-3 3V18.5c0 .276.224.5.5.5h13c.276 0 .5-.224.5-.5v-3.086zM9.75 7C8.784 7 8 7.784 8 8.75s.784 1.75 1.75 1.75 1.75-.784 1.75-1.75S10.716 7 9.75 7z"/></svg>
+                </button>
+                <button class="cmp-icon" id="thread-gif-btn" title="Add a GIF" aria-label="Add GIF">
+                  <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 5.5C3 4.119 4.119 3 5.5 3h13C19.881 3 21 4.119 21 5.5v13c0 1.381-1.119 2.5-2.5 2.5h-13C4.119 21 3 19.881 3 18.5v-13zM5.5 5c-.276 0-.5.224-.5.5v13c0 .276.224.5.5.5h13c.276 0 .5-.224.5-.5v-13c0-.276-.224-.5-.5-.5h-13z"/></svg>
+                </button>
+                <button class="cmp-icon" id="thread-emoji-btn" title="Emoji" aria-label="Insert emoji">
+                  <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M8 9.5C8 8.672 8.672 8 9.5 8s1.5.672 1.5 1.5S10.328 11 9.5 11 8 10.328 8 9.5zm6.5 1.5c.828 0 1.5-.672 1.5-1.5S15.328 8 14.5 8 13 8.672 13 9.5s.672 1.5 1.5 1.5zM12 16c-2.224 0-3.021-1.4-3.094-1.536l-1.76.992C7.196 15.69 8.638 18 12 18s4.804-2.31 4.854-2.544l-1.76-.992C15.021 14.6 14.224 16 12 16zm-.002-14C6.477 2 2 6.477 2 12s4.477 10 9.998 10C17.523 22 22 17.523 22 12S17.523 2 11.998 2zM12 20C7.582 20 4 16.418 4 12s3.582-8 8-8 8 3.582 8 8-3.582 8-8 8z"/></svg>
+                </button>
+              </div>
+              <button class="btn-pri" id="thread-page-reply-btn" style="padding:8px 20px">Reply</button>
             </div>
           </div>
+        </div>
+        ${repliesHTML ? '' : ''}
+        <div id="thread-replies-page">
+          ${repliesHTML || '<div class="prof-empty" style="padding:40px 32px"><span>💬</span><h3>No replies yet</h3><p>Be the first to reply.</p></div>'}
+        </div>
+        <div id="thread-loading-page" style="display:none;padding:16px;text-align:center;color:var(--muted);font-size:14px">
+          ⟳ Fetching replies from chain…
         </div>
       </div>`;
 
@@ -8303,6 +8331,26 @@ class DeFiX {
     const btn   = document.getElementById('thread-page-reply-btn');
     if (input) input.oninput = () => utils.autoGrow(input);
     if (btn) btn.onclick = () => this._postThreadPageReply(post, input);
+    /* Thread compose toolbar — media/gif insert a URL into the reply box,
+       emoji opens the picker targeting the thread input. */
+    const tMedia = document.getElementById('thread-media-btn');
+    const tGif   = document.getElementById('thread-gif-btn');
+    const tEmoji = document.getElementById('thread-emoji-btn');
+    const insertIntoThread = (text) => {
+      if (!input) return;
+      const pos = input.selectionStart ?? input.value.length;
+      input.value = input.value.slice(0, pos) + text + input.value.slice(pos);
+      input.focus(); utils.autoGrow(input);
+    };
+    if (tMedia) tMedia.onclick = () => {
+      const url = prompt('Paste an image, GIF, or video URL:');
+      if (url && url.trim()) insertIntoThread((input.value ? ' ' : '') + url.trim());
+    };
+    if (tGif) tGif.onclick = () => {
+      const url = prompt('Paste a GIF URL:');
+      if (url && url.trim()) insertIntoThread((input.value ? ' ' : '') + url.trim());
+    };
+    if (tEmoji) tEmoji.onclick = () => this._openEmojiPickerFor(input, tEmoji);
 
     /* Wire click delegation on replies */
     const repliesEl = document.getElementById('thread-replies-page');
@@ -8489,6 +8537,15 @@ class DeFiX {
     if (m) { this._releaseFocus(m); m.remove(); }
   }
 
+  /* Open the emoji picker targeting a specific textarea (e.g. the thread
+     reply box). Lightweight wrapper that temporarily points insertion at
+     the given element. */
+  _openEmojiPickerFor(targetEl, anchorBtn) {
+    this._emojiTarget = targetEl;
+    this._emojiAnchor = anchorBtn;
+    this.toggleEmojiPicker();
+  }
+
   /* ── Emoji picker ───────────────────────────────────────────────────── */
   toggleEmojiPicker() {
     const existing = document.getElementById('emoji-picker-pop');
@@ -8541,9 +8598,12 @@ class DeFiX {
     body.style.cssText = `overflow-y:auto; padding:8px 10px 12px; flex:1;`;
 
     const insertEmoji = (em) => {
-      /* Insert into whichever compose box is active: modal if open, else main */
-      const modalOpen = this.g('compose-modal')?.classList.contains('open');
-      const compose = modalOpen ? this.g('modal-compose-text') : this.g('compose-text');
+      /* If a custom target was set (thread reply box), insert there. */
+      let compose = this._emojiTarget || null;
+      if (!compose) {
+        const modalOpen = this.g('compose-modal')?.classList.contains('open');
+        compose = modalOpen ? this.g('modal-compose-text') : this.g('compose-text');
+      }
       if (!compose) return;
       const pos = compose.selectionStart ?? compose.value.length;
       compose.value = compose.value.slice(0,pos) + em + compose.value.slice(pos);
@@ -8582,8 +8642,9 @@ class DeFiX {
     });
     picker.appendChild(body);
 
-    /* Position below the emoji button (use whichever exists/visible) */
-    const emojiBtn = this.g('cmp-emoji-btn');
+    /* Position below the emoji button (use a custom anchor if one was set
+       via _openEmojiPickerFor, e.g. the thread reply toolbar). */
+    const emojiBtn = this._emojiAnchor || this.g('cmp-emoji-btn');
     const rect = emojiBtn.getBoundingClientRect();
     picker.style.top  = (rect.bottom + window.scrollY + 6) + 'px';
     picker.style.left = Math.max(8, Math.min(rect.left - 140, window.innerWidth - 332)) + 'px';
@@ -8594,6 +8655,8 @@ class DeFiX {
       picker.remove();
       document.removeEventListener('click', close, true);
       document.removeEventListener('keydown', onKey, true);
+      this._emojiTarget = null;
+      this._emojiAnchor = null;
     };
     const close = e => {
       if (!picker.contains(e.target) && e.target !== emojiBtn) removePicker();
