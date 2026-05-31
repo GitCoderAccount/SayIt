@@ -1617,6 +1617,22 @@ nav { flex:1; padding:4px 0; }
   border-bottom:1px solid var(--border);
 }
 .lc-new-comm { flex-wrap:wrap; }
+.lc-sync-row {
+  display:flex; gap:8px; padding:10px 16px;
+  border-bottom:1px solid var(--border);
+}
+.lc-sync-btn {
+  flex:1; padding:9px 12px; border-radius:9999px;
+  background:var(--primary); color:#fff; border:none;
+  font-size:13px; font-weight:700; cursor:pointer;
+  transition:background 0.15s;
+}
+.lc-sync-btn:hover { background:var(--primary-lt); }
+.lc-sync-btn.ghost {
+  background:transparent; color:var(--text);
+  border:1px solid var(--border);
+}
+.lc-sync-btn.ghost:hover { background:rgba(255,255,255,0.06); }
 .lc-new-row input {
   flex:1; min-width:120px; padding:9px 14px;
   background:rgba(255,255,255,0.07); border:1px solid transparent;
@@ -2067,6 +2083,11 @@ nav { flex:1; padding:4px 0; }
           <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5zM6.5 4c-.276 0-.5.22-.5.5v14.56l6-4.29 6 4.29V4.5c0-.28-.224-.5-.5-.5h-11z"/></svg>
         </span><span class="nav-label">Bookmarks</span>
       </button>
+      <button class="nav-btn" id="nav-lists">
+        <span class="nav-icon">
+          <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M3 4.5A1.5 1.5 0 014.5 3h15A1.5 1.5 0 0121 4.5 1.5 1.5 0 0119.5 6h-15A1.5 1.5 0 013 4.5zm0 7A1.5 1.5 0 014.5 10h15a1.5 1.5 0 010 3h-15A1.5 1.5 0 013 11.5zM4.5 17a1.5 1.5 0 000 3h9a1.5 1.5 0 000-3h-9z"/></svg>
+        </span><span class="nav-label">Lists</span>
+      </button>
       <button class="nav-btn" id="nav-profile">
         <span class="nav-icon">
           <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M5.651 19h12.698c-.337-1.8-1.023-2.891-1.929-3.4-1.285-.736-3.574-1.1-4.42-1.1-.845 0-3.135.364-4.42 1.1-.906.509-1.592 1.6-1.929 3.4zM12 11c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zm0 2c-2.5 0-4.418.733-5.649 1.896C5.23 16.02 4.617 17.467 4.39 19.5c-.046.441.233.9.683.9h13.854c.45 0 .729-.459.683-.9-.226-2.033-.84-3.48-1.961-4.604C16.418 13.733 14.5 13 12 13zm0-8C9.239 5 7 7.239 7 10s2.239 5 5 5 5-2.239 5-5-2.239-5-5-5z"/></svg>
@@ -2119,11 +2140,6 @@ nav { flex:1; padding:4px 0; }
 
   <!-- Main feed -->
   <div id="main">
-    <button id="new-banner" aria-label="Show new posts">
-      <span class="new-banner-avatars" id="new-banner-avatars"></span>
-      <span class="new-banner-text" id="new-banner-text">New posts</span>
-    </button>
-
     <div id="feed-tabs">
       <button class="feed-tab active" id="tab-foryou">For You</button>
       <button class="feed-tab" id="tab-following">Following</button>
@@ -2177,6 +2193,11 @@ nav { flex:1; padding:4px 0; }
         </div>
       </div>
     </div>
+
+    <button id="new-banner" aria-label="Show new posts">
+      <span class="new-banner-avatars" id="new-banner-avatars"></span>
+      <span class="new-banner-text" id="new-banner-text">New posts</span>
+    </button>
 
     <div id="feed"></div>
     <div id="loading-more">Scanning the chain…</div>
@@ -2513,7 +2534,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-15';
+const SW_CACHE_VER = '20260530-17';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -2545,6 +2566,11 @@ const SETTINGS_KEY    = 'defixSettings';
 const MUTE_KEY        = 'defixMuted';   /* JSON array of muted addresses */
 const LISTS_KEY       = 'defixLists';       /* JSON array of {id,name,members[]} */
 const COMMUNITIES_KEY = 'defixCommunities'; /* JSON array of {address,name,desc,joined} */
+/* On-chain sync: a single self-tx publishes a snapshot of all lists +
+   joined communities as JSON. Scanning the user's own outbox for the latest
+   LC_SYNC restores them on any device. One tx per publish (not per edit) —
+   keeps gas reasonable while making the data portable + publicly visible. */
+const LC_SYNC_PREFIX  = 'LC_SYNC:';
 const CHANNELS_KEY    = 'defixChannelsScan';
 
 const ERC721_ABI = [
@@ -3217,6 +3243,7 @@ class DeFiX {
        total, scannedAt }. Populated lazily by _tallyPoll on render. */
     this._pollTallies  = new Map();
     this._pollScanning = new Set(); /* poll hashes with an in-flight tally */
+    this._myVotes      = new Map(); /* pollHash → optIdx the user has voted (session) */
     /* Tab title + favicon badge state. _titleSuffix is the per-view label
        (Home, Notifications, etc.); _unreadCount drives the (N) prefix and
        the favicon dot. Both compose in _updateTitle / _updateFavicon. */
@@ -3398,6 +3425,8 @@ class DeFiX {
     g('nav-channels').onclick  = () => this.goChannels();
     w('nav-mychannel', 'onclick', () => this.goSelf());
     g('nav-bookmarks').onclick = () => this.goBookmarks();
+    const navLists = g('nav-lists');
+    if (navLists) navLists.onclick = () => this.goLists();
     g('nav-profile').onclick   = () => this.openProfileModal();
     g('nav-more').onclick      = e => { e.stopPropagation(); this.toggleMoreMenu(); };
     g('more-settings').onclick = () => { this.hideMoreMenu(); this.goSettings(); };
@@ -7751,6 +7780,10 @@ class DeFiX {
       for (const idx of voters.values()) counts[idx]++;
       const tally = { counts, voters, total: voters.size, scannedAt: Date.now() };
       this._pollTallies.set(hash, tally);
+      /* If the scan found the user's own vote, record it so the buttons
+         stay hidden on subsequent renders (e.g. after a reload). */
+      const mine = voters.get(this.state.signerAddr);
+      if (mine !== undefined && !this._myVotes.has(hash)) this._myVotes.set(hash, mine);
       return tally;
     } finally {
       this._pollScanning.delete(hash);
@@ -7763,7 +7796,13 @@ class DeFiX {
     const poll = post.poll;
     if (!poll) return '';
     const tally = this._pollTallies.get(post.txHash);
-    const myVote = tally ? tally.voters.get(this.state.signerAddr) : undefined;
+    /* Prefer the session record (instant) over the tally (async). This stops
+       the vote buttons from showing — and inviting a re-vote — before the
+       background tally scan finishes. */
+    const sessionVote = this._myVotes.get(post.txHash);
+    const myVote = sessionVote !== undefined
+      ? sessionVote
+      : (tally ? tally.voters.get(this.state.signerAddr) : undefined);
     const closed = this._pollIsClosed(poll);
     const showResults = closed || myVote !== undefined;
     const total = tally ? tally.total : 0;
@@ -7800,6 +7839,17 @@ class DeFiX {
     const post = this._postMap.get(pollHash);
     if (!post || !post.poll) { utils.toast('Poll not found'); return; }
     if (this._pollIsClosed(post.poll)) { utils.toast('This poll has ended'); return; }
+    /* Already voted this option this session? No-op (last-vote-wins still
+       allows changing, but re-submitting the same choice is pointless). */
+    if (this._myVotes.get(pollHash) === optIdx) {
+      utils.toast('You already voted for this option');
+      return;
+    }
+    /* Record the vote immediately so the UI flips to results and the
+       buttons disappear — prevents accidental double-clicks while the tx
+       is in flight. */
+    this._myVotes.set(pollHash, optIdx);
+    this._refreshPollBlock(pollHash);
     const channel = post.to || post.channel || this.state.channel;
     const body = `${VOTE_PREFIX}${pollHash}:${optIdx}`;
     try {
@@ -7826,6 +7876,9 @@ class DeFiX {
       const rejected = err.code === 4001 || err.code === 'ACTION_REJECTED' ||
         /user (denied|rejected)/i.test(msg);
       utils.toast(rejected ? 'Vote cancelled' : 'Vote failed: ' + msg);
+      /* Roll back the optimistic session vote so the user can try again. */
+      this._myVotes.delete(pollHash);
+      this._refreshPollBlock(pollHash);
     }
   }
 
@@ -10019,6 +10072,91 @@ class DeFiX {
   _saveCommunities() {
     utils.safeLS.set(COMMUNITIES_KEY, JSON.stringify(this.state.communities));
   }
+
+  /* Publish a snapshot of lists + joined communities on-chain as a single
+     self-transaction. Portable across devices and publicly visible to
+     anyone scanning the user's address. One tx per publish. */
+  async publishListsOnChain() {
+    if (!this.signer) { utils.toast('Connect wallet to publish'); return; }
+    const snapshot = {
+      v: 1,
+      lists: this.state.lists.map(l => ({ id: l.id, name: l.name, members: l.members })),
+      communities: this.state.communities
+        .filter(c => c.joined)
+        .map(c => ({ address: c.address, name: c.name, desc: c.desc || '' })),
+    };
+    const body = LC_SYNC_PREFIX + JSON.stringify(snapshot);
+    /* Guard against oversized payloads (gas). Warn if very large. */
+    if (body.length > 24000) {
+      utils.toast('Lists too large to publish in one tx — trim some members');
+      return;
+    }
+    try {
+      const to    = this.state.signerAddr; /* self-tx */
+      const data  = ethers.utils.hexlify(ethers.utils.toUtf8Bytes(body));
+      let gas     = await this.signer.estimateGas({ to, value: '0', data });
+      gas         = gas.mul(130).div(100);
+      const tx    = await this.signer.sendTransaction({ to, value: '0', data, gasLimit: gas });
+      utils.toast('Publishing lists on-chain… you can keep browsing');
+      await tx.wait();
+      utils.toast('Lists published on-chain ✓');
+    } catch (err) {
+      const msg = err.reason || err.message || 'Unknown error';
+      const rejected = err.code === 4001 || err.code === 'ACTION_REJECTED' || /user (denied|rejected)/i.test(msg);
+      utils.toast(rejected ? 'Publish cancelled' : 'Publish failed: ' + msg);
+    }
+  }
+
+  /* Restore lists + communities from the latest on-chain LC_SYNC snapshot
+     in the user's outbox. Merges with local (on-chain wins for matching
+     ids/addresses). Called on demand from the Lists/Communities pages. */
+  async restoreListsFromChain() {
+    if (!this.state.signerAddr) { utils.toast('Connect wallet first'); return; }
+    utils.toast('Looking for your on-chain lists…');
+    try {
+      let snapshot = null;
+      const scanLimit = Math.min(this._getMaxScanPages(), 10);
+      outer:
+      for (let page = 1; page <= scanLimit; page++) {
+        let raw;
+        try { raw = await this.apiFetch(this.state.signerAddr, page); }
+        catch { break; }
+        for (const tx of raw) {
+          if (tx.from?.toLowerCase() !== this.state.signerAddr) continue;
+          if (!tx.input || tx.input === '0x') continue;
+          let text;
+          try { text = ethers.utils.toUtf8String(tx.input).trim(); }
+          catch { continue; }
+          if (!text.startsWith(LC_SYNC_PREFIX)) continue;
+          try { snapshot = JSON.parse(text.slice(LC_SYNC_PREFIX.length)); break outer; }
+          catch { continue; }
+        }
+        if (raw.length < 50) break;
+      }
+      if (!snapshot) { utils.toast('No on-chain lists found'); return; }
+      /* Merge lists: on-chain entries replace local ones with the same id. */
+      const localById = new Map(this.state.lists.map(l => [l.id, l]));
+      (snapshot.lists || []).forEach(l => localById.set(l.id, {
+        id: l.id, name: l.name, members: Array.isArray(l.members) ? l.members : [],
+      }));
+      this.state.lists = [...localById.values()];
+      this._saveLists();
+      /* Merge communities by address (mark restored ones joined). */
+      const localByAddr = new Map(this.state.communities.map(c => [c.address, c]));
+      (snapshot.communities || []).forEach(c => {
+        const addr = (c.address || '').toLowerCase();
+        if (!addr) return;
+        localByAddr.set(addr, { address: addr, name: c.name || this.trunc(addr), desc: c.desc || '', joined: true });
+      });
+      this.state.communities = [...localByAddr.values()];
+      this._saveCommunities();
+      utils.toast('Restored from chain ✓');
+      if (this.state.mode === 'lists') this.goLists();
+      else if (this.state.mode === 'communities') this.goCommunities();
+    } catch (err) {
+      utils.toast('Restore failed: ' + (err.message || 'error'));
+    }
+  }
   _newListId() {
     return 'l_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   }
@@ -10065,6 +10203,10 @@ class DeFiX {
           <input type="text" id="new-list-name" placeholder="New list name…" maxlength="40" autocomplete="off">
           <button class="go-btn" id="new-list-go">Create</button>
         </div>
+        <div class="lc-sync-row">
+          <button class="lc-sync-btn" id="lists-publish">⬆ Publish on-chain</button>
+          <button class="lc-sync-btn ghost" id="lists-restore">⬇ Restore from chain</button>
+        </div>
         ${rows}
       </div>`;
   }
@@ -10073,6 +10215,10 @@ class DeFiX {
     const g = id => document.getElementById(id);
     const nameInput = g('new-list-name');
     const createBtn = g('new-list-go');
+    const pubBtn = g('lists-publish');
+    const resBtn = g('lists-restore');
+    if (pubBtn) pubBtn.onclick = () => this.publishListsOnChain();
+    if (resBtn) resBtn.onclick = () => this.restoreListsFromChain();
     const create = () => {
       const name = nameInput?.value.trim();
       if (!name) { utils.toast('Enter a list name'); return; }
@@ -10350,12 +10496,20 @@ class DeFiX {
           <input type="text" id="new-comm-addr" placeholder="0x channel address…" autocomplete="off">
           <button class="go-btn" id="new-comm-go">Add</button>
         </div>
+        <div class="lc-sync-row">
+          <button class="lc-sync-btn" id="comms-publish">⬆ Publish on-chain</button>
+          <button class="lc-sync-btn ghost" id="comms-restore">⬇ Restore from chain</button>
+        </div>
         ${body}
       </div>`;
   }
 
   _wireCommunitiesPage() {
     const g = id => document.getElementById(id);
+    const pubBtn = g('comms-publish');
+    const resBtn = g('comms-restore');
+    if (pubBtn) pubBtn.onclick = () => this.publishListsOnChain();
+    if (resBtn) resBtn.onclick = () => this.restoreListsFromChain();
     const create = () => {
       const name = g('new-comm-name')?.value.trim();
       const addr = g('new-comm-addr')?.value.trim().toLowerCase();
