@@ -427,6 +427,26 @@ nav { flex:1; padding:4px 0; }
 .post-time-dot { color:var(--muted); font-size:14px; margin:0 4px; flex-shrink:0; }
 .post-time     { color:var(--muted); font-size:14px; flex-shrink:0; cursor:pointer; white-space:nowrap; }
 .post-time:hover { text-decoration:underline; color:var(--muted); }
+/* Thread reply connector — a vertical line on the left edge of reply
+   rows, linking the conversation visually like X. The line runs through
+   the avatar gutter (28px from the left, aligned with avatar center). */
+.thread-reply-item { position:relative; }
+.thread-reply-item::before {
+  content:'';
+  position:absolute;
+  left:35px; top:0; bottom:0;
+  width:2px;
+  background:var(--border);
+  z-index:0;
+}
+/* First reply: line starts at the avatar (connects up to the orig post). */
+.thread-reply-item.thread-first-reply::before { top:-12px; }
+/* Last reply: line stops at the avatar instead of running to the bottom. */
+.thread-reply-item.thread-last-reply::before { bottom:auto; height:28px; }
+/* Single reply: short stub only at the top. */
+.thread-reply-item.thread-only-reply::before { top:-12px; bottom:auto; height:40px; }
+/* Keep avatars/content above the line */
+.thread-reply-item > * { position:relative; z-index:1; }
 .dir-badge {
   display:inline-flex; align-items:center;
   font-size:11px; font-weight:600;
@@ -878,6 +898,15 @@ nav { flex:1; padding:4px 0; }
 }
 .search-clear:hover { background:var(--primary-lt); }
 .search-clear.show { display:flex; }
+/* Draft autosave hint — flashes briefly when the compose draft is saved,
+   then fades. Non-intrusive: small, muted, auto-hides. */
+.draft-saved-hint {
+  font-size:13px; color:var(--muted);
+  opacity:0; transition:opacity 0.3s;
+  margin-right:8px; white-space:nowrap;
+  pointer-events:none;
+}
+.draft-saved-hint.show { opacity:1; }
 /* Search-as-you-type dropdown — suggests matching people and hashtags
    as the user types. Sits below the search input, scoped to the
    search-wrap so it positions correctly. */
@@ -1984,6 +2013,7 @@ nav { flex:1; padding:4px 0; }
             </button>
           </div>
           <div class="compose-right">
+            <span class="draft-saved-hint" id="draft-saved-hint">Draft saved</span>
             <div class="char-ring ok" id="char-ring">
               <svg width="26" height="26" viewBox="0 0 26 26">
                 <circle class="cr-bg" cx="13" cy="13" r="10"/>
@@ -2283,7 +2313,7 @@ nav { flex:1; padding:4px 0; }
     <div style="text-align:right;font-size:13px;color:var(--muted);margin-bottom:12px" id="repost-count"></div>
     <div id="repost-quote"></div>
     <div class="btn-row" style="margin-top:12px">
-      <button class="btn-pri" id="post-repost-btn">?? Quote</button>
+      <button class="btn-pri" id="post-repost-btn">Quote</button>
       <button class="btn-ghost" id="cancel-repost-btn">Cancel</button>
     </div>
   </div>
@@ -2326,7 +2356,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-6';
+const SW_CACHE_VER = '20260530-7';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -3069,6 +3099,11 @@ class DeFiX {
     } else {
       setTimeout(() => this._refreshEngagementFromCache(), 1500);
     }
+    /* Refresh relative timestamps in place every 60s so "2m" becomes "3m"
+       without a full feed re-render. Only touches .post-time elements that
+       carry a data-ts attribute; cheap DOM text updates. */
+    this._timeTickTimer = setInterval(() => this._tickRelativeTimes(), 60000);
+
     /* Pre-warm the profile cache from IDB for the authors of already-loaded
        posts. Without this, avatars/names flash the default placeholder on
        reload until each profile lazy-loads. fetchOtherProfile reads IDB
@@ -3097,10 +3132,21 @@ class DeFiX {
     const key = this._draftKey();
     if (v.trim()) {
       utils.safeLS.set(key, v);
+      this._flashDraftSaved();
     } else {
       utils.safeLS.remove(key);
       utils.safeLS.remove(DRAFT_KEY); /* clean up legacy key too */
     }
+  }
+
+  /* Briefly show the "Draft saved" hint, then fade it out. Debounced via
+     a timer so rapid saves don't flicker. */
+  _flashDraftSaved() {
+    const hint = this.g('draft-saved-hint');
+    if (!hint) return;
+    hint.classList.add('show');
+    clearTimeout(this._draftHintTimer);
+    this._draftHintTimer = setTimeout(() => hint.classList.remove('show'), 1800);
   }
   _restoreDraft() {
     /* Try per-channel key first, then fall back to legacy global key */
@@ -5853,7 +5899,7 @@ class DeFiX {
      Shows avatar, name, handle, follow button — exactly like X. */
   _renderFollowList(feed, headerHTML, profileAddr, profileIsOwn, addrs, title, backBtn) {
     if (!addrs.length) {
-      feed.innerHTML = headerHTML + `<div class="prof-empty"><span>??</span><h3>No ${title}</h3><p>None yet.</p></div>`;
+      feed.innerHTML = headerHTML + `<div class="prof-empty"><span>👥</span><h3>No ${title}</h3><p>None yet.</p></div>`;
       const nb = feed.querySelector('.page-header-back');
       if (nb) nb.onclick = () => this.goProfilePage(profileAddr, profileIsOwn);
       return;
@@ -6635,6 +6681,19 @@ class DeFiX {
     btn.classList.add('visible');
   }
 
+  /* Update all visible relative timestamps in place. Reads the raw
+     timestamp from each .post-time[data-ts] and recomputes relTime. */
+  _tickRelativeTimes() {
+    const els = document.querySelectorAll('.post-time[data-ts]');
+    if (!els.length) return;
+    els.forEach(el => {
+      const ts = el.dataset.ts;
+      if (!ts) return;
+      const fresh = this.relTime(ts);
+      if (el.textContent !== fresh) el.textContent = fresh;
+    });
+  }
+
   loadPending() {
     this.state.posts   = [...this.state.pending, ...this.state.posts];
     this.state.pending = [];
@@ -7182,6 +7241,7 @@ class DeFiX {
             <span class="post-time-dot">·</span>
             <a href="https://otter.pulsechain.com/tx/${utils.safe(post.txHash)}"
               target="_blank" class="post-time" title="${utils.safe(fullDate)}"
+              data-ts="${utils.safe(post.timestamp)}"
               onclick="event.stopPropagation()">${utils.safe(relT)}</a>
             ${dirBadge}
           </div>
@@ -7475,7 +7535,7 @@ class DeFiX {
       /* Instant repost — no text, no modal */
       if (!this.signer) { utils.toast('Connect wallet to repost'); return; }
       const ok = await this.publish(`REPOST:${post.txHash}`);
-      if (ok) utils.toast('?? Reposted');
+      if (ok) utils.toast('Reposted');
     };
     menu.querySelector('#rc-quote').onclick = e2 => {
       e2.stopPropagation();
@@ -7518,7 +7578,7 @@ class DeFiX {
     const title = this.g('repost-modal').querySelector('.modal-title');
     if (title) title.textContent = 'Quote Post';
     const btn = this.g('post-repost-btn');
-    if (btn) btn.textContent = '?? Quote';
+    if (btn) btn.textContent = 'Quote';
     this.g('repost-input').value        = '';
     this.g('repost-input').style.height = '';
     this.g('repost-modal').classList.add('open');
@@ -7540,7 +7600,7 @@ class DeFiX {
     if (ok) {
       this.closeModal('repost-modal');
       this.g('repost-input').value = '';
-      utils.toast('?? Quoted on-chain');
+      utils.toast('Quoted on-chain');
     }
   }
 
@@ -7708,9 +7768,15 @@ class DeFiX {
       .sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
 
     let repliesHTML = '';
-    replies.forEach(r => {
+    replies.forEach((r, i) => {
       this._postMap.set(r.txHash, r);
-      repliesHTML += `<div class="post-item thread-reply-item" data-txhash="${utils.safe(r.txHash)}">${this.postHTML(r, true, null, null)}</div>`;
+      /* Connector position classes: first/last/only get special line
+         treatment so the thread line connects cleanly between rows. */
+      let posClass = '';
+      if (replies.length === 1)       posClass = ' thread-only-reply';
+      else if (i === 0)               posClass = ' thread-first-reply';
+      else if (i === replies.length-1) posClass = ' thread-last-reply';
+      repliesHTML += `<div class="post-item thread-reply-item${posClass}" data-txhash="${utils.safe(r.txHash)}">${this.postHTML(r, true, null, null)}</div>`;
     });
 
     const threadHeader = this._applyPageHeader();
