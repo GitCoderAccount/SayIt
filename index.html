@@ -2221,7 +2221,35 @@ nav { flex:1; padding:4px 0; }
       </div>
     </div>
 
-    <!-- What's happening — dynamic trending hashtags + pinned partners -->
+    <!-- PWA install prompt — visible when beforeinstallprompt fires.
+         Top of the column, matching X's "Subscribe to Premium" slot. -->
+    <div class="sb-card" id="sb-install-card">
+      <div class="install-title">📱 Install Say It DeFi</div>
+      <div class="install-desc">Add to your home screen for instant access, offline support, and a native app feel.</div>
+      <div class="install-actions">
+        <button class="install-btn" id="install-btn">Install</button>
+        <button class="install-dismiss" id="install-dismiss">Not now</button>
+      </div>
+    </div>
+
+    <!-- Latest Polls — active polls from the loaded feed. Hidden until
+         at least one poll is present. -->
+    <!-- Today's News — top engagement posts from the last 24h. First content
+         card, matching X's layout (premium → Today's News → …). Hidden until
+         populated. -->
+    <div class="sb-card" id="sb-news-card" style="display:none">
+      <div class="sb-card-title">Today's News</div>
+      <div id="sb-news-list"><!-- populated by renderTodaysNews() --></div>
+    </div>
+
+    <!-- Latest Polls — active polls from the loaded feed. After Today's News. -->
+    <div class="sb-card" id="sb-polls-card" style="display:none">
+      <div class="sb-card-title">Latest Polls</div>
+      <div id="sb-polls-list"><!-- populated by renderLatestPolls() --></div>
+    </div>
+
+    <!-- What's happening — dynamic trending hashtags + pinned partners.
+         Ordered after Today's News + Latest Polls to match X's layout. -->
     <div class="sb-card" id="sb-trending">
       <div class="sb-card-title">What's happening</div>
       <div id="sb-trending-list">
@@ -2246,33 +2274,6 @@ nav { flex:1; padding:4px 0; }
           <span style="font-size:20px;align-self:center">🔗</span>
         </div>
       </div>
-    </div>
-
-    <!-- PWA install prompt — visible when beforeinstallprompt fires.
-         Replaces what X uses for the "Subscribe to Premium" slot. -->
-    <div class="sb-card" id="sb-install-card">
-      <div class="install-title">📱 Install Say It DeFi</div>
-      <div class="install-desc">Add to your home screen for instant access, offline support, and a native app feel.</div>
-      <div class="install-actions">
-        <button class="install-btn" id="install-btn">Install</button>
-        <button class="install-dismiss" id="install-dismiss">Not now</button>
-      </div>
-    </div>
-
-    <!-- Latest Polls — active polls from the loaded feed. Hidden until
-         at least one poll is present. -->
-    <div class="sb-card" id="sb-polls-card" style="display:none">
-      <div class="sb-card-title">Latest Polls</div>
-      <div id="sb-polls-list"><!-- populated by renderLatestPolls() --></div>
-    </div>
-
-    <!-- Today's News — top engagement posts from the last 24h.
-         Differs from "What's happening" (hashtag-focused, small rows) by
-         showing larger rows with optional image thumbnails and headline-
-         style post previews. Hidden until populated. -->
-    <div class="sb-card" id="sb-news-card" style="display:none">
-      <div class="sb-card-title">Today's News</div>
-      <div id="sb-news-list"><!-- populated by renderTodaysNews() --></div>
     </div>
 
     <!-- Who to follow — derived from active addresses in current feed -->
@@ -2534,7 +2535,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-17';
+const SW_CACHE_VER = '20260530-18';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -4017,6 +4018,8 @@ class DeFiX {
           try {
             const text = ethers.utils.toUtf8String(tx.input).trim();
             if (text.startsWith(PROFILE_PREFIX)) return;
+            /* Hide VOTE txs entirely — they're tallied, not shown. */
+            if (text.startsWith(VOTE_PREFIX)) return;
             const isReaction = text.startsWith(LIKE_PREFIX) ||
               text.startsWith(UNLIKE_PREFIX) ||
               text.startsWith(BOOKMARK_PREFIX) ||
@@ -4025,14 +4028,30 @@ class DeFiX {
               text.startsWith(UNFOLLOW_PREFIX);
             if (isReaction) return;
             const m = text.match(/^REPLY_TO:(0x[a-f0-9]{64})\n\n/i);
-            const display = m ? text.slice(m[0].length).trim() : text;
-            if (!display) return;
+            /* Parse polls + reposts so the following feed renders cards,
+               not raw POLL:{json} / REPOST:0x… payloads. */
+            let poll = null, repostOf = null, postType = 'post', display;
+            if (text.startsWith(POLL_PREFIX)) {
+              poll = this._parsePoll(text);
+              display = poll ? poll.question : text;
+              if (poll) postType = 'poll';
+            } else {
+              const repostM = text.match(/^REPOST:(0x[a-f0-9]{64})(?:\n\n([\s\S]*))?$/i);
+              if (repostM) {
+                repostOf = repostM[1].toLowerCase();
+                display  = repostM[2]?.trim() || '';
+                postType = 'repost';
+              } else {
+                display = m ? text.slice(m[0].length).trim() : text;
+              }
+            }
+            if (!display && !repostOf) return;
             known.add(hash);
             newPosts.push({
               content: text, display,
               parentTx: m ? m[1].toLowerCase() : null,
-              repostOf: null, reactionTarget: null,
-              direction: null, postType: 'post',
+              repostOf, reactionTarget: null, poll,
+              direction: null, postType,
               reporter: tx.from?.toLowerCase(),
               to: tx.to?.toLowerCase() ?? null,
               timestamp: tx.timeStamp
@@ -4056,6 +4075,7 @@ class DeFiX {
       .slice(0, this._getPostCap());
     /* Update _postHashSet with new posts */
     if (this._postHashSet) newPosts.forEach(p => this._postHashSet.add(p.txHash));
+    if (newPosts.some(pp => pp.poll)) setTimeout(() => this._tallyVisiblePolls(), 150);
     await this.cache.savePosts(newPosts);
     if (this._followingFilter && myToken === this._followingFetchToken) {
       this.renderFeed();
@@ -5561,6 +5581,12 @@ class DeFiX {
        we know who the user follows — otherwise Who-to-follow stays empty
        until the next render (which is why it needed a reload before). */
     this._refreshSidebarPanels();
+    /* Auto-restore lists/communities from chain if we have none locally —
+       silent (no toasts), best-effort, so a returning user on a new device
+       gets their lists back without manually clicking Restore. */
+    if (this.state.lists.length === 0 && this.state.communities.length === 0) {
+      setTimeout(() => this._autoRestoreLists(), 4000);
+    }
   }
 
   /* Load likes, bookmarks, follows from chain */
@@ -6914,6 +6940,65 @@ class DeFiX {
     }
   }
 
+  /* ── Canonical single-tx parser ──────────────────────────────────────
+     Returns a normalized post object for one tx, or null if the tx should
+     not appear in a feed (profile updates, reactions, votes, empty posts).
+     This is the SINGLE SOURCE OF TRUTH for poll/vote/repost/reply parsing —
+     secondary feed paths should call this instead of re-implementing the
+     logic (which historically drifted and leaked raw data). opts lets each
+     caller set mode and any extra fields. */
+  _parsePostTx(tx, opts = {}) {
+    const hash = tx.hash?.toLowerCase();
+    if (!hash) return null;
+    if (!tx.input || tx.input === '0x') return null;
+    let text;
+    try { text = ethers.utils.toUtf8String(tx.input).trim(); }
+    catch { return null; }
+    if (!text) return null;
+    /* Non-post payloads that never render as feed items. */
+    if (text.startsWith(PROFILE_PREFIX)) return null;
+    if (text.startsWith(VOTE_PREFIX)) return null;
+    if (text.startsWith(LIKE_PREFIX) || text.startsWith(UNLIKE_PREFIX)
+      || text.startsWith(BOOKMARK_PREFIX) || text.startsWith(UNBOOKMARK_PREFIX)
+      || text.startsWith(FOLLOW_PREFIX) || text.startsWith(UNFOLLOW_PREFIX)) return null;
+
+    let parentTx = null, repostOf = null, poll = null, postType = 'post', display;
+    const replyM = text.match(/^REPLY_TO:(0x[a-f0-9]{64})\n\n/i);
+    if (text.startsWith(POLL_PREFIX)) {
+      poll = this._parsePoll(text);
+      display = poll ? poll.question : text;
+      if (poll) postType = 'poll';
+    } else {
+      const repostM = text.match(/^REPOST:(0x[a-f0-9]{64})(?:\n\n([\s\S]*))?$/i);
+      if (repostM) {
+        repostOf = repostM[1].toLowerCase();
+        display  = repostM[2]?.trim() || '';
+        postType = 'repost';
+      } else if (replyM) {
+        parentTx = replyM[1].toLowerCase();
+        display  = text.slice(replyM[0].length).trim();
+      } else {
+        display = text;
+      }
+    }
+    if (!display && !repostOf) return null;
+
+    return {
+      content: text, display, parentTx, repostOf, poll, postType,
+      reactionTarget: null, direction: null,
+      reporter: tx.from?.toLowerCase(),
+      to: tx.to?.toLowerCase() ?? null,
+      channel: tx.to?.toLowerCase(),
+      timestamp: tx.timeStamp
+        ? new Date(Number(tx.timeStamp) * 1000).toISOString()
+        : new Date().toISOString(),
+      txHash: hash,
+      blockNumber: tx.blockNumber ? Number(tx.blockNumber) : null,
+      mode: opts.mode || 'main',
+      ...opts.extra,
+    };
+  }
+
   parseTxs(txs) {
     const { mode, channel, signerAddr } = this.state;
     const lastCheck = parseInt(utils.safeLS.get(LAST_CHECK_KEY, '0'), 10);
@@ -7271,10 +7356,13 @@ class DeFiX {
       list = list.filter(p => !this.state.muted.has(p.reporter?.toLowerCase()));
     }
     /* Only render actual posts -- filter out reactions/follows. Polls
-       are real posts (postType 'poll') and must be included. */
-    const displayList = list.filter(p =>
-      !p.postType || p.postType === 'post' || p.postType === 'repost' || p.postType === 'poll'
-    );
+       are real posts (postType 'poll') and must be included. Defensive:
+       also drop any stray VOTE tx (e.g. cached before the drop logic
+       existed) so raw VOTE data can never surface in the feed. */
+    const displayList = list.filter(p => {
+      if (p.content && p.content.startsWith(VOTE_PREFIX)) return false;
+      return !p.postType || p.postType === 'post' || p.postType === 'repost' || p.postType === 'poll';
+    });
 
     if (!displayList.length) {
       const msgs = {
@@ -10086,11 +10174,9 @@ class DeFiX {
         .map(c => ({ address: c.address, name: c.name, desc: c.desc || '' })),
     };
     const body = LC_SYNC_PREFIX + JSON.stringify(snapshot);
-    /* Guard against oversized payloads (gas). Warn if very large. */
-    if (body.length > 24000) {
-      utils.toast('Lists too large to publish in one tx — trim some members');
-      return;
-    }
+    /* No artificial size cap — the block gas limit is the real ceiling, and
+       it's very large. If a snapshot ever exceeds what a block can hold the
+       tx will simply fail at estimateGas, which we surface below. */
     try {
       const to    = this.state.signerAddr; /* self-tx */
       const data  = ethers.utils.hexlify(ethers.utils.toUtf8Bytes(body));
@@ -10105,6 +10191,46 @@ class DeFiX {
       const rejected = err.code === 4001 || err.code === 'ACTION_REJECTED' || /user (denied|rejected)/i.test(msg);
       utils.toast(rejected ? 'Publish cancelled' : 'Publish failed: ' + msg);
     }
+  }
+
+  /* Silent best-effort restore used on connect — no toasts, only applies
+     if it finds a snapshot, never overwrites a non-empty local store. */
+  async _autoRestoreLists() {
+    if (!this.state.signerAddr) return;
+    if (this.state.lists.length || this.state.communities.length) return;
+    try {
+      let snapshot = null;
+      const scanLimit = Math.min(this._getMaxScanPages(), 6);
+      outer:
+      for (let page = 1; page <= scanLimit; page++) {
+        let raw;
+        try { raw = await this.apiFetch(this.state.signerAddr, page); }
+        catch { break; }
+        for (const tx of raw) {
+          if (tx.from?.toLowerCase() !== this.state.signerAddr) continue;
+          if (!tx.input || tx.input === '0x') continue;
+          let text;
+          try { text = ethers.utils.toUtf8String(tx.input).trim(); }
+          catch { continue; }
+          if (!text.startsWith(LC_SYNC_PREFIX)) continue;
+          try { snapshot = JSON.parse(text.slice(LC_SYNC_PREFIX.length)); break outer; }
+          catch { continue; }
+        }
+        if (raw.length < 50) break;
+      }
+      if (!snapshot) return;
+      this.state.lists = (snapshot.lists || []).map(l => ({
+        id: l.id, name: l.name, members: Array.isArray(l.members) ? l.members : [],
+      }));
+      this._saveLists();
+      this.state.communities = (snapshot.communities || []).map(c => ({
+        address: (c.address || '').toLowerCase(),
+        name: c.name || this.trunc(c.address || ''),
+        desc: c.desc || '', joined: true,
+      })).filter(c => c.address);
+      this._saveCommunities();
+      utils.toast('Restored your lists from chain ✓');
+    } catch { /* silent */ }
   }
 
   /* Restore lists + communities from the latest on-chain LC_SYNC snapshot
