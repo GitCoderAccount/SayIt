@@ -1549,6 +1549,66 @@ nav { flex:1; padding:4px 0; }
 }
 .fc-link:hover { opacity:0.8; }
 
+/* ── Lists & Communities pages ──────────────────────────────────────── */
+.lc-page { padding-bottom:24px; }
+.lc-new-row {
+  display:flex; gap:8px; padding:12px 16px;
+  border-bottom:1px solid var(--border);
+}
+.lc-new-comm { flex-wrap:wrap; }
+.lc-new-row input {
+  flex:1; min-width:120px; padding:9px 14px;
+  background:rgba(255,255,255,0.07); border:1px solid transparent;
+  border-radius:9999px; color:var(--text); font-size:14px;
+  outline:none; transition:border-color 0.2s;
+}
+.lc-new-row input:focus { border-color:var(--primary); background:var(--bg-dark); }
+.lc-new-row input::placeholder { color:var(--muted); }
+.lc-section-title {
+  font-size:13px; font-weight:800; color:var(--muted);
+  text-transform:uppercase; letter-spacing:0.5px;
+  padding:14px 16px 6px;
+}
+.lc-row {
+  display:flex; align-items:center; gap:12px;
+  padding:12px 16px; cursor:pointer;
+  border-bottom:1px solid var(--border);
+  transition:background 0.12s;
+}
+.lc-row:hover { background:rgba(255,255,255,0.03); }
+.lc-icon {
+  width:44px; height:44px; border-radius:12px;
+  display:flex; align-items:center; justify-content:center;
+  background:var(--primary-dim); font-size:22px; flex-shrink:0;
+}
+.lc-body { flex:1; min-width:0; }
+.lc-name {
+  font-size:16px; font-weight:800; line-height:1.2;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.lc-sub {
+  font-size:13px; color:var(--muted); margin-top:2px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.lc-action {
+  flex-shrink:0; background:transparent; border:none;
+  color:var(--muted); font-size:18px; cursor:pointer;
+  width:36px; height:36px; border-radius:50%;
+  transition:background 0.12s, color 0.12s;
+}
+.lc-action:hover { background:rgba(255,255,255,0.08); color:var(--text); }
+.lc-join {
+  flex-shrink:0; padding:6px 16px; border-radius:9999px;
+  background:var(--text); color:var(--bg-dark);
+  border:none; font-weight:700; font-size:14px; cursor:pointer;
+  transition:opacity 0.12s;
+}
+.lc-join:hover { opacity:0.85; }
+.lc-join.joined {
+  background:transparent; color:var(--text);
+  border:1px solid var(--border);
+}
+
 /* New channel input row at top of channels view */
 .ch-new-row {
   display:flex; gap:8px; padding:12px 16px;
@@ -1938,13 +1998,13 @@ nav { flex:1; padding:4px 0; }
             </span>
             <span class="more-label">Settings &amp; Privacy</span>
           </button>
-          <button class="more-item more-soon" disabled>
+          <button class="more-item" id="more-lists">
             <span class="more-icon">📋</span>
-            <span class="more-label">Lists<span class="soon-tag">soon</span></span>
+            <span class="more-label">Lists</span>
           </button>
-          <button class="more-item more-soon" disabled>
+          <button class="more-item" id="more-communities">
             <span class="more-icon">👥</span>
-            <span class="more-label">Communities<span class="soon-tag">soon</span></span>
+            <span class="more-label">Communities</span>
           </button>
           <button class="more-item more-soon" disabled>
             <span class="more-icon">🎬</span>
@@ -1999,14 +2059,14 @@ nav { flex:1; padding:4px 0; }
         <textarea id="compose-text" placeholder="What's happening on Pulse?"></textarea>
         <div id="compose-toolbar">
           <div class="compose-icons">
-            <button class="cmp-icon" id="cmp-image-btn" title="Attach image" aria-label="Attach image">
+            <button class="cmp-icon" id="cmp-image-btn" title="Add photos or video" aria-label="Add photos or video">
               <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 5.5C3 4.119 4.119 3 5.5 3h13C19.881 3 21 4.119 21 5.5v13c0 1.381-1.119 2.5-2.5 2.5h-13C4.119 21 3 19.881 3 18.5v-13zM5.5 5c-.276 0-.5.224-.5.5v9.086l3-3 3 3 5-5 3 3V5.5c0-.276-.224-.5-.5-.5h-13zM19 15.414l-3-3-5 5-3-3-3 3V18.5c0 .276.224.5.5.5h13c.276 0 .5-.224.5-.5v-3.086zM9.75 7C8.784 7 8 7.784 8 8.75s.784 1.75 1.75 1.75 1.75-.784 1.75-1.75S10.716 7 9.75 7z"/></svg>
             </button>
-            <button class="cmp-icon" id="cmp-gif-btn" title="Attach GIF" aria-label="Attach GIF">
+            <button class="cmp-icon" id="cmp-gif-btn" title="Add a GIF" aria-label="Add a GIF">
               <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 5.5C3 4.119 4.119 3 5.5 3h13C19.881 3 21 4.119 21 5.5v13c0 1.381-1.119 2.5-2.5 2.5h-13C4.119 21 3 19.881 3 18.5v-13zM5.5 5c-.276 0-.5.224-.5.5v13c0 .276.224.5.5.5h13c.276 0 .5-.224.5-.5v-13c0-.276-.224-.5-.5-.5h-13zM8 13.5v-3h1.5v.75H11v1.5H9.5v.75H8zm4.5-3H14c.552 0 1 .448 1 1v1c0 .552-.448 1-1 1h-1.5V10.5zm1.25 1.25v.5H14v-.5h-.25zM15.5 10.5H17v1.25h-1.5v.25H17v1.25h-1.5c-.552 0-1-.448-1-1v-1.25c0-.552.448-.5 1-.5z"/></svg>
             </button>
-            <button class="cmp-icon" id="cmp-video-btn" title="Attach video URL (mp4, YouTube, Vimeo)" aria-label="Attach video URL">
-              <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+            <button class="cmp-icon" id="cmp-poll-btn" title="Add a poll" aria-label="Add a poll">
+              <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M6 5c0-.552.448-1 1-1h10c.552 0 1 .448 1 1s-.448 1-1 1H7c-.552 0-1-.448-1-1zm0 7c0-.552.448-1 1-1h10c.552 0 1 .448 1 1s-.448 1-1 1H7c-.552 0-1-.448-1-1zm1 6c-.552 0-1 .448-1 1s.448 1 1 1h6c.552 0 1-.448 1-1s-.448-1-1-1H7zM3 5c0-.552.448-1 1-1s1 .448 1 1-.448 1-1 1-1-.448-1-1zm0 7c0-.552.448-1 1-1s1 .448 1 1-.448 1-1 1-1-.448-1-1zm1 6c-.552 0-1 .448-1 1s.448 1 1 1 1-.448 1-1-.448-1-1-1z"/></svg>
             </button>
             <button class="cmp-icon" id="cmp-emoji-btn" title="Emoji" aria-label="Insert emoji">
               <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M8 9.5C8 8.672 8.672 8 9.5 8s1.5.672 1.5 1.5S10.328 11 9.5 11 8 10.328 8 9.5zm6.5 1.5c.828 0 1.5-.672 1.5-1.5S15.328 8 14.5 8 13 8.672 13 9.5s.672 1.5 1.5 1.5zM12 16c-2.224 0-3.021-1.4-3.094-1.536l-1.76.992C7.196 15.69 8.638 18 12 18s4.804-2.31 4.854-2.544l-1.76-.992C15.021 14.6 14.224 16 12 16zm-.002-14C6.477 2 2 6.477 2 12s4.477 10 9.998 10C17.523 22 22 17.523 22 12S17.523 2 11.998 2zM12 20C7.582 20 4 16.418 4 12s3.582-8 8-8 8 3.582 8 8-3.582 8-8 8z"/></svg>
@@ -2188,8 +2248,8 @@ nav { flex:1; padding:4px 0; }
             <button class="cmp-icon" id="modal-cmp-gif-btn" title="Attach GIF" aria-label="Attach GIF">
               <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 5.5C3 4.119 4.119 3 5.5 3h13C19.881 3 21 4.119 21 5.5v13c0 1.381-1.119 2.5-2.5 2.5h-13C4.119 21 3 19.881 3 18.5v-13zM5.5 5c-.276 0-.5.224-.5.5v13c0 .276.224.5.5.5h13c.276 0 .5-.224.5-.5v-13c0-.276-.224-.5-.5-.5h-13zm2.5 6h2v2H8v-2zm0-3h2v2H8V8zm3 0h5v2h-5V8zm0 3h5v2h-5v-2z"/></svg>
             </button>
-            <button class="cmp-icon" id="modal-cmp-video-btn" title="Attach video URL" aria-label="Attach video URL">
-              <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+            <button class="cmp-icon" id="modal-cmp-video-btn" title="Add a poll" aria-label="Add a poll">
+              <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M6 5c0-.552.448-1 1-1h10c.552 0 1 .448 1 1s-.448 1-1 1H7c-.552 0-1-.448-1-1zm0 7c0-.552.448-1 1-1h10c.552 0 1 .448 1 1s-.448 1-1 1H7c-.552 0-1-.448-1-1zm1 6c-.552 0-1 .448-1 1s.448 1 1 1h6c.552 0 1-.448 1-1s-.448-1-1-1H7zM3 5c0-.552.448-1 1-1s1 .448 1 1-.448 1-1 1-1-.448-1-1zm0 7c0-.552.448-1 1-1s1 .448 1 1-.448 1-1 1-1-.448-1-1zm1 6c-.552 0-1 .448-1 1s.448 1 1 1 1-.448 1-1-.448-1-1-1z"/></svg>
             </button>
           </div>
           <span id="modal-char-count" style="font-size:14px;color:var(--muted)"></span>
@@ -2356,7 +2416,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-7';
+const SW_CACHE_VER = '20260530-9';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -2384,6 +2444,8 @@ const FOLLOW_PREFIX     = 'FOLLOW:';
 const UNFOLLOW_PREFIX   = 'UNFOLLOW:';
 const SETTINGS_KEY    = 'defixSettings';
 const MUTE_KEY        = 'defixMuted';   /* JSON array of muted addresses */
+const LISTS_KEY       = 'defixLists';       /* JSON array of {id,name,members[]} */
+const COMMUNITIES_KEY = 'defixCommunities'; /* JSON array of {address,name,desc,joined} */
 const CHANNELS_KEY    = 'defixChannelsScan';
 
 const ERC721_ABI = [
@@ -3007,6 +3069,17 @@ class DeFiX {
         try { return new Set(JSON.parse(localStorage.getItem(MUTE_KEY) || '[]')); }
         catch { return new Set(); }
       })(),
+      /* Lists & Communities — local, stored in localStorage. Lists are
+         {id, name, members:[addr]}; communities are {address, name, desc, joined}. */
+      lists: (() => {
+        try { return JSON.parse(localStorage.getItem(LISTS_KEY) || '[]'); }
+        catch { return []; }
+      })(),
+      communities: (() => {
+        try { return JSON.parse(localStorage.getItem(COMMUNITIES_KEY) || '[]'); }
+        catch { return []; }
+      })(),
+      activeList: null,        /* id of the list currently being viewed */
       /* channel history */
       channelHistory: [],      /* [{address, label, lastActivity, preview, postCount}] */
       /* settings */
@@ -3225,6 +3298,10 @@ class DeFiX {
     g('nav-profile').onclick   = () => this.openProfileModal();
     g('nav-more').onclick      = e => { e.stopPropagation(); this.toggleMoreMenu(); };
     g('more-settings').onclick = () => { this.hideMoreMenu(); this.goSettings(); };
+    const mlBtn = g('more-lists');
+    if (mlBtn) mlBtn.onclick = () => { this.hideMoreMenu(); this.goLists(); };
+    const mcBtn = g('more-communities');
+    if (mcBtn) mcBtn.onclick = () => { this.hideMoreMenu(); this.goCommunities(); };
 
     document.querySelectorAll('[data-mn]').forEach(b => {
       b.onclick = () => {
@@ -3630,16 +3707,18 @@ class DeFiX {
     };
 
     /* Compose toolbar — Image / GIF / Emoji */
-    g('cmp-image-btn').onclick = () => this.openMediaModal('image');
+    /* "Media" button (photos + video, auto-detected from the URL). */
+    g('cmp-image-btn').onclick = () => this.openMediaModal('media');
     g('cmp-gif-btn').onclick   = () => this.openMediaModal('gif');
-    g('cmp-video-btn').onclick   = () => this.openMediaModal('video');
-    /* Expanded modal compose toolbar */
+    const pollBtn = g('cmp-poll-btn');
+    if (pollBtn) pollBtn.onclick = () => utils.toast('Polls are coming soon ⚡');
+    /* Expanded modal compose toolbar — same merged Media affordance. */
     const miBtn = g('modal-cmp-image-btn');
     const mgBtn = g('modal-cmp-gif-btn');
     const mvBtn = g('modal-cmp-video-btn');
-    if (miBtn) miBtn.onclick = () => this.openMediaModal('image');
+    if (miBtn) miBtn.onclick = () => this.openMediaModal('media');
     if (mgBtn) mgBtn.onclick = () => this.openMediaModal('gif');
-    if (mvBtn) mvBtn.onclick = () => this.openMediaModal('video');
+    if (mvBtn) mvBtn.onclick = () => utils.toast('Polls are coming soon ⚡'); /* modal poll placeholder */
     g('cmp-emoji-btn').onclick = () => this.toggleEmojiPicker();
 
     /* Media attach modal */
@@ -7894,13 +7973,18 @@ class DeFiX {
     const hint    = this.g('media-url-hint');
     const preview = this.g('media-preview-area');
     if (type === 'gif') {
-      title.textContent = 'Attach GIF';
+      title.textContent = 'Add a GIF';
       hint.textContent  = 'Paste any GIF URL (https:// or ipfs://)';
     } else if (type === 'video') {
-      title.textContent = 'Attach Video';
+      title.textContent = 'Add Video';
       hint.textContent  = 'Paste a YouTube, Vimeo, or direct .mp4 / .webm URL';
+    } else if (type === 'media') {
+      /* Merged photos + video, like X's Media button. Type is detected
+         from the URL at preview/attach time. */
+      title.textContent = 'Add photos or video';
+      hint.textContent  = 'Paste an image, GIF, or video URL — https://, ipfs://, or arweave://';
     } else {
-      title.textContent = 'Attach Image';
+      title.textContent = 'Add Image';
       hint.textContent  = 'Paste any image URL (https://, ipfs://, or arweave://)';
     }
     this.g('media-url-input').value = '';
@@ -7925,14 +8009,31 @@ class DeFiX {
     if (!raw) { preview.innerHTML = ''; preview.style.display = 'none'; return; }
     const resolved = this._resolveMediaUrl(raw);
     preview.style.display = 'block';
+    /* Detect video (YouTube/Vimeo/direct file) vs image so the preview
+       shows something sensible for each. */
+    const isVideo = /\.(mp4|webm|mov|m4v)(\?|$)/i.test(resolved)
+      || /youtube\.com|youtu\.be|vimeo\.com/i.test(resolved);
+    if (isVideo) {
+      preview.innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px;padding:14px;
+          border:1px solid var(--border);border-radius:12px;background:var(--bg-mid)">
+          <svg viewBox="0 0 24 24" width="28" height="28" style="flex-shrink:0;color:var(--primary-lt)">
+            <path fill="currentColor" d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+          <div style="min-width:0">
+            <div style="font-weight:700;font-size:14px">Video attached</div>
+            <div style="font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${utils.safe(resolved)}</div>
+          </div>
+        </div>`;
+      return;
+    }
     preview.innerHTML = `
       <img src="${utils.safe(resolved)}" alt="preview" style="
         max-width:100%; max-height:220px; border-radius:12px;
         object-fit:contain; display:block; margin:0 auto;
         border:1px solid var(--border);"
         onerror="this.replaceWith(Object.assign(document.createElement('p'),{
-          textContent:'⚠ Could not load image — check the URL',
-          style:'color:#f4212e;font-size:13px;text-align:center;padding:12px'
+          textContent:'⚠ Could not load preview — the URL will still post',
+          style:'color:var(--muted);font-size:13px;text-align:center;padding:12px'
         }))">`;
   }
 
@@ -7953,17 +8054,47 @@ class DeFiX {
     utils.toast('Media attached ✓');
   }
 
+  /* Lightweight generic modal — used by the list editor. Builds a modal
+     overlay on the fly with a title, arbitrary body HTML, and a close
+     button. Reuses the existing .modal-bg / .modal styles. */
+  _showGenericModal(title, bodyHTML) {
+    this._closeGenericModal();
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-bg open';
+    overlay.id = 'generic-modal';
+    overlay.innerHTML = `
+      <div class="modal">
+        <div class="modal-head">
+          <span class="modal-title">${utils.safe(title)}</span>
+          <button class="modal-close" id="generic-modal-close">✕</button>
+        </div>
+        <div>${bodyHTML}</div>
+      </div>`;
+    document.body.appendChild(overlay);
+    document.getElementById('generic-modal-close').onclick = () => this._closeGenericModal();
+    overlay.addEventListener('click', e => { if (e.target === overlay) this._closeGenericModal(); });
+    this._trapFocus(overlay);
+  }
+  _closeGenericModal() {
+    const m = document.getElementById('generic-modal');
+    if (m) { this._releaseFocus(m); m.remove(); }
+  }
+
   /* ── Emoji picker ───────────────────────────────────────────────────── */
   toggleEmojiPicker() {
     const existing = document.getElementById('emoji-picker-pop');
     if (existing) { existing.remove(); return; }
 
-    const emojis = [
-      '😀','😂','😍','🥰','😎','🤔','😮','😢','😡','🤯',
-      '🔥','💯','✨','🎉','👍','👎','❤️','💜','🚀','🌙',
-      '💎','🦁','🐉','⚡','🌊','🎵','🏆','💰','🔮','🌍',
-      '📻','⛓','🔗','📡','🛡','⚔️','🗝','💡','🔭','🌐',
-      '🦊','🐺','🦋','🐬','🦅','🌸','🍀','🌺','🍁','🎭',
+    /* Categorized emoji set. The picker stays OPEN after each selection so
+       the user can insert several in a row (X behavior). Closes on the ✕
+       button, Escape, or an outside click. */
+    const categories = [
+      { name: 'Smileys', emojis: ['😀','😃','😄','😁','😆','😅','🤣','😂','🙂','🙃','😉','😊','😇','🥰','😍','🤩','😘','😗','😚','😋','😛','😜','🤪','😝','🤔','🤨','😐','😶','😏','😒','🙄','😬','😌','😔','😪','😴','😷','🤒','🤕','🤢','🤮','🥵','🥶','😵','🤯','🤠','🥳','😎','🤓','🧐','😕','😟','🙁','😮','😯','😲','😳','🥺','😦','😧','😨','😰','😢','😭','😱','😖','😣','😞','😓','😩','😫','😤','😡','😠','🤬'] },
+      { name: 'Gestures', emojis: ['👍','👎','👌','🤌','🤏','✌️','🤞','🫰','🤟','🤘','🤙','👈','👉','👆','👇','☝️','👋','🤚','🖐️','✋','🖖','👏','🙌','🤲','🙏','✊','👊','🤛','🤜','💪','🫶','🤝'] },
+      { name: 'Hearts', emojis: ['❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💟','♥️'] },
+      { name: 'Crypto', emojis: ['💎','🚀','🌙','📈','📉','💰','💵','💸','🤑','🪙','⚡','🔥','💯','🏆','🎯','🔮','⛓️','🔗','🛡️','🐂','🐻'] },
+      { name: 'Nature', emojis: ['🔥','🌊','⚡','🌙','⭐','🌟','✨','☀️','🌈','❄️','🌸','🌺','🌻','🌹','🌴','🍀','🌍','🌎','🌏','🦁','🐉','🦊','🐺','🦋','🐬','🦅','🐲'] },
+      { name: 'Symbols', emojis: ['✅','❌','⭕','‼️','⁉️','❓','❗','💢','💥','💫','💦','💨','🕐','🎉','🎊','🎵','🎶','📡','📻','🗝️','💡','🔭','🌐','♻️','🔱'] },
     ];
 
     const picker = document.createElement('div');
@@ -7971,49 +8102,98 @@ class DeFiX {
     picker.style.cssText = `
       position:absolute; z-index:400;
       background:var(--bg-mid); border:1px solid var(--border);
-      border-radius:16px; padding:10px; display:grid;
-      grid-template-columns:repeat(10,32px); gap:2px;
+      border-radius:16px; padding:0;
+      width:320px; max-height:360px; display:flex; flex-direction:column;
       box-shadow:0 8px 32px rgba(0,0,0,0.5);
-      animation:popIn 0.15s ease;`;
+      animation:popIn 0.15s ease; overflow:hidden;`;
 
-    emojis.forEach(em => {
-      const btn = document.createElement('button');
-      btn.textContent = em;
-      btn.style.cssText = `
-        width:32px;height:32px;border:none;background:transparent;
-        border-radius:8px;font-size:18px;cursor:pointer;
-        transition:background 0.1s;line-height:1;`;
-      btn.onmouseenter = () => btn.style.background = 'rgba(255,255,255,0.1)';
-      btn.onmouseleave = () => btn.style.background = 'transparent';
-      btn.onclick = () => {
-        const compose = this.g('compose-text');
-        const pos = compose.selectionStart ?? compose.value.length;
-        compose.value = compose.value.slice(0,pos) + em + compose.value.slice(pos);
-        compose.selectionStart = compose.selectionEnd = pos + em.length;
-        compose.focus();
-        utils.autoGrow(compose);
-        utils.updateCharCount(compose, null);
-        this._saveDraft();
-        picker.remove();
-      };
-      picker.appendChild(btn);
+    /* Header with title + close button */
+    const header = document.createElement('div');
+    header.style.cssText = `
+      display:flex; align-items:center; justify-content:space-between;
+      padding:10px 12px; border-bottom:1px solid var(--border);
+      flex-shrink:0;`;
+    header.innerHTML = `<span style="font-weight:800;font-size:14px">Emoji</span>`;
+    const closeBtn = document.createElement('button');
+    closeBtn.setAttribute('aria-label', 'Close emoji picker');
+    closeBtn.textContent = '✕';
+    closeBtn.style.cssText = `
+      border:none; background:transparent; color:var(--muted);
+      font-size:16px; cursor:pointer; width:28px; height:28px;
+      border-radius:50%; transition:background 0.12s;`;
+    closeBtn.onmouseenter = () => closeBtn.style.background = 'rgba(255,255,255,0.1)';
+    closeBtn.onmouseleave = () => closeBtn.style.background = 'transparent';
+    closeBtn.onclick = () => removePicker();
+    header.appendChild(closeBtn);
+    picker.appendChild(header);
+
+    /* Scrollable body with category sections */
+    const body = document.createElement('div');
+    body.style.cssText = `overflow-y:auto; padding:8px 10px 12px; flex:1;`;
+
+    const insertEmoji = (em) => {
+      /* Insert into whichever compose box is active: modal if open, else main */
+      const modalOpen = this.g('compose-modal')?.classList.contains('open');
+      const compose = modalOpen ? this.g('modal-compose-text') : this.g('compose-text');
+      if (!compose) return;
+      const pos = compose.selectionStart ?? compose.value.length;
+      compose.value = compose.value.slice(0,pos) + em + compose.value.slice(pos);
+      compose.selectionStart = compose.selectionEnd = pos + em.length;
+      compose.focus();
+      utils.autoGrow(compose);
+      utils.updateCharCount(compose, modalOpen ? this.g('modal-char-count') : null);
+      this._saveDraft();
+      /* Picker intentionally stays open for multi-select. */
+    };
+
+    categories.forEach(cat => {
+      const label = document.createElement('div');
+      label.textContent = cat.name;
+      label.style.cssText = `
+        font-size:11px; font-weight:700; color:var(--muted);
+        text-transform:uppercase; letter-spacing:0.5px;
+        margin:8px 2px 4px;`;
+      body.appendChild(label);
+      const grid = document.createElement('div');
+      grid.style.cssText = `display:grid; grid-template-columns:repeat(8,1fr); gap:2px;`;
+      cat.emojis.forEach(em => {
+        const btn = document.createElement('button');
+        btn.textContent = em;
+        btn.type = 'button';
+        btn.style.cssText = `
+          width:100%; aspect-ratio:1; border:none; background:transparent;
+          border-radius:8px; font-size:20px; cursor:pointer;
+          transition:background 0.1s; line-height:1; padding:0;`;
+        btn.onmouseenter = () => btn.style.background = 'rgba(255,255,255,0.1)';
+        btn.onmouseleave = () => btn.style.background = 'transparent';
+        btn.onclick = (e) => { e.stopPropagation(); insertEmoji(em); };
+        grid.appendChild(btn);
+      });
+      body.appendChild(grid);
     });
+    picker.appendChild(body);
 
-    /* Position below emoji button */
+    /* Position below the emoji button (use whichever exists/visible) */
     const emojiBtn = this.g('cmp-emoji-btn');
     const rect = emojiBtn.getBoundingClientRect();
     picker.style.top  = (rect.bottom + window.scrollY + 6) + 'px';
-    picker.style.left = Math.max(8, rect.left - 180) + 'px';
+    picker.style.left = Math.max(8, Math.min(rect.left - 140, window.innerWidth - 332)) + 'px';
     document.body.appendChild(picker);
 
-    /* Close on outside click */
-    const close = e => {
-      if (!picker.contains(e.target) && e.target !== emojiBtn) {
-        picker.remove();
-        document.removeEventListener('click', close, true);
-      }
+    /* Teardown helper + dismiss wiring */
+    const removePicker = () => {
+      picker.remove();
+      document.removeEventListener('click', close, true);
+      document.removeEventListener('keydown', onKey, true);
     };
-    setTimeout(() => document.addEventListener('click', close, true), 50);
+    const close = e => {
+      if (!picker.contains(e.target) && e.target !== emojiBtn) removePicker();
+    };
+    const onKey = e => { if (e.key === 'Escape') removePicker(); };
+    setTimeout(() => {
+      document.addEventListener('click', close, true);
+      document.addEventListener('keydown', onKey, true);
+    }, 50);
   }
 
   closeModal(id) {
@@ -8038,8 +8218,8 @@ class DeFiX {
      NOT overwrite them with the standard post list. */
   _selfManagedModes = new Set([
     'notifications', 'profile', 'thread', 'channels',
-    'explore', 'bookmarks', 'settings'
-  ]);  /* 'bookmarks' already here — goBookmarks now sets state.mode='bookmarks' */
+    'explore', 'bookmarks', 'settings', 'lists', 'communities'
+  ]);  /* lists/communities render their own browse UI into #feed */
   /* Modes where pollNew's "Show N posts" banner makes no sense.
      Superset of _selfManagedModes — includes wave/self/custom where
      the user is on a specific channel feed that isn't the main timeline. */
@@ -9134,6 +9314,402 @@ class DeFiX {
   }
 
   /* ── Mute / unmute ──────────────────────────────────────────────── */
+  /* ── Lists & Communities persistence (localStorage) ─────────────── */
+  _saveLists() {
+    utils.safeLS.set(LISTS_KEY, JSON.stringify(this.state.lists));
+  }
+  _saveCommunities() {
+    utils.safeLS.set(COMMUNITIES_KEY, JSON.stringify(this.state.communities));
+  }
+  _newListId() {
+    return 'l_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  }
+
+  /* ── LISTS ──────────────────────────────────────────────────────────
+     A list is { id, name, members:[address] }. Viewing a list scans posts
+     from all member addresses (same strategy as the Following feed). */
+  goLists() {
+    this._updateTitle('Lists');
+    this.setNav(null, null);
+    this.state.mode = 'lists';
+    this.state.activeList = null;
+    this.g('compose-area').style.display   = 'none';
+    this.g('channel-banner').style.display = 'none';
+    this.g('feed-tabs').style.display      = 'none';
+    this.g('new-banner').classList.remove('visible');
+    this.g('loading-more').style.display   = 'none';
+    this._pendingPageHeader = this._makePageHeader({ title: 'Lists', noBack: true });
+    const header = this._applyPageHeader();
+    this.g('feed').innerHTML = header + this._listsHTML();
+    this._wireListsPage();
+  }
+
+  _listsHTML() {
+    const lists = this.state.lists;
+    const rows = lists.length === 0
+      ? `<div class="placeholder-view" style="padding:48px 32px">
+           <span class="ph-icon">📋</span>
+           <h2>No lists yet</h2>
+           <p>Create a list to curate posts from a specific set of accounts.</p>
+         </div>`
+      : lists.map(l => `
+          <div class="lc-row" data-open-list="${utils.safe(l.id)}">
+            <div class="lc-icon">📋</div>
+            <div class="lc-body">
+              <div class="lc-name">${utils.safe(l.name)}</div>
+              <div class="lc-sub">${l.members.length} member${l.members.length === 1 ? '' : 's'}</div>
+            </div>
+            <button class="lc-action" data-edit-list="${utils.safe(l.id)}" title="Edit list" aria-label="Edit list">⚙</button>
+          </div>`).join('');
+    return `
+      <div class="lc-page">
+        <div class="lc-new-row">
+          <input type="text" id="new-list-name" placeholder="New list name…" maxlength="40" autocomplete="off">
+          <button class="go-btn" id="new-list-go">Create</button>
+        </div>
+        ${rows}
+      </div>`;
+  }
+
+  _wireListsPage() {
+    const g = id => document.getElementById(id);
+    const nameInput = g('new-list-name');
+    const createBtn = g('new-list-go');
+    const create = () => {
+      const name = nameInput?.value.trim();
+      if (!name) { utils.toast('Enter a list name'); return; }
+      this.state.lists.push({ id: this._newListId(), name, members: [] });
+      this._saveLists();
+      this.goLists();
+      utils.toast('List created ✓');
+    };
+    if (createBtn) createBtn.onclick = create;
+    if (nameInput) nameInput.onkeydown = e => { if (e.key === 'Enter') create(); };
+    this.g('feed').querySelectorAll('[data-open-list]').forEach(el => {
+      el.onclick = e => {
+        if (e.target.closest('[data-edit-list]')) return; /* let edit handler fire */
+        this.openList(el.dataset.openList);
+      };
+    });
+    this.g('feed').querySelectorAll('[data-edit-list]').forEach(el => {
+      el.onclick = e => { e.stopPropagation(); this.openListEditor(el.dataset.editList); };
+    });
+  }
+
+  /* List editor modal — rename, add/remove members, delete. */
+  openListEditor(listId) {
+    const list = this.state.lists.find(l => l.id === listId);
+    if (!list) return;
+    const memberRows = list.members.length
+      ? list.members.map(addr => {
+          const prof = this.state.profCache[addr];
+          const name = prof?.username ? utils.safe(prof.username) : this.trunc(addr);
+          const pic  = utils.safe(prof?.picUrl || 'image1.jpeg');
+          return `<div class="settings-row" style="align-items:center">
+            <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">
+              <img src="${pic}" onerror="this.src='image1.jpeg'" style="width:32px;height:32px;border-radius:50%;object-fit:cover;flex-shrink:0">
+              <div style="min-width:0">
+                <div style="font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${name}</div>
+                <div style="font-size:12px;color:var(--muted)">@${utils.safe(this.trunc(addr))}</div>
+              </div>
+            </div>
+            <button class="settings-btn" data-remove-member="${utils.safe(addr)}" style="flex-shrink:0">Remove</button>
+          </div>`;
+        }).join('')
+      : `<div style="padding:12px;color:var(--muted);font-size:14px;text-align:center">No members yet. Add an address below.</div>`;
+
+    this._showGenericModal('Edit List', `
+      <div style="margin-bottom:12px">
+        <label style="font-size:13px;color:var(--muted);display:block;margin-bottom:4px">List name</label>
+        <input type="text" class="form-input" id="edit-list-name" value="${utils.safe(list.name)}" maxlength="40">
+      </div>
+      <div style="margin-bottom:8px">
+        <label style="font-size:13px;color:var(--muted);display:block;margin-bottom:4px">Add member by address</label>
+        <div style="display:flex;gap:8px">
+          <input type="text" class="form-input" id="add-member-addr" placeholder="0x…" style="flex:1">
+          <button class="btn-pri" id="add-member-btn" style="flex-shrink:0;padding:8px 16px">Add</button>
+        </div>
+      </div>
+      <div id="list-members" style="max-height:260px;overflow-y:auto;margin:8px 0">${memberRows}</div>
+      <div class="btn-row" style="margin-top:12px;justify-content:space-between">
+        <button class="btn-ghost" id="delete-list-btn" style="color:#f4212e">Delete list</button>
+        <button class="btn-pri" id="save-list-btn">Save</button>
+      </div>
+    `);
+
+    const g = id => document.getElementById(id);
+    g('add-member-btn').onclick = () => {
+      const a = g('add-member-addr').value.trim().toLowerCase();
+      if (!ethers.utils.isAddress(a)) { utils.toast('Invalid address'); return; }
+      if (list.members.includes(a)) { utils.toast('Already in this list'); return; }
+      list.members.push(a);
+      this._saveLists();
+      this.openListEditor(listId); /* re-render */
+    };
+    g('add-member-addr').onkeydown = e => { if (e.key === 'Enter') g('add-member-btn').click(); };
+    document.querySelectorAll('[data-remove-member]').forEach(btn => {
+      btn.onclick = () => {
+        const a = btn.dataset.removeMember;
+        list.members = list.members.filter(m => m !== a);
+        this._saveLists();
+        this.openListEditor(listId);
+      };
+    });
+    g('save-list-btn').onclick = () => {
+      const newName = g('edit-list-name').value.trim();
+      if (newName) list.name = newName;
+      this._saveLists();
+      this._closeGenericModal();
+      if (this.state.mode === 'lists') this.goLists();
+      utils.toast('List saved ✓');
+    };
+    g('delete-list-btn').onclick = () => {
+      this.state.lists = this.state.lists.filter(l => l.id !== listId);
+      this._saveLists();
+      this._closeGenericModal();
+      this.goLists();
+      utils.toast('List deleted');
+    };
+  }
+
+  /* Open a list's feed — scans posts from all member addresses. */
+  async openList(listId) {
+    const list = this.state.lists.find(l => l.id === listId);
+    if (!list) return;
+    this.state.mode = 'lists';
+    this.state.activeList = listId;
+    this._updateTitle(list.name);
+    this.g('compose-area').style.display   = 'none';
+    this.g('channel-banner').style.display = 'none';
+    this.g('feed-tabs').style.display      = 'none';
+    this.g('new-banner').classList.remove('visible');
+    this.g('loading-more').style.display   = 'none';
+    this._pendingPageHeader = this._makePageHeader({
+      title: list.name, subtitle: `${list.members.length} members`, back: true });
+    const header = this._applyPageHeader();
+    if (list.members.length === 0) {
+      this.g('feed').innerHTML = header + `
+        <div class="placeholder-view" style="padding:48px 32px">
+          <span class="ph-icon">📋</span>
+          <h2>This list is empty</h2>
+          <p>Add accounts to it from the Lists page (⚙ button).</p>
+        </div>`;
+      const back = this.g('feed').querySelector('.page-header-back');
+      if (back) back.onclick = () => this.goLists();
+      return;
+    }
+    this.g('feed').innerHTML = header + `
+      <div class="placeholder-view" style="padding:48px 32px">
+        <span class="ph-icon">⏳</span>
+        <h2>Loading ${utils.safe(list.name)}…</h2>
+        <p>Scanning posts from ${list.members.length} accounts.</p>
+      </div>`;
+    const back = this.g('feed').querySelector('.page-header-back');
+    if (back) back.onclick = () => this.goLists();
+    await this._fetchListFeed(list, header);
+  }
+
+  /* Scan posts from a list's members and render them. Reuses the
+     multi-address batch strategy from the Following feed. */
+  async _fetchListFeed(list, header) {
+    const myToken = (this._listFetchToken = (this._listFetchToken || 0) + 1);
+    const addrs = list.members.slice(0, 200);
+    const collected = [];
+    const seen = new Set();
+    const scanLimit = this._getMaxScanPages();
+    const pagesPerAddr = scanLimit === Infinity ? 3 : Math.min(3, Math.ceil(scanLimit / 30));
+    const BATCH = 5;
+    for (let i = 0; i < addrs.length; i += BATCH) {
+      if (myToken !== this._listFetchToken) return; /* superseded */
+      const batch = addrs.slice(i, i + BATCH);
+      const results = await Promise.allSettled(batch.map(async addr => {
+        const pages = [];
+        for (let pg = 1; pg <= pagesPerAddr; pg++) {
+          try {
+            const r = await this.apiFetch(addr, pg);
+            pages.push(...r);
+            if (r.length < 50) break;
+            if (pg < pagesPerAddr) await this._scanDelay(100);
+          } catch { break; }
+        }
+        return pages;
+      }));
+      results.forEach(res => {
+        if (res.status !== 'fulfilled') return;
+        res.value.forEach(tx => {
+          const hash = tx.hash?.toLowerCase();
+          if (!hash || seen.has(hash)) return;
+          if (!tx.input || tx.input === '0x') return;
+          try {
+            const text = ethers.utils.toUtf8String(tx.input).trim();
+            if (text.startsWith(PROFILE_PREFIX)) return;
+            const isReaction = text.startsWith(LIKE_PREFIX) || text.startsWith(UNLIKE_PREFIX)
+              || text.startsWith(BOOKMARK_PREFIX) || text.startsWith(UNBOOKMARK_PREFIX)
+              || text.startsWith(FOLLOW_PREFIX) || text.startsWith(UNFOLLOW_PREFIX);
+            if (isReaction) return;
+            const replyM = text.match(/^REPLY_TO:(0x[a-f0-9]{64})\n\n/i);
+            const repostM = text.match(/^REPOST:(0x[a-f0-9]{64})\n\n/i);
+            const display = replyM ? text.slice(replyM[0].length).trim()
+                          : repostM ? text.slice(repostM[0].length).trim() : text;
+            if (!display && !repostM) return;
+            seen.add(hash);
+            collected.push({
+              content: text, display,
+              parentTx: replyM ? replyM[1].toLowerCase() : null,
+              repostOf: repostM ? repostM[1].toLowerCase() : null,
+              reporter: tx.from?.toLowerCase(), to: tx.to?.toLowerCase() ?? null,
+              timestamp: tx.timeStamp ? new Date(Number(tx.timeStamp)*1000).toISOString() : new Date().toISOString(),
+              txHash: hash, mode: 'lists', channel: tx.to?.toLowerCase(),
+              postType: 'post', direction: null, reactionTarget: null,
+              blockNumber: tx.blockNumber ? Number(tx.blockNumber) : null,
+            });
+          } catch { /* skip */ }
+        });
+      });
+    }
+    if (myToken !== this._listFetchToken) return;
+    if (this.state.mode !== 'lists' || this.state.activeList !== list.id) return;
+    collected.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    /* Render into the feed using the standard post pipeline */
+    this.state.posts = collected;
+    collected.forEach(pp => this._postMap.set(pp.txHash, pp));
+    const replyMap = this._engagement.replyMap;
+    const likeMap = this._engagement.likeMap;
+    const repostMap = this._engagement.repostMap;
+    const engagerMap = this._engagement.engagerMap;
+    this._mergeEngagement(collected, false);
+    let html = header;
+    if (collected.length === 0) {
+      html += `<div class="placeholder-view" style="padding:48px 32px">
+        <span class="ph-icon">📋</span><h2>No posts found</h2>
+        <p>These accounts haven't posted recently.</p></div>`;
+    } else {
+      html += '<div id="list-feed">' + collected.map(pp =>
+        `<div class="post-item" data-txhash="${utils.safe(pp.txHash)}">${this.postHTML(pp, false, replyMap, likeMap, repostMap, engagerMap)}</div>`
+      ).join('') + '</div>';
+    }
+    this.g('feed').innerHTML = html;
+    const back = this.g('feed').querySelector('.page-header-back');
+    if (back) back.onclick = () => this.goLists();
+    const listFeed = this.g('list-feed');
+    if (listFeed) listFeed.addEventListener('click', e => this.onFeedClick(e, false));
+    /* Lazy-load author profiles */
+    collected.slice(0, 30).forEach(pp => {
+      if (pp.reporter !== this.state.signerAddr) this.fetchOtherProfile(pp.reporter);
+    });
+  }
+
+  /* ── COMMUNITIES ────────────────────────────────────────────────────
+     A community is { address, name, desc, joined }. A community IS a
+     channel address; viewing one reuses the channel-feed flow (goCustom). */
+  goCommunities() {
+    this._updateTitle('Communities');
+    this.setNav(null, null);
+    this.state.mode = 'communities';
+    this.g('compose-area').style.display   = 'none';
+    this.g('channel-banner').style.display = 'none';
+    this.g('feed-tabs').style.display      = 'none';
+    this.g('new-banner').classList.remove('visible');
+    this.g('loading-more').style.display   = 'none';
+    this._pendingPageHeader = this._makePageHeader({ title: 'Communities', noBack: true });
+    const header = this._applyPageHeader();
+    this.g('feed').innerHTML = header + this._communitiesHTML();
+    this._wireCommunitiesPage();
+  }
+
+  _communitiesHTML() {
+    const comms = this.state.communities;
+    const joined = comms.filter(c => c.joined);
+    const discover = comms.filter(c => !c.joined);
+    const card = c => `
+      <div class="lc-row" data-open-comm="${utils.safe(c.address)}">
+        <div class="lc-icon">👥</div>
+        <div class="lc-body">
+          <div class="lc-name">${utils.safe(c.name)}</div>
+          <div class="lc-sub">${c.desc ? utils.safe(c.desc) : this.trunc(c.address)}</div>
+        </div>
+        <button class="lc-join ${c.joined ? 'joined' : ''}" data-toggle-join="${utils.safe(c.address)}">
+          ${c.joined ? 'Joined' : 'Join'}
+        </button>
+      </div>`;
+    let body = '';
+    if (joined.length) {
+      body += `<div class="lc-section-title">Your Communities</div>` + joined.map(card).join('');
+    }
+    if (discover.length) {
+      body += `<div class="lc-section-title">Discover</div>` + discover.map(card).join('');
+    }
+    if (comms.length === 0) {
+      body = `<div class="placeholder-view" style="padding:40px 32px">
+        <span class="ph-icon">👥</span><h2>No communities yet</h2>
+        <p>Create one by adding a channel address below.</p></div>`;
+    }
+    return `
+      <div class="lc-page">
+        <div class="lc-new-row lc-new-comm">
+          <input type="text" id="new-comm-name" placeholder="Community name…" maxlength="40" autocomplete="off">
+          <input type="text" id="new-comm-addr" placeholder="0x channel address…" autocomplete="off">
+          <button class="go-btn" id="new-comm-go">Add</button>
+        </div>
+        ${body}
+      </div>`;
+  }
+
+  _wireCommunitiesPage() {
+    const g = id => document.getElementById(id);
+    const create = () => {
+      const name = g('new-comm-name')?.value.trim();
+      const addr = g('new-comm-addr')?.value.trim().toLowerCase();
+      if (!name) { utils.toast('Enter a community name'); return; }
+      if (!ethers.utils.isAddress(addr)) { utils.toast('Invalid channel address'); return; }
+      if (this.state.communities.some(c => c.address === addr)) {
+        utils.toast('That community already exists'); return;
+      }
+      this.state.communities.push({ address: addr, name, desc: '', joined: true });
+      this._saveCommunities();
+      this.goCommunities();
+      utils.toast('Community added ✓');
+    };
+    const goBtn = g('new-comm-go');
+    if (goBtn) goBtn.onclick = create;
+    this.g('feed').querySelectorAll('[data-open-comm]').forEach(el => {
+      el.onclick = e => {
+        if (e.target.closest('[data-toggle-join]')) return;
+        this.openCommunity(el.dataset.openComm);
+      };
+    });
+    this.g('feed').querySelectorAll('[data-toggle-join]').forEach(el => {
+      el.onclick = e => {
+        e.stopPropagation();
+        const addr = el.dataset.toggleJoin;
+        const c = this.state.communities.find(x => x.address === addr);
+        if (c) { c.joined = !c.joined; this._saveCommunities(); this.goCommunities(); }
+      };
+    });
+  }
+
+  /* Open a community's feed — it's a channel, so reuse the channel flow. */
+  async openCommunity(addr) {
+    const c = this.state.communities.find(x => x.address === addr);
+    if (!c) return;
+    this.setNav(null, null);
+    this.state.mode    = 'custom';
+    this.state.channel = addr;
+    this.g('feed-tabs').classList.remove('tabs-sticky');
+    this.g('feed-tabs').style.display = 'none';
+    this._pendingPageHeader = this._makePageHeader({
+      title: c.name, subtitle: c.desc || 'Community', back: true });
+    this.g('compose-area').style.display = 'flex';
+    this.setChActive(null);
+    this.updateChLabel();
+    this.showChannelBanner(addr);
+    await this.resetAndFetch();
+    /* Override back button to return to the communities list */
+    const back = this.g('feed')?.querySelector('.page-header-back')
+      || document.querySelector('.page-header-back');
+    if (back) back.onclick = () => this.goCommunities();
+  }
+
   muteAddress(addr) {
     addr = addr.toLowerCase();
     if (this.state.muted.has(addr)) { utils.toast('Already muted'); return; }
