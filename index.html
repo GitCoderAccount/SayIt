@@ -241,16 +241,19 @@ nav { flex:1; padding:4px 0; }
    subtle slide-in animation. Click to prepend posts and scroll up. */
 #new-banner {
   display:none;
-  position:sticky; top:62px; z-index:15;
-  margin:8px auto;
-  width:max-content; max-width:calc(100% - 32px);
-  padding:8px 16px;
+  position:sticky; top:0; z-index:25;
+  margin:0 auto;
+  width:max-content; max-width:90%;
+  /* Sit just below the sticky page header; a small top offset keeps it
+     clear of the header's bottom border. */
+  margin-top:10px; margin-bottom:2px;
+  padding:9px 20px;
   background:var(--primary);
-  border:none; border-radius:9999px;
+  border:1px solid rgba(255,255,255,0.15); border-radius:9999px;
   color:#fff; font-size:14px; font-weight:700;
   cursor:pointer;
   align-items:center; gap:8px;
-  box-shadow:0 4px 14px rgba(124,77,255,0.4);
+  box-shadow:0 4px 18px rgba(124,77,255,0.5);
   transition:background 0.18s, transform 0.18s, box-shadow 0.18s;
 }
 #new-banner.visible {
@@ -1937,6 +1940,28 @@ nav { flex:1; padding:4px 0; }
 .prof-empty {
   padding:48px 24px; text-align:center; color:var(--muted);
 }
+/* Compact sticky scan pill — used for "Scanning chain…" style progress so
+   it overlays the top of a feed instead of a big block that pushes posts
+   down. Mirrors X's small "Show N posts" pill placement. */
+.scan-pill {
+  position:sticky; top:62px; z-index:14;
+  width:max-content; max-width:calc(100% - 32px);
+  margin:8px auto;
+  padding:7px 16px;
+  background:var(--bg-mid);
+  border:1px solid var(--border);
+  border-radius:9999px;
+  color:var(--primary-lt); font-size:13px; font-weight:600;
+  display:flex; align-items:center; gap:8px;
+  box-shadow:0 4px 14px rgba(0,0,0,0.35);
+  animation:newpost-slidein 0.25s ease-out;
+}
+.scan-pill .scan-spin {
+  width:13px; height:13px;
+  border:2px solid var(--border); border-top-color:var(--primary-lt);
+  border-radius:50%; animation:spin 0.7s linear infinite;
+  flex-shrink:0;
+}
 .prof-empty span { font-size:40px; display:block; margin-bottom:12px; }
 .prof-empty h3 { font-size:18px; font-weight:800; color:var(--text); margin-bottom:6px; }
 .prof-empty p  { font-size:14px; max-width:260px; margin:0 auto; }
@@ -2496,7 +2521,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-13';
+const SW_CACHE_VER = '20260530-14';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -6460,21 +6485,29 @@ class DeFiX {
       ? maxPages
       : this._getMaxScanPages();
     const all = [];
-    /* Show progress when scanning deeply */
+    /* Show progress as a small sticky pill at the top of the profile feed
+       — never a big block that displaces posts. The pill is inserted once,
+       updated in place, and removed when the scan completes. */
     const feedEl = document.getElementById('prof-feed');
-    let progEl = null;
-    if (feedEl && (limit > 30 || limit === Infinity)) {
-      const existing = feedEl.querySelector('#prof-scan-progress');
-      if (!existing) {
-        feedEl.innerHTML = `<div class="prof-empty" id="prof-scan-progress">
-          <span>⏳</span><h3>Scanning chain…</h3>
-          <p id="prof-scan-status">Starting…</p>
-        </div>`;
+    let pill = null, pillStatus = null;
+    const showPill = (feedEl && (limit > 30 || limit === Infinity));
+    if (showPill) {
+      /* If the feed only has the "Loading…" placeholder, clear it so the
+         pill sits above real content as it streams in. */
+      const ph = feedEl.querySelector('.prof-empty');
+      if (ph && /Loading…/.test(ph.textContent)) feedEl.innerHTML = '';
+      pill = document.getElementById('prof-scan-pill');
+      if (!pill) {
+        pill = document.createElement('div');
+        pill.id = 'prof-scan-pill';
+        pill.className = 'scan-pill';
+        pill.innerHTML = `<span class="scan-spin"></span><span id="prof-scan-status">Scanning chain…</span>`;
+        feedEl.prepend(pill);
       }
-      progEl = document.getElementById('prof-scan-status');
+      pillStatus = document.getElementById('prof-scan-status');
     }
     for (let page = 1; (limit === Infinity || page <= limit); page++) {
-      if (progEl) progEl.textContent = `Page ${page} — ${all.length} txs so far…`;
+      if (pillStatus) pillStatus.textContent = `Scanning chain… ${all.length} posts`;
       let raw;
       try { raw = await this.apiFetch(address, page); }
       catch { break; }
@@ -6482,6 +6515,9 @@ class DeFiX {
       if (raw.length < 50) break; /* last page */
       await this._scanDelay(150);
     }
+    /* Remove the pill — loadProfileTab will render the final post list. */
+    const donePill = document.getElementById('prof-scan-pill');
+    if (donePill) donePill.remove();
     return all;
   }
 
