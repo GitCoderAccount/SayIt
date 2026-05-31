@@ -57,7 +57,7 @@ a { color:inherit; text-decoration:none; }
 :focus-visible { outline:2px solid var(--primary); outline-offset:2px; }
 
 /* ── Layout ─────────────────────────────────────────────────────────────── */
-#app { display:flex; min-height:100vh; max-width:1295px; margin:0 auto; align-items:flex-start; }
+#app { display:flex; min-height:100vh; max-width:1265px; margin:0 auto; align-items:flex-start; }
 
 /* ── Left sidebar ───────────────────────────────────────────────────────── */
 #sidebar-left {
@@ -859,7 +859,7 @@ nav { flex:1; padding:4px 0; }
 
 /* ── Right sidebar ──────────────────────────────────────────────────────── */
 #sidebar-right {
-  flex:0 0 390px; width:390px;
+  flex:0 0 360px; width:360px;
   /* NOT position:sticky — the right sidebar scrolls with the page.
      The search bar inside it IS sticky so it stays visible on scroll. */
   background:var(--bg-dark);
@@ -2579,7 +2579,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-24';
+const SW_CACHE_VER = '20260530-25';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -3353,6 +3353,11 @@ class DeFiX {
        without a full feed re-render. Only touches .post-time elements that
        carry a data-ts attribute; cheap DOM text updates. */
     this._timeTickTimer = setInterval(() => this._tickRelativeTimes(), 60000);
+    /* Debounced sidebar refresh: renderFeed can fire many times in quick
+       succession (virtualized scroll, polling, tab switches). Each sidebar
+       rebuild re-scans all posts (trending/polls/news/who-to-follow), so
+       coalescing rapid calls into one avoids redundant O(n) passes. */
+    this._refreshSidebarDebounced = utils.debounce(() => this._refreshSidebarPanels(), 150);
 
     /* Pre-warm the profile cache from IDB for the authors of already-loaded
        posts. Without this, avatars/names flash the default placeholder on
@@ -7300,7 +7305,8 @@ class DeFiX {
   }
 
   renderFeed() {
-    queueMicrotask(() => this._refreshSidebarPanels());
+    /* Debounced — coalesces bursts of renders into one sidebar rebuild. */
+    (this._refreshSidebarDebounced || (() => this._refreshSidebarPanels()))();
     const selfManaged = this._selfManagedModes;
     /* Inject pending page-header BEFORE the self-managed bail.
        Self-managed pages (Notifications, Explore, etc.) call
