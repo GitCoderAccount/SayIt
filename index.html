@@ -57,7 +57,7 @@ a { color:inherit; text-decoration:none; }
 :focus-visible { outline:2px solid var(--primary); outline-offset:2px; }
 
 /* ── Layout ─────────────────────────────────────────────────────────────── */
-#app { display:flex; min-height:100vh; max-width:1265px; margin:0 auto; align-items:flex-start; }
+#app { display:flex; min-height:100vh; max-width:1295px; margin:0 auto; align-items:flex-start; }
 
 /* ── Left sidebar ───────────────────────────────────────────────────────── */
 #sidebar-left {
@@ -859,7 +859,7 @@ nav { flex:1; padding:4px 0; }
 
 /* ── Right sidebar ──────────────────────────────────────────────────────── */
 #sidebar-right {
-  flex:0 0 360px; width:360px;
+  flex:0 0 390px; width:390px;
   /* NOT position:sticky — the right sidebar scrolls with the page.
      The search bar inside it IS sticky so it stays visible on scroll. */
   background:var(--bg-dark);
@@ -1555,6 +1555,29 @@ nav { flex:1; padding:4px 0; }
   transition:opacity 0.15s;
 }
 .fc-link:hover { opacity:0.8; }
+
+/* ── Keyboard shortcuts help ────────────────────────────────────────── */
+.ks-wrap { max-height:60vh; overflow-y:auto; padding:4px 2px; }
+.ks-group { margin-bottom:18px; }
+.ks-group:last-child { margin-bottom:4px; }
+.ks-group-title {
+  font-size:13px; font-weight:800; color:var(--muted);
+  text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;
+}
+.ks-row {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:7px 0; gap:16px;
+}
+.ks-desc { font-size:15px; color:var(--text); }
+.ks-keys { display:flex; align-items:center; gap:6px; flex-shrink:0; }
+.ks-keys kbd {
+  display:inline-block; min-width:22px; text-align:center;
+  padding:3px 8px; font-size:13px; font-weight:700;
+  background:var(--bg-mid); border:1px solid var(--border);
+  border-radius:6px; color:var(--text);
+  font-family:inherit;
+}
+.ks-then { font-size:12px; color:var(--muted); }
 
 /* ── Polls ──────────────────────────────────────────────────────────── */
 .poll-block { margin:8px 0 4px; }
@@ -2556,7 +2579,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-22';
+const SW_CACHE_VER = '20260530-24';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -3739,6 +3762,7 @@ class DeFiX {
         return;
       }
       if (e.key === '/') { e.preventDefault(); g('search-input').focus(); return; }
+      if (e.key === '?') { e.preventDefault(); this.showShortcutsHelp(); return; }
       if (e.key === 'e' || e.key === 'E') { e.preventDefault(); this.openComposeModal(); return; }
       /* ── J/K post navigation ── */
       if (e.key === 'j' || e.key === 'J' || e.key === 'k' || e.key === 'K') {
@@ -4209,6 +4233,52 @@ class DeFiX {
       }
     }
     return notifs;
+  }
+
+  /* Keyboard shortcuts help overlay (press ?). Lists the shortcuts that
+     already exist so they're discoverable, like X's help dialog. */
+  showShortcutsHelp() {
+    const groups = [
+      { title: 'Navigation', items: [
+        ['g then h', 'Go to Home'],
+        ['g then n', 'Go to Notifications'],
+        ['g then p', 'Open your Profile'],
+        ['g then s', 'Go to your Channel'],
+        ['g then b', 'Go to Bookmarks'],
+        ['/', 'Focus search'],
+      ]},
+      { title: 'Compose', items: [
+        ['n', 'New post'],
+        ['e', 'Open the expanded composer'],
+      ]},
+      { title: 'Timeline', items: [
+        ['j', 'Next post'],
+        ['k', 'Previous post'],
+        ['Enter', 'Open the focused post'],
+      ]},
+      { title: 'Actions on the focused post', items: [
+        ['l', 'Like'],
+        ['r', 'Reply'],
+        ['t', 'Repost / Quote'],
+        ['b', 'Bookmark'],
+        ['u', 'Copy link to post'],
+      ]},
+      { title: 'General', items: [
+        ['?', 'Show this help'],
+        ['Esc', 'Close dialogs / popups'],
+      ]},
+    ];
+    const body = groups.map(gr => `
+      <div class="ks-group">
+        <div class="ks-group-title">${gr.title}</div>
+        ${gr.items.map(([key, desc]) => `
+          <div class="ks-row">
+            <span class="ks-desc">${desc}</span>
+            <span class="ks-keys">${key.split(' then ').map(k =>
+              `<kbd>${k}</kbd>`).join('<span class="ks-then">then</span>')}</span>
+          </div>`).join('')}
+      </div>`).join('');
+    this._showGenericModal('Keyboard shortcuts', `<div class="ks-wrap">${body}</div>`);
   }
 
   async goNotifications() {
