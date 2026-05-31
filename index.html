@@ -57,11 +57,11 @@ a { color:inherit; text-decoration:none; }
 :focus-visible { outline:2px solid var(--primary); outline-offset:2px; }
 
 /* ── Layout ─────────────────────────────────────────────────────────────── */
-#app { display:flex; min-height:100vh; max-width:1290px; margin:0 auto; align-items:flex-start; }
+#app { display:flex; min-height:100vh; max-width:1265px; margin:0 auto; align-items:flex-start; }
 
 /* ── Left sidebar ───────────────────────────────────────────────────────── */
 #sidebar-left {
-  width:290px; flex-shrink:0;
+  width:275px; flex-shrink:0;
   position:sticky; top:0; height:100vh;
   display:flex; flex-direction:column;
   align-items:flex-end;          /* X-style: hug the center divider */
@@ -76,8 +76,8 @@ a { color:inherit; text-decoration:none; }
 /* Inner blocks get a fixed content width and sit against the right edge,
    so the nav rail aligns toward the center column like X (rather than
    stretching across the full 275px and floating left). */
-#sidebar-left > * { width:100%; max-width:255px; }
-#sidebar-left nav { width:100%; max-width:255px; }
+#sidebar-left > * { width:100%; max-width:268px; }
+#sidebar-left nav { width:100%; max-width:268px; }
 .logo-wrap {
   display:flex; align-items:center;
   padding:12px 16px 8px; cursor:pointer;
@@ -859,7 +859,7 @@ nav { flex:1; padding:4px 0; }
 
 /* ── Right sidebar ──────────────────────────────────────────────────────── */
 #sidebar-right {
-  flex:0 0 380px; width:380px;
+  flex:0 0 360px; width:360px;
   /* NOT position:sticky — the right sidebar scrolls with the page.
      The search bar inside it IS sticky so it stays visible on scroll. */
   background:var(--bg-dark);
@@ -2556,7 +2556,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-21';
+const SW_CACHE_VER = '20260530-22';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -6192,14 +6192,9 @@ class DeFiX {
       if (emptyEl2 && progFL2) emptyEl2.appendChild(progFL2);
       for (let page = 1; (flimit2 === Infinity || page <= flimit2); page++) {
         if (progFL2) progFL2.textContent = `Scanning page ${page}…`;
-        const qs = `?module=account&action=txlist&address=${addr}&offset=50&page=${page}&sort=desc`;
-        const ctrl = new AbortController();
-        const tim  = setTimeout(() => ctrl.abort(), 15000);
         let raw = [];
-        try {
-          const res = await fetch(apiUrl + qs, { signal: ctrl.signal });
-          if (res.ok) { const d = await res.json(); raw = d.status === '1' ? (d.result || []) : []; }
-        } finally { clearTimeout(tim); }
+        try { raw = await this.apiFetch(addr, page); }
+        catch { break; }
         let pageHadFollow = false;
         raw.forEach(tx => {
           if (!tx.input || tx.input === '0x') return;
@@ -6373,38 +6368,31 @@ class DeFiX {
       /* Respect the user's scan-depth setting fully (unlimited if they set
          it to 0). Follows can appear anywhere in history — recent followers
          live in recent txs — so we no longer cap or early-exit aggressively. */
+      /* Use apiFetch (retry/backoff + consistent parsing). The previous
+         manual fetch could fail silently on a transient error or unexpected
+         status field — the likely reason the count showed 0 despite real
+         followers. Accept a follow if the payload names this address OR the
+         tx was sent to it. */
       const fcLimit = this._getMaxScanPages();
-      for (let page = 1; page <= fcLimit; page++) {
-        /* sort=desc: recent followers appear first, so the count starts
-           climbing immediately instead of after scanning old history. */
-        const qs  = `?module=account&action=txlist&address=${addr}&offset=50&page=${page}&sort=desc`;
-        let raw   = [];
-        try {
-          const ctrl = new AbortController();
-          const tim  = setTimeout(() => ctrl.abort(), 15000);
-          try {
-            const res  = await fetch(apiUrl + qs, { signal: ctrl.signal });
-            if (res.ok) {
-              const d = await res.json();
-              raw = (d.status === '1' && Array.isArray(d.result)) ? d.result : [];
-            }
-          } finally { clearTimeout(tim); }
-        } catch { break; }
+      for (let page = 1; (fcLimit === Infinity || page <= fcLimit); page++) {
+        let raw = [];
+        try { raw = await this.apiFetch(addr, page); }
+        catch { break; }
 
         let pageHadFollow = false;
         raw.forEach(tx => {
           const from = tx.from?.toLowerCase();
           const to   = tx.to?.toLowerCase();
-          if (to !== addr) return; /* only incoming */
+          if (from === addr) return; /* a follow FROM this addr isn't a follower */
           if (!tx.input || tx.input === '0x') return;
           try {
             const text = ethers.utils.toUtf8String(tx.input).trim();
             if (text.startsWith(FOLLOW_PREFIX)) {
               const target = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
-              if (target === addr) { follows.set(from, 'follow'); pageHadFollow = true; }
+              if (target === addr || to === addr) { follows.set(from, 'follow'); pageHadFollow = true; }
             } else if (text.startsWith(UNFOLLOW_PREFIX)) {
               const target = text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase();
-              if (target === addr) { follows.set(from, 'unfollow'); pageHadFollow = true; }
+              if (target === addr || to === addr) { follows.set(from, 'unfollow'); pageHadFollow = true; }
             }
           } catch {}
         });
