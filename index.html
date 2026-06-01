@@ -1205,6 +1205,16 @@ nav { flex:1; padding:4px 0; }
   transition:background 0.2s, transform 0.15s;
 }
 #mobile-fab:hover { background:var(--primary-lt); transform:scale(1.05); }
+#mobile-connect {
+  display:none; position:fixed; bottom:148px; right:16px; z-index:90;
+  padding:12px 20px; border:none; border-radius:9999px;
+  background:var(--primary); color:#fff; font-size:14px; font-weight:700;
+  cursor:pointer; box-shadow:0 4px 20px rgba(124,77,255,0.5);
+  transition:background 0.2s, transform 0.15s;
+}
+#mobile-connect:hover { background:var(--primary-lt); transform:scale(1.03); }
+/* Only meaningful on mobile (the bottom FAB layout). */
+@media (min-width:769px) { #mobile-connect { display:none !important; } }
 
 #mobile-nav {
   display:none; position:fixed; bottom:0; left:0; right:0;
@@ -2337,15 +2347,6 @@ nav { flex:1; padding:4px 0; }
       <div id="sb-trending-list">
         <!-- Dynamic trending hashtags inserted by renderTrending().
              Pinned partner rows always shown at the bottom. -->
-        <div class="sb-card-row" id="sb-wave-row" style="cursor:pointer"
-          onclick="pulse.goWave()">
-          <div style="flex:1">
-            <span class="trend-label">Featured partner</span>
-            <span class="trend-name">Wave on Pulse 📻</span>
-            <span class="trend-count">Live free speech radio</span>
-          </div>
-          <span style="font-size:20px;align-self:center">🎙️</span>
-        </div>
         <div class="sb-card-row" id="sb-pulsechain-row" style="cursor:pointer"
           onclick="window.open('https://pulsechain.com','_blank','noopener,noreferrer')">
           <div style="flex:1">
@@ -2383,8 +2384,6 @@ nav { flex:1; padding:4px 0; }
           target="_blank" rel="noopener noreferrer">About</a>
         <a href="https://pulsechain.com"
           target="_blank" rel="noopener noreferrer">PulseChain</a>
-        <a href="https://waveonpulse.com"
-          target="_blank" rel="noopener noreferrer">Wave on Pulse</a>
         <a href="https://github.com/HyperLightCoder/Pulse-Underground"
           target="_blank" rel="noopener noreferrer">GitHub</a>
         <a href="#" id="footer-disclaimer"
@@ -2439,6 +2438,11 @@ nav { flex:1; padding:4px 0; }
             <span class="more-label">Settings &amp; Privacy</span>
           </button>
         </div>
+
+<!-- Mobile connect-wallet FAB — the sidebar connect button is hidden on
+     mobile; this gives mobile users (in a wallet dApp browser) a way to
+     connect. Hidden once connected. -->
+<button id="mobile-connect" aria-label="Connect Wallet">Connect Wallet</button>
 
 <!-- Mobile FAB -->
 <button id="mobile-fab" aria-label="New post">✦</button>
@@ -2659,11 +2663,11 @@ nav { flex:1; padding:4px 0; }
 const ethers = window.ethers;
 
 /* ── Constants ────────────────────────────────────────────────────────── */
-const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
+const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseChain burn address */
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-38';
+const SW_CACHE_VER = '20260530-39';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -2682,7 +2686,6 @@ const DRAFT_KEY      = 'defixDraft';
 const PRUNE_KEY      = 'defixLastPrune';
 const LAST_CHECK_KEY = 'defixLastCheck';
 const DISCLAIMER_KEY = 'defixDisclaimerAck'; /* '1' once the user has acknowledged */
-const WAVE_ADDRESS   = '0x0000000000000000000000000000000000000000';
 const DEFIX_CHANNEL  = '0x0000000000000000000000000000000000000001'; /* placeholder — update with real address */
 const LIKE_PREFIX       = 'LIKE:';
 const UNLIKE_PREFIX     = 'UNLIKE:';
@@ -3520,6 +3523,8 @@ class DeFiX {
        HTML (so they survive renderTrending's outerHTML rebuild). Wave opens
        the Wave channel; PulseChain opens pulsechain.com. */
     g('connect-btn').onclick   = () => this.toggleWallet();
+    const mConn = g('mobile-connect');
+    if (mConn) mConn.onclick = () => this.toggleWallet();
     g('nav-post-btn').onclick  = () => this.openComposeModal();
     g('mobile-fab').onclick    = () => this.openComposeModal();
 
@@ -3848,12 +3853,6 @@ class DeFiX {
     g('ch-self').onclick = () => this.goSelf();
     g('ch-go').onclick   = () => this.goCustom();
     g('custom-input').onkeydown = e => { if (e.key === 'Enter') this.goCustom(); };
-    /* wave-btn removed from sidebar HTML — Wave is reachable via nav/sidebar card */
-    const wcb = g('wave-card-btn');
-    if (wcb) {
-      wcb.onclick   = () => this.goWave();
-      wcb.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') this.goWave(); };
-    }
     const dcb = g('defix-card-btn');
     if (dcb) {
       dcb.onclick   = () => this.goDeFiX();
@@ -4680,22 +4679,6 @@ class DeFiX {
     await this.resetAndFetch();
   }
 
-  async goWave() {
-    this._updateTitle('Wave');
-    this.setNav(null, null);
-    this.state.mode    = 'wave';
-    this.state.channel = WAVE_ADDRESS;
-    this.g('feed-tabs').classList.remove('tabs-sticky');
-    this.g('feed-tabs').style.display = 'none';
-    this._pendingPageHeader = this._makePageHeader({
-      title: 'Wave on Pulse', subtitle: 'Free speech radio on PulseChain', noBack: false });
-    this.g('compose-area').style.display = 'none';
-    this.setChActive(null);
-    this.updateChLabel();
-    this.showChannelBanner(WAVE_ADDRESS);
-    await this.resetAndFetch();
-  }
-
   async goDeFiX() {
     this.setNav(null, null);
     this.state.mode    = 'custom';
@@ -5136,17 +5119,6 @@ class DeFiX {
        a description on hover/touch. Click opens the channel. */
     const featured = [
       {
-        id: 'wave',
-        name: 'Wave on Pulse',
-        sub: 'On-chain live radio',
-        desc: 'Live free speech radio — permanently archived on PulseChain.',
-        icon: '📻',
-        gradient: 'linear-gradient(135deg,rgba(255,60,172,0.18),rgba(43,134,197,0.10))',
-        accent: 'var(--wave-a)',
-        link: 'https://waveonpulse.com',
-        onclick: 'pulse.goWave()',
-      },
-      {
         id: 'defix',
         name: 'Say It DeFi Channel',
         sub: 'Official updates & tech',
@@ -5392,7 +5364,7 @@ class DeFiX {
           <img src="image1.jpeg" alt="Say It DeFi">
           <div>
             <strong>Say It DeFi</strong>
-            <span>Decentralized X — on-chain social on PulseChain</span>
+            <span>Uncensorable on-chain social on PulseChain</span>
           </div>
         </div>
         <div style="font-size:14px;color:var(--muted);line-height:1.8">
@@ -5584,7 +5556,6 @@ class DeFiX {
       notifications: `To: ${this.trunc(signerAddr || '')}`,
       self:          `My channel: ${this.trunc(signerAddr || '')}`,
       custom:        `Channel: ${this.trunc(channel)}`,
-      wave:          `Wave: ${this.trunc(WAVE_ADDRESS)}`,
       channels:      'Your channel history',
       explore:       'Discover on PulseChain',
       bookmarks:     'Saved posts',
@@ -5598,12 +5569,6 @@ class DeFiX {
   showChannelBanner(address) {
     const banner = this.g('channel-banner');
     banner.style.display = 'block';
-    if (address === WAVE_ADDRESS) {
-      banner.className = 'wave-banner';
-      this.renderBanner({ username:'Wave on Pulse', picUrl:'image1.jpeg',
-        bio:'On-chain live radio — spaces & shows transcribed to PulseChain' }, address);
-      return;
-    }
     banner.className = '';
     if (address === this.state.signerAddr) {
       this.renderBanner(this.state.profile, address); return;
@@ -5736,7 +5701,17 @@ class DeFiX {
 
   async connect() {
     const eth = this._getEthereum();
-    if (!eth) { utils.toast('MetaMask / wallet not detected'); return; }
+    if (!eth) {
+      /* No injected provider. On mobile this almost always means the user is
+         in a normal browser (Safari/Chrome) rather than a wallet's built-in
+         dApp browser, where there's nothing to connect to. */
+      const isMobile = window.innerWidth <= 768 ||
+        /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+      utils.toast(isMobile
+        ? 'No wallet found. Open this site inside your wallet app\'s browser (e.g. Rabby, MetaMask) to connect.'
+        : 'No wallet detected. Install a PulseChain-compatible wallet extension to connect.');
+      return;
+    }
     try {
       const prov = new ethers.providers.Web3Provider(eth);
       if ((await prov.getNetwork()).chainId !== PULSE_CHAIN_ID) {
@@ -5775,6 +5750,7 @@ class DeFiX {
   async afterConnect() {
     const addr = this.state.signerAddr;
     this.g('account-pill').style.display = 'flex';
+    this.g('mobile-connect')?.style && (this.g('mobile-connect').style.display = 'none');
     this.g('connect-btn').style.display  = 'none';
     this.g('ap-addr').textContent        = this.trunc(addr);
     this.g('ch-self').style.display      = 'block';
@@ -5797,7 +5773,7 @@ class DeFiX {
       setTimeout(() => this.rebuildChannelHistory(), 3000);
     }
     /* Only re-render feed if we're actually on a feed view */
-    const feedModes = ['main', 'self', 'custom', 'wave'];
+    const feedModes = ['main', 'self', 'custom'];
     if (feedModes.includes(this.state.mode)) this.renderFeed();
     /* Refresh the sidebar panels (Who to follow, trending, polls) now that
        we know who the user follows — otherwise Who-to-follow stays empty
@@ -5874,6 +5850,9 @@ class DeFiX {
     this.state.signerAddr = null;
     this.state.profile    = { username:'', picUrl:'image1.jpeg', bio:'' };
     this.g('account-pill').style.display = 'none';
+    /* On mobile, surface the connect FAB while disconnected. */
+    { const mc = this.g('mobile-connect');
+      if (mc && window.innerWidth <= 768) mc.style.display = 'block'; }
     this.g('connect-btn').style.display  = 'block';
     this.g('compose-avatar').src         = 'image1.jpeg';
     this.g('ch-self').style.display      = 'none';
@@ -7552,7 +7531,6 @@ class DeFiX {
     const posts = await this.cache.getPosts(p => {
       if (mode === 'notifications') return false;
       if (mode === 'self')  return p.mode === 'self'  && p.channel === signerAddr;
-      if (mode === 'wave')  return p.mode === 'wave'  && p.channel === channel;
       return p.channel === channel && p.mode === mode;
     });
     this.state.posts = posts.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
@@ -9267,7 +9245,7 @@ class DeFiX {
      the user is on a specific channel feed that isn't the main timeline. */
   _noBannerModes = new Set([
     'notifications', 'profile', 'thread', 'channels',
-    'explore', 'bookmarks', 'settings', 'wave', 'self', 'custom', 'followlist'
+    'explore', 'bookmarks', 'settings', 'self', 'custom', 'followlist'
   ]);
 
   onScroll() {
