@@ -1390,7 +1390,10 @@ nav { flex:1; padding:4px 0; }
   .more-popup {
     position:fixed; left:12px; bottom:150px; top:auto; right:auto;
     min-width:240px; width:max-content; max-width:280px;
-    transform:none;
+    /* popIn animates transform:translateY, which would create a containing
+       block and re-trap position:fixed inside the sidebar's overflow:hidden
+       (clipping the popup to 88px). Use an opacity-only animation here. */
+    transform:none; animation:fadeInOnly 0.15s ease;
   }
   .more-popup .more-label { display:inline; }
   .more-popup .nav-label { display:inline; }
@@ -1495,6 +1498,7 @@ nav { flex:1; padding:4px 0; }
 }
 .more-popup.open { display:block; }
 @keyframes popIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+@keyframes fadeInOnly { from{opacity:0} to{opacity:1} }
 .more-item {
   display:flex; align-items:center; gap:14px;
   width:100%; padding:14px 16px;
@@ -1603,8 +1607,14 @@ nav { flex:1; padding:4px 0; }
 
 /* ── Disclaimer ─────────────────────────────────────────────────────── */
 .disclaimer-body {
-  max-height:60vh; overflow-y:auto; padding:2px 2px 4px;
+  /* The modal itself caps at 90vh and scrolls; keep the body flexible so the
+     header + Agree button always remain visible on short mobile screens
+     instead of being pushed off. */
+  max-height:none; overflow-y:visible; padding:2px 2px 4px;
   font-size:14.5px; line-height:1.6; color:var(--text);
+}
+@media (max-width:768px) {
+  .disclaimer-body { font-size:14px; line-height:1.55; }
 }
 .disclaimer-body p { margin-bottom:12px; }
 .disclaimer-body p:last-child { margin-bottom:0; }
@@ -2645,7 +2655,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-29';
+const SW_CACHE_VER = '20260530-30';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -3552,8 +3562,8 @@ class DeFiX {
        items so the account pill isn't pushed off-screen on short displays). */
     g('nav-profile').onclick   = () => this.openProfileModal();
     g('nav-more').onclick      = e => { e.stopPropagation(); this.toggleMoreMenu(); };
-    const mnMore = g('mn-more');
-    if (mnMore) mnMore.onclick = e => { e.stopPropagation(); this.toggleMoreMenu(); };
+    /* The mobile #mn-more button is wired via the [data-mn="more"]
+       delegation handler below. */
     g('more-settings').onclick = () => { this.hideMoreMenu(); this.goSettings(); };
     const mlBtn = g('more-lists');
     if (mlBtn) mlBtn.onclick = () => { this.hideMoreMenu(); this.goLists(); };
@@ -3563,14 +3573,16 @@ class DeFiX {
     if (mbBtn) mbBtn.onclick = () => { this.hideMoreMenu(); this.goBookmarks(); };
 
     document.querySelectorAll('[data-mn]').forEach(b => {
-      b.onclick = () => {
+      b.onclick = (ev) => {
         const t = b.dataset.mn;
+        if (t === 'more') ev.stopPropagation();
         if (t === 'home')      this.goHome();
         if (t === 'explore')   this.goExplore();
         if (t === 'notifs')    this.goNotifications();
         if (t === 'channels')  this.goChannels();
         if (t === 'mychannel') this.goSelf();
         if (t === 'profile')   this.openProfileModal();
+        if (t === 'more')      this.toggleMoreMenu();
       };
     });
 
