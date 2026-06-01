@@ -2663,7 +2663,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-37';
+const SW_CACHE_VER = '20260530-38';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -6430,23 +6430,50 @@ class DeFiX {
     this.g('new-pill')?.classList.remove('visible');
     const isOwn = address.toLowerCase() === this.state.signerAddr?.toLowerCase();
     const headerHTML = this._makePageHeader({ title: 'Followers', back: true });
-    feed.innerHTML = headerHTML + `<div class="prof-empty"><span>⏳</span><h3>Loading…</h3></div>`;
 
+    const addr = address.toLowerCase();
+    this._followerCache = this._followerCache || new Map();
+    const cached = this._followerCache.get(addr);
+
+    if (cached) {
+      /* Show the cached result immediately — no loading spinner on revisit —
+         then refresh quietly in the background and update only if changed. */
+      const backBtnC = this._renderFollowList(feed, headerHTML, address, isOwn, cached, 'Followers', null);
+      const fresh = await this._scanFollowers(addr, navToken, null);
+      if (fresh && this.state.mode === 'followlist' && navToken === this._navToken) {
+        if (fresh.length !== cached.length || fresh.some((a, i) => a !== cached[i])) {
+          this._followerCache.set(addr, fresh);
+          this._renderFollowList(feed, headerHTML, address, isOwn, fresh, 'Followers', null);
+        }
+      }
+      return;
+    }
+
+    /* No cache yet — show the loading UI and scan. */
+    feed.innerHTML = headerHTML + `<div class="prof-empty"><span>⏳</span><h3>Loading…</h3></div>`;
     const backBtn = feed.querySelector('.page-header-back');
     if (backBtn) backBtn.onclick = () => this.goProfilePage(address, isOwn);
+    const progEl = feed.querySelector('.prof-empty');
+    const prog   = progEl ? document.createElement('p') : null;
+    if (progEl && prog) progEl.appendChild(prog);
 
-    /* Scan the address's received txs for FOLLOW markers */
-    const addr = address.toLowerCase();
+    const addrs = await this._scanFollowers(addr, navToken, prog);
+    if (!addrs || this.state.mode !== 'followlist' || navToken !== this._navToken) return;
+    this._followerCache.set(addr, addrs);
+    this._renderFollowList(feed, headerHTML, address, isOwn, addrs, 'Followers', backBtn);
+  }
+
+  /* Raw follower scan → returns the resolved follower address array, or null
+     if it was aborted by navigation. Shared by the cached entry point above. */
+  async _scanFollowers(addr, navToken, prog) {
     /* Track the LATEST action per follower (txs arrive newest-first; an
        unfollow→refollow must resolve to the most recent action). */
     const lastAction = new Map(); /* from → { action, order } */
     try {
       const flimit2 = this._getMaxScanPages();
-      const emptyEl2 = feed.querySelector('.prof-empty');
-      const progFL2  = emptyEl2 ? document.createElement('p') : null;
-      if (emptyEl2 && progFL2) emptyEl2.appendChild(progFL2);
       for (let page = 1; (flimit2 === Infinity || page <= flimit2); page++) {
-        if (progFL2) progFL2.textContent = `Scanning page ${page}…`;
+        if (prog) prog.textContent = `Scanning page ${page}…`;
+        if (navToken !== this._navToken) return null; /* navigated away */
         let raw = [];
         try { raw = await this.apiFetch(addr, page); }
         catch { break; }
@@ -6480,10 +6507,7 @@ class DeFiX {
         await this._scanDelay(150);
       }
     } catch {}
-    const addrs = [...lastAction.entries()].filter(([,v]) => v.action === 'follow').map(([a]) => a);
-    /* If navigation changed during the scan, don't paint over the new view. */
-    if (this.state.mode !== 'followlist' || navToken !== this._navToken) return;
-    this._renderFollowList(feed, headerHTML, address, isOwn, addrs, 'Followers', backBtn);
+    return [...lastAction.entries()].filter(([,v]) => v.action === 'follow').map(([a]) => a);
   }
 
   /* Render a single row for the Followers/Following list. Used by both
@@ -6706,6 +6730,10 @@ class DeFiX {
         if (btn) { btn.textContent = 'Following'; btn.className = 'prof-following-btn'; }
       }
       this._showFollowingCount();
+      /* A follow/unfollow changes follower lists — drop cached scans so the
+         next visit re-scans fresh. */
+      this._followerCache?.delete(addr);
+      this._followerCache?.delete(this.state.signerAddr);
       /* Refresh Who-to-follow (drops the followed account) and sync any other
          visible follow buttons for this address. */
       setTimeout(() => {
@@ -7419,10 +7447,17 @@ class DeFiX {
     const pill = this.g('new-pill');
     if (!pill) return;
     const n = this.state.pending.length;
+    /* Fast path: no pending posts → never show the pill, and skip the
+       getBoundingClientRect() layout read entirely. This avoids a forced
+       reflow on every scroll frame during normal scrolling (the common
+       case), which the browser was flagging as a performance violation. */
+    if (n === 0) { pill.classList.remove('visible'); return; }
+    /* Cheap scroll-position check first; only measure the bar when we've
+       scrolled far enough that it could plausibly be out of view. */
+    if (window.scrollY <= 200) { pill.classList.remove('visible'); return; }
     const bar = this.g('new-banner');
-    /* Bar is considered "out of view" once its top passes above the header. */
-    const barOutOfView = bar ? bar.getBoundingClientRect().bottom < 60 : (window.scrollY > 300);
-    if (n > 0 && barOutOfView) pill.classList.add('visible');
+    const barOutOfView = bar ? bar.getBoundingClientRect().bottom < 60 : true;
+    if (barOutOfView) pill.classList.add('visible');
     else pill.classList.remove('visible');
   }
 
