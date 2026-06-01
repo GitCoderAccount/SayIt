@@ -1,121 +1,144 @@
 # Say It DeFi
 
-![Pulse Underground](image1.jpeg)
+**Uncensorable social media, built entirely on the PulseChain blockchain.**
 
-**Decentralized • Censorship-Resistant • Real-Time News & Messaging on PulseChain**
+Say It DeFi is a decentralized social platform where every post, reply, like, follow, poll, and profile lives on-chain. There is no central server storing your content, no database that can be wiped, and no company that can delete your account or silence your voice. If your wallet can sign a transaction, you can speak — and what you say is permanent, public, and owned by no one but the network itself.
 
-> No one can stop you from posting whatever you want.  
-> No one can silence you.  
-> Welcome to The Pulse Underground.
+This repository hosts the **front-end**: a single, self-contained web application that reads the social graph directly from the blockchain and lets you write to it with your own wallet. The front-end is just a window. The data is the chain.
 
-## Vision
+---
 
-**Say It DeFi** is a fully decentralized social news and messaging platform built natively on **PulseChain**.  
+## What it is
 
-Instead of relying on centralized servers, databases, or Web2 platforms that can censor, shadow-ban, or shut you down, Pulse Underground turns **zero-value transactions** into immutable public posts and private channels.
+Say It DeFi is a client for a permissionless social protocol. Instead of trusting a platform to host your posts, every action is encoded as a blockchain transaction:
 
-Every message is embedded directly in the blockchain as transaction data. The entire feed is pulled from the public PulseScan API. There are no servers, no moderators, no accounts, and no single point of failure.
+- A **post** is a transaction whose data payload contains your message.
+- A **reply** references the transaction hash of the post it answers.
+- A **like**, **bookmark**, **follow**, or **repost** is a small tagged transaction.
+- A **poll** embeds its question and options on-chain; **votes** are transactions tallied by scanning the chain.
+- Your **profile** (display name, bio, avatar, banner) is written on-chain and read back by any client.
 
-This is freedom of speech at the protocol level.
+Because all of this is just blockchain data, anyone can build their own interface to the same network. This front-end is one such interface — open, auditable, and dependency-free.
 
-## ✨ Key Features
+---
 
-### Core Functionality
-- **Post via Transactions** — Type a message → send 0-value tx with UTF-8 text in the data field
-- **Channels = Addresses** — Every PulseChain address functions as a channel/room
-- **Main Channel** — Global public feed
-- **Self Channel** — Your personal inbox (only shows messages **sent to** your address)
-- **Custom Channels** — Join any address instantly
+## Core features
 
-### Smart Feed Experience
-- **Incoming-Only Filtering** — Self Channel never shows your outgoing messages
-- **Infinite Scroll** — Automatically loads older history when you reach the bottom
-- **Background Live Updates** — Polls every 2 minutes without refreshing the page
-- **"New Stories Available" Button** — Twitter/X-style notification at the top
-- **Dynamic Gas Estimation** — Always uses the cheapest safe gas limit
-- **Local Profile** — Username + avatar URL (stored in browser)
-- **Instant Search** — Filter posts by content or reporter
-- **IndexedDB Caching** — Lightning-fast reloads and offline-ish feel
+### Posting and conversation
+- **Write anything.** No character limit — short thoughts, long essays, or full articles. Long posts collapse behind a "Show more" expander in the feed.
+- **Threaded replies** with visual connector lines, so conversations are easy to follow.
+- **Reposts and quote-posts** to amplify others, with the original post embedded inline.
+- **Rich media** — attach images, GIFs, and video by URL (including IPFS and Arweave links, which are resolved automatically).
+- **Emoji picker** with categorized, multi-select emoji, plus a draft autosave so you never lose a half-written post.
 
-### Freedom & Privacy
-- Fully client-side (single HTML file)
-- No backend, no database, no KYC
-- Censorship is impossible as long as PulseChain lives
+### Engagement
+- **Likes, bookmarks, and follows**, all recorded on-chain and reflected live across the interface.
+- **On-chain polls** — create a poll with multiple options and an optional time limit. Votes are counted directly from the blockchain on a last-vote-wins basis, so the tally is verifiable by anyone. Closed polls surface their final results.
+- **Real engagement counts** derived from chain data, not from a private server.
 
-## How It Works (Technical Breakdown)
+### Discovery
+- **For You and Following feeds** to switch between the whole network and the accounts you follow.
+- **Explore** and a **trending** panel that highlights active hashtags on the network.
+- **Search-as-you-type** across people and hashtags, with keyboard navigation.
+- **Today's News** and **Latest Polls** side panels surfacing the most active recent content.
+- **Who to follow** suggestions derived from active accounts in your current feed.
+- **Channels** — post into and browse different on-chain channels (address-scoped spaces), including a featured partner channel.
 
-1. Connect your PulseChain wallet
-2. Select a channel (Main / Self / Custom address)
-3. Write message → encoded as `data` in a 0-value transaction
-4. App scans transaction history of the channel address via PulseScan API
-5. Filters to **only incoming** transactions (`to === channel`)
-6. Decodes `raw_input` from hex to UTF-8 text
-7. New messages detected via background polling
+### Organization
+- **Lists** — group accounts into named lists and view a combined feed of just those members.
+- **Communities** — follow address-scoped community channels.
+- **Hybrid on-chain sync** — Lists and Communities work instantly and locally by default, and can be **published on-chain** as a single snapshot transaction so they travel with you across devices and are publicly portable. A matching **restore** reads your latest snapshot back. Returning on a fresh device auto-restores them in the background.
+- **Bookmarks** — save posts to revisit later.
 
-**To post in your own Self Channel** → simply send the transaction to yourself.
+### Notifications
+- A unified notifications view with **All / Mentions / Likes** tabs.
+- Alerts for likes, follows, replies, reposts — plus **poll notifications**: get notified when someone votes on a poll you created and when one of your polls ends.
+- A live unread badge (title + favicon) for quick activity, with full poll-activity scanning when you open the notifications page.
 
-## Quick Start
+### Profiles
+- Editable **display name, bio, avatar, and banner**, all stored on-chain.
+- Tabbed profile view: **Posts, Replies, Media, Likes**.
+- **Follower and following** lists, counted by scanning the chain.
 
-### Option 1: Use it Now
-Just open `index.html` (or visit the hosted version).
+### Experience
+- **Progressive Web App** — installable to your home screen or desktop, with a service worker for fast loads and offline-aware behavior.
+- **Virtualized feed** that recycles DOM nodes, so even very long timelines stay smooth.
+- **Keyboard shortcuts** for power users — press <kbd>?</kbd> anywhere to see the full list (navigate with `j`/`k`, act with `l`/`r`/`t`/`b`, jump pages with `g` then a key, compose with `n`/`e`, search with `/`).
+- **Relative timestamps** that refresh themselves, sticky "new posts" indicators, focus-trapped modals, ARIA labelling, and other accessibility and polish touches throughout.
+- A first-visit **disclaimer** that explains the decentralized, non-custodial nature of the platform.
 
-### Option 2: Run Locally / Host Yourself
-```bash
-git clone https://github.com/yourusername/pulse-underground.git
-cd pulse-underground
-# Open index.html in any browser
-Requirements:
+---
 
-MetaMask (or any PulseChain-compatible wallet)
-Connected to PulseChain Mainnet (Chain ID: 369)
+## How it works
 
-Usage Guide
+```
+Your wallet  ──signs──►  PulseChain transaction  ──contains──►  your post / action
+                                   │
+                                   ▼
+                        The blockchain (chain ID 369)
+                                   │
+        Say It DeFi reads it back ─┘  via a PulseChain block explorer API
+                                   │
+                                   ▼
+                        Rendered in your feed
+```
 
-Connect Wallet — Sidebar button
-Switch Channels — Use the buttons or enter any address
-Post — Type in the box and hit the arrow (➤)
-Scroll Down — Auto-loads older posts when you reach the bottom
-New Posts — If new messages arrive while browsing, a glowing button appears at the top
-Profile — Click "Profile" in sidebar to set username + avatar URL
+Every social action is a transaction whose input data carries a small, human-readable payload (for example, a post is plain text; a follow is a short tagged marker addressed to the followed account; a vote references a poll's transaction hash). The front-end scans the chain through a public block explorer API, decodes these payloads, and assembles them into feeds, threads, profiles, and tallies. Reactions and engagement are computed the same way — by reading what's already on-chain.
 
-Tech Stack
+Nothing is stored on a private server. The only local storage is your own browser cache (for speed) and your personal preferences.
 
-Frontend: Vanilla HTML5 + CSS3 + JavaScript (single file — no build tools)
-Blockchain: PulseChain (Chain ID 369)
-Wallet Library: ethers.js v5
-Data Source: PulseScan API v2
-Storage: IndexedDB (posts + profiles)
-Theme: Custom dark neon cyberpunk UI
+- **Network:** PulseChain (chain ID **369**)
+- **Default channel:** a fixed on-chain address that serves as the main public timeline
+- **Data source:** a configurable PulseChain block explorer API (defaults to the public PulseScan endpoint), with an optional backup endpoint for resilience
 
-Project Structure
-textpulse-underground/
-├── index.html          # The entire application (copy-paste ready)
-├── image1.jpeg         # Logo + default avatar
-├── README.md
-└── (future: assets/, separate JS when we scale)
-Roadmap
+---
 
- Media embeds (IPFS hashes in transaction data)
- Reply threading (reference previous txHash)
- On-chain profile registry (optional contract)
- Mobile PWA + offline support
- Channel discovery & active rooms list
- DAO control over Main Channel address
- Multi-language support
+## Running it
 
-Contributing
-This is a rebellion. All freedom fighters welcome.
+This is a single self-contained front-end. There is no build step and no backend to deploy.
 
-Fork the repo
-Create your feature branch (git checkout -b feature/legendary-idea)
-Commit (git commit -m 'Drop the fire')
-Push & open a Pull Request
+1. Serve the files (`index.html` and `sw.js`) from any static host — GitHub Pages, IPFS, or any web server.
+2. Open the site in a browser with a Web3 wallet (such as one supporting PulseChain).
+3. Connect your wallet, make sure it's on PulseChain (chain ID 369), and start posting.
 
-Big love to every dev who helps scar the stars with light.
-License
-Unlicense — This project belongs to humanity. Do whatever the fuck you want with it.
+To read the timeline you don't even need a wallet — connect one only when you want to post or interact.
 
-Built with blood, code, and pure PulseChain fire.
-The Pulse Underground — Where free speech still lives.
-No kings. No servers. No censorship.
-Made for the people, by the people, on the chain that never sleeps.
+### Configuration
+
+Most settings are adjustable in-app under **Settings**, including:
+
+- The block explorer **API endpoint** (and an optional backup endpoint).
+- **Scan depth** — how many pages of chain history to read when building feeds and follower lists (set to unlimited for the deepest history, at the cost of slower scans).
+- Local cache pruning age and other preferences.
+
+---
+
+## Privacy, permanence, and responsibility
+
+Say It DeFi is a front-end to a public, permissionless network. Please understand:
+
+- Everything you post is **public, permanent, and immutable**. Once a post is on-chain, no one — including the operators of this interface — can edit or remove it.
+- This interface does **not** host, store, moderate, or control any content. It only reads and displays what already exists on the blockchain.
+- **You are responsible** for your wallet, your keys, and everything you post. On-chain transactions cost gas and cannot be reversed.
+- Nothing in the app is financial, legal, or investment advice.
+
+By using the interface, you acknowledge that the creators and operators are not liable for content posted or actions taken on the underlying decentralized network.
+
+---
+
+## Tech notes
+
+- **Single-file front-end** — the entire application is one `index.html` (HTML, CSS, and JavaScript inlined), paired with a service worker (`sw.js`) for PWA caching. No frameworks, no bundler, no build pipeline.
+- **Wallet & chain access** via ethers.js and the browser's injected Web3 provider.
+- **Local cache** in IndexedDB for posts and engagement maps, keeping the timeline fast and reducing redundant chain reads.
+- **Resilient reads** — the chain-scanning layer retries with backoff and can fail over to a backup explorer endpoint.
+
+---
+
+## License
+
+See the repository for license details.
+
+---
+
+*Say It DeFi — uncensorable social on PulseChain.*
