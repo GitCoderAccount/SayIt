@@ -2649,7 +2649,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-33';
+const SW_CACHE_VER = '20260530-34';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -4566,7 +4566,7 @@ class DeFiX {
     const inTab = (n) => {
       if (tab === 'all') return true;
       if (tab === 'mentions') return n.type === 'reply' || n.type === 'repost' || n.type === 'message' || n.type === 'vote';
-      if (tab === 'likes') return n.type === 'like' || n.type === 'follow';
+      if (tab === 'likes') return n.type === 'like';
       return true;
     };
     const filtered = all.filter(inTab);
@@ -6353,38 +6353,43 @@ class DeFiX {
     if (isOwn && this.state.signerAddr === address.toLowerCase()) {
       addrs = [...this.state.following];
     } else {
-      /* Scan their sent txs for FOLLOW: prefixes */
+      /* Scan their SENT txs for FOLLOW:/UNFOLLOW: — latest action per target
+         wins (txs arrive newest-first; an unfollow→refollow must resolve to
+         the most recent action regardless of page order). */
       try {
-        const s = this._getSettings();
-        const apiUrl = s.apiUrl || 'https://api.scan.pulsechain.com/api';
-        const follows = new Map();
+        const targetAddr = address.toLowerCase();
+        const lastAction = new Map(); /* target → { action, ts } */
         const flimit = this._getMaxScanPages();
         const emptyD = feed.querySelector('.prof-empty');
         const progFL = emptyD ? document.createElement('p') : null;
         if (emptyD && progFL) emptyD.appendChild(progFL);
         for (let page = 1; (flimit === Infinity || page <= flimit); page++) {
           if (progFL) progFL.textContent = `Scanning page ${page}…`;
-          const qs = `?module=account&action=txlist&address=${address}&offset=50&page=${page}&sort=desc`;
-          const ctrl = new AbortController();
-          const tim  = setTimeout(() => ctrl.abort(), 15000);
           let raw = [];
-          try {
-            const res = await fetch(apiUrl + qs, { signal: ctrl.signal });
-            if (res.ok) { const d = await res.json(); raw = d.status === '1' ? (d.result || []) : []; }
-          } finally { clearTimeout(tim); }
+          try { raw = await this.apiFetch(targetAddr, page); }
+          catch { break; }
           raw.forEach(tx => {
-            if (tx.from?.toLowerCase() !== address.toLowerCase()) return;
+            if (tx.from?.toLowerCase() !== targetAddr) return; /* only their sent txs */
             if (!tx.input || tx.input === '0x') return;
+            const ts = Number(tx.timeStamp) || 0;
             try {
               const text = ethers.utils.toUtf8String(tx.input).trim();
-              if (text.startsWith(FOLLOW_PREFIX))   follows.set(text.slice(FOLLOW_PREFIX.length).trim().toLowerCase(), 'follow');
-              if (text.startsWith(UNFOLLOW_PREFIX)) follows.set(text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase(), 'unfollow');
+              let tgt = null, action = null;
+              if (text.startsWith(FOLLOW_PREFIX)) {
+                tgt = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase(); action = 'follow';
+              } else if (text.startsWith(UNFOLLOW_PREFIX)) {
+                tgt = text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase(); action = 'unfollow';
+              }
+              if (tgt && action) {
+                const prev = lastAction.get(tgt);
+                if (!prev || ts >= prev.ts) lastAction.set(tgt, { action, ts });
+              }
             } catch {}
           });
           if (raw.length < 50) break;
           await this._scanDelay(150);
         }
-        addrs = [...follows.entries()].filter(([,v]) => v === 'follow').map(([a]) => a);
+        addrs = [...lastAction.entries()].filter(([,v]) => v.action === 'follow').map(([a]) => a);
       } catch {}
     }
     this._renderFollowList(feed, headerHTML, address, isOwn, addrs, 'Following', backBtn);
@@ -6412,8 +6417,9 @@ class DeFiX {
 
     /* Scan the address's received txs for FOLLOW markers */
     const addr = address.toLowerCase();
-    const follows = new Map();
-    let _scanTotal = 0, _scanIncoming = 0, _scanFollowPayloads = 0, _scanErr = '';
+    /* Track the LATEST action per follower (txs arrive newest-first; an
+       unfollow→refollow must resolve to the most recent action). */
+    const lastAction = new Map(); /* from → { action, ts } */
     try {
       const flimit2 = this._getMaxScanPages();
       const emptyEl2 = feed.querySelector('.prof-empty');
@@ -6423,36 +6429,34 @@ class DeFiX {
         if (progFL2) progFL2.textContent = `Scanning page ${page}…`;
         let raw = [];
         try { raw = await this.apiFetch(addr, page); }
-        catch (e) { _scanErr = e?.message || 'fetch failed'; break; }
-        _scanTotal += raw.length;
+        catch { break; }
         raw.forEach(tx => {
           if (!tx.input || tx.input === '0x') return;
           const from = tx.from?.toLowerCase();
           const to   = tx.to?.toLowerCase();
-          if (to === addr) _scanIncoming++;
           if (from === addr) return; /* a follow FROM this addr isn't a follower */
+          const ts = Number(tx.timeStamp) || 0;
           try {
             const text = ethers.utils.toUtf8String(tx.input).trim();
+            let action = null;
             if (text.startsWith(FOLLOW_PREFIX)) {
-              _scanFollowPayloads++;
               const target = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
-              if (target === addr || to === addr) { follows.set(from, 'follow'); }
+              if (target === addr || to === addr) action = 'follow';
             } else if (text.startsWith(UNFOLLOW_PREFIX)) {
               const target = text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase();
-              if (target === addr || to === addr) { follows.set(from, 'unfollow'); }
+              if (target === addr || to === addr) action = 'unfollow';
+            }
+            if (action) {
+              const prev = lastAction.get(from);
+              if (!prev || ts >= prev.ts) lastAction.set(from, { action, ts });
             }
           } catch {}
         });
         if (raw.length < 50) break;
         await this._scanDelay(150);
       }
-    } catch (e) { _scanErr = e?.message || 'scan failed'; }
-    const addrs = [...follows.entries()].filter(([,v]) => v === 'follow').map(([a]) => a);
-    /* Temporary on-screen diagnostic so we can see what the scan found
-       without relying on the console. */
-    this._lastFollowerScanDiag = `scanned ${_scanTotal} txs · ${_scanIncoming} incoming · `
-      + `${_scanFollowPayloads} FOLLOW payloads · ${addrs.length} followers`
-      + (_scanErr ? ` · ERR: ${_scanErr}` : '');
+    } catch {}
+    const addrs = [...lastAction.entries()].filter(([,v]) => v.action === 'follow').map(([a]) => a);
     this._renderFollowList(feed, headerHTML, address, isOwn, addrs, 'Followers', backBtn);
   }
 
@@ -6510,10 +6514,7 @@ class DeFiX {
      Shows avatar, name, handle, follow button — exactly like X. */
   _renderFollowList(feed, headerHTML, profileAddr, profileIsOwn, addrs, title, backBtn) {
     if (!addrs.length) {
-      const diag = this._lastFollowerScanDiag
-        ? `<p style="margin-top:12px;font-size:11px;color:var(--muted);font-family:monospace">${utils.safe(this._lastFollowerScanDiag)}</p>`
-        : '';
-      feed.innerHTML = headerHTML + `<div class="prof-empty"><span>👥</span><h3>No ${title}</h3><p>None yet.</p>${diag}</div>`;
+      feed.innerHTML = headerHTML + `<div class="prof-empty"><span>👥</span><h3>No ${title}</h3><p>None yet.</p></div>`;
       const nb = feed.querySelector('.page-header-back');
       if (nb) nb.onclick = () => this.goProfilePage(profileAddr, profileIsOwn);
       return;
@@ -6605,39 +6606,48 @@ class DeFiX {
          status field — the likely reason the count showed 0 despite real
          followers. Accept a follow if the payload names this address OR the
          tx was sent to it. */
+      /* Track the LATEST action per follower. Txs arrive newest-first
+         (sort=desc), and an address may follow→unfollow→refollow. Keeping
+         the highest-timestamp action (not last-write) is the only correct
+         way to resolve the final state regardless of scan/page order. */
+      const lastAction = new Map(); /* from → { action, ts } */
       const fcLimit = this._getMaxScanPages();
       for (let page = 1; (fcLimit === Infinity || page <= fcLimit); page++) {
         let raw = [];
         try { raw = await this.apiFetch(addr, page); }
         catch { break; }
 
-        let pageHadFollow = false;
         raw.forEach(tx => {
           const from = tx.from?.toLowerCase();
           const to   = tx.to?.toLowerCase();
           if (from === addr) return; /* a follow FROM this addr isn't a follower */
           if (!tx.input || tx.input === '0x') return;
+          const ts = Number(tx.timeStamp) || 0;
           try {
             const text = ethers.utils.toUtf8String(tx.input).trim();
+            let action = null;
             if (text.startsWith(FOLLOW_PREFIX)) {
               const target = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
-              if (target === addr || to === addr) { follows.set(from, 'follow'); pageHadFollow = true; }
+              if (target === addr || to === addr) action = 'follow';
             } else if (text.startsWith(UNFOLLOW_PREFIX)) {
               const target = text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase();
-              if (target === addr || to === addr) { follows.set(from, 'unfollow'); pageHadFollow = true; }
+              if (target === addr || to === addr) action = 'unfollow';
+            }
+            if (action) {
+              const prev = lastAction.get(from);
+              if (!prev || ts >= prev.ts) lastAction.set(from, { action, ts });
             }
           } catch {}
         });
 
-        /* Show live count as each page comes in */
+        /* Rebuild the follows map from latest actions; update live count. */
+        follows.clear();
+        for (const [f, { action }] of lastAction) follows.set(f, action);
         const live = [...follows.values()].filter(v => v === 'follow').length;
         const elNow = document.getElementById('prof-follower-count');
         if (elNow) elNow.innerHTML = `<strong>${live}</strong> Followers`;
 
         if (raw.length < 50) break; /* last page — reached the end */
-        /* No empty-streak early exit: a user with recent followers but a
-           long history would otherwise be cut off before reaching them.
-           The scan-depth setting is the bound; raising it finds more. */
       }
     } catch { /* silent */ }
   }
