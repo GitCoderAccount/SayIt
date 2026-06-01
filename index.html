@@ -2649,7 +2649,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-31';
+const SW_CACHE_VER = '20260530-32';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -6336,6 +6336,11 @@ class DeFiX {
      For own profile: read state.following (already loaded).
      For others: scan their sent txs for FOLLOW: prefixes. */
   async _showFollowingList(address, isOwn) {
+    this.state.mode = 'followlist';
+    this.g('compose-area').style.display = 'none';
+    this.g('channel-banner').style.display = 'none';
+    this.g('new-banner')?.classList.remove('visible');
+    this.g('new-pill')?.classList.remove('visible');
     const feed = this.g('feed');
     if (!feed) return;
     const headerHTML = this._makePageHeader({ title: 'Following', back: true });
@@ -6390,6 +6395,14 @@ class DeFiX {
   async _showFollowerList(address) {
     const feed = this.g('feed');
     if (!feed) return;
+    /* Dedicated mode so pollNew / main-feed renders don't paint over this
+       page (which previously made the compose box reappear at the top and
+       could wipe the freshly-scanned follower list). */
+    this.state.mode = 'followlist';
+    this.g('compose-area').style.display = 'none';
+    this.g('channel-banner').style.display = 'none';
+    this.g('new-banner')?.classList.remove('visible');
+    this.g('new-pill')?.classList.remove('visible');
     const isOwn = address.toLowerCase() === this.state.signerAddr?.toLowerCase();
     const headerHTML = this._makePageHeader({ title: 'Followers', back: true });
     feed.innerHTML = headerHTML + `<div class="prof-empty"><span>⏳</span><h3>Loading…</h3></div>`;
@@ -9155,14 +9168,14 @@ class DeFiX {
      NOT overwrite them with the standard post list. */
   _selfManagedModes = new Set([
     'notifications', 'profile', 'thread', 'channels',
-    'explore', 'bookmarks', 'settings', 'lists', 'communities'
+    'explore', 'bookmarks', 'settings', 'lists', 'communities', 'followlist'
   ]);  /* lists/communities render their own browse UI into #feed */
   /* Modes where pollNew's "Show N posts" banner makes no sense.
      Superset of _selfManagedModes — includes wave/self/custom where
      the user is on a specific channel feed that isn't the main timeline. */
   _noBannerModes = new Set([
     'notifications', 'profile', 'thread', 'channels',
-    'explore', 'bookmarks', 'settings', 'wave', 'self', 'custom'
+    'explore', 'bookmarks', 'settings', 'wave', 'self', 'custom', 'followlist'
   ]);
 
   onScroll() {
