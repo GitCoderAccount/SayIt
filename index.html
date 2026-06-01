@@ -2663,7 +2663,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-35';
+const SW_CACHE_VER = '20260530-36';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -6418,6 +6418,7 @@ class DeFiX {
        page (which previously made the compose box reappear at the top and
        could wipe the freshly-scanned follower list). */
     this.state.mode = 'followlist';
+    const navToken = (this._navToken = (this._navToken || 0) + 1);
     this.g('compose-area').style.display = 'none';
     this.g('channel-banner').style.display = 'none';
     this.g('new-banner')?.classList.remove('visible');
@@ -6471,6 +6472,17 @@ class DeFiX {
       }
     } catch {}
     const addrs = [...lastAction.entries()].filter(([,v]) => v.action === 'follow').map(([a]) => a);
+    /* Visible diagnostic: what did the scan actually resolve? */
+    const followCount = [...lastAction.values()].filter(v => v.action === 'follow').length;
+    const unfollowCount = [...lastAction.values()].filter(v => v.action === 'unfollow').length;
+    this._lastFollowerScanDiag = `lastAction entries: ${lastAction.size} · `
+      + `follows: ${followCount} · unfollows: ${unfollowCount} · `
+      + `mode now: ${this.state.mode} · token ok: ${navToken === this._navToken}`;
+    /* If navigation changed since we started, don't paint over the new view. */
+    if (this.state.mode !== 'followlist' || navToken !== this._navToken) {
+      console.info('[follower-list] aborted render —', this._lastFollowerScanDiag);
+      return;
+    }
     this._renderFollowList(feed, headerHTML, address, isOwn, addrs, 'Followers', backBtn);
   }
 
@@ -6528,7 +6540,10 @@ class DeFiX {
      Shows avatar, name, handle, follow button — exactly like X. */
   _renderFollowList(feed, headerHTML, profileAddr, profileIsOwn, addrs, title, backBtn) {
     if (!addrs.length) {
-      feed.innerHTML = headerHTML + `<div class="prof-empty"><span>👥</span><h3>No ${title}</h3><p>None yet.</p></div>`;
+      const diag = this._lastFollowerScanDiag
+        ? `<p style="margin-top:12px;font-size:11px;color:var(--muted);font-family:monospace;max-width:90%;word-break:break-word">${utils.safe(this._lastFollowerScanDiag)}</p>`
+        : '';
+      feed.innerHTML = headerHTML + `<div class="prof-empty"><span>👥</span><h3>No ${title}</h3><p>None yet.</p>${diag}</div>`;
       const nb = feed.querySelector('.page-header-back');
       if (nb) nb.onclick = () => this.goProfilePage(profileAddr, profileIsOwn);
       return;
