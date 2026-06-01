@@ -2649,7 +2649,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-32';
+const SW_CACHE_VER = '20260530-33';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -6413,6 +6413,7 @@ class DeFiX {
     /* Scan the address's received txs for FOLLOW markers */
     const addr = address.toLowerCase();
     const follows = new Map();
+    let _scanTotal = 0, _scanIncoming = 0, _scanFollowPayloads = 0, _scanErr = '';
     try {
       const flimit2 = this._getMaxScanPages();
       const emptyEl2 = feed.querySelector('.prof-empty');
@@ -6422,33 +6423,36 @@ class DeFiX {
         if (progFL2) progFL2.textContent = `Scanning page ${page}…`;
         let raw = [];
         try { raw = await this.apiFetch(addr, page); }
-        catch { break; }
-        let pageHadFollow = false;
+        catch (e) { _scanErr = e?.message || 'fetch failed'; break; }
+        _scanTotal += raw.length;
         raw.forEach(tx => {
           if (!tx.input || tx.input === '0x') return;
           const from = tx.from?.toLowerCase();
           const to   = tx.to?.toLowerCase();
+          if (to === addr) _scanIncoming++;
           if (from === addr) return; /* a follow FROM this addr isn't a follower */
           try {
             const text = ethers.utils.toUtf8String(tx.input).trim();
-            /* A follower's FOLLOW tx names this profile in the payload (and is
-               usually sent TO it). Accept on either signal so we don't miss
-               followers who used a different send method. */
             if (text.startsWith(FOLLOW_PREFIX)) {
+              _scanFollowPayloads++;
               const target = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
-              if (target === addr || to === addr) { follows.set(from, 'follow'); pageHadFollow = true; }
+              if (target === addr || to === addr) { follows.set(from, 'follow'); }
             } else if (text.startsWith(UNFOLLOW_PREFIX)) {
               const target = text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase();
-              if (target === addr || to === addr) { follows.set(from, 'unfollow'); pageHadFollow = true; }
+              if (target === addr || to === addr) { follows.set(from, 'unfollow'); }
             }
           } catch {}
         });
         if (raw.length < 50) break;
-        /* No empty-streak early exit — recent followers live in recent txs. */
         await this._scanDelay(150);
       }
-    } catch {}
+    } catch (e) { _scanErr = e?.message || 'scan failed'; }
     const addrs = [...follows.entries()].filter(([,v]) => v === 'follow').map(([a]) => a);
+    /* Temporary on-screen diagnostic so we can see what the scan found
+       without relying on the console. */
+    this._lastFollowerScanDiag = `scanned ${_scanTotal} txs · ${_scanIncoming} incoming · `
+      + `${_scanFollowPayloads} FOLLOW payloads · ${addrs.length} followers`
+      + (_scanErr ? ` · ERR: ${_scanErr}` : '');
     this._renderFollowList(feed, headerHTML, address, isOwn, addrs, 'Followers', backBtn);
   }
 
@@ -6506,7 +6510,10 @@ class DeFiX {
      Shows avatar, name, handle, follow button — exactly like X. */
   _renderFollowList(feed, headerHTML, profileAddr, profileIsOwn, addrs, title, backBtn) {
     if (!addrs.length) {
-      feed.innerHTML = headerHTML + `<div class="prof-empty"><span>👥</span><h3>No ${title}</h3><p>None yet.</p></div>`;
+      const diag = this._lastFollowerScanDiag
+        ? `<p style="margin-top:12px;font-size:11px;color:var(--muted);font-family:monospace">${utils.safe(this._lastFollowerScanDiag)}</p>`
+        : '';
+      feed.innerHTML = headerHTML + `<div class="prof-empty"><span>👥</span><h3>No ${title}</h3><p>None yet.</p>${diag}</div>`;
       const nb = feed.querySelector('.page-header-back');
       if (nb) nb.onclick = () => this.goProfilePage(profileAddr, profileIsOwn);
       return;
@@ -6659,6 +6666,16 @@ class DeFiX {
         if (btn) { btn.textContent = 'Following'; btn.className = 'prof-following-btn'; }
       }
       this._showFollowingCount();
+      /* Refresh Who-to-follow (drops the followed account) and sync any other
+         visible follow buttons for this address. */
+      setTimeout(() => {
+        this.renderWhoToFollow?.();
+        document.querySelectorAll(`[data-follow-addr="${addr}"]`).forEach(b => {
+          const following = this.state.following.has(addr);
+          b.textContent = following ? 'Following' : 'Follow';
+          b.className   = following ? 'prof-following-btn following' : 'prof-follow-btn';
+        });
+      }, 1200);
     } else {
       /* Revert on failure — restore original text/class */
       if (btn) {
@@ -9860,58 +9877,11 @@ class DeFiX {
      never see who followed them — the cause of the "0 followers" bug.
      Updates state.following optimistically; reverts on tx failure.
      Called from the Who-to-follow card, profile popup, and profile page. */
+  /* Thin alias → toggleFollow is the single canonical implementation. Kept
+     because several call sites (Who-to-follow card, profile popup) use this
+     name. Both now send the FOLLOW tx to the target and share one code path. */
   toggleFollowAddr(addr, btn) {
-    addr = addr.toLowerCase();
-    if (!this.signer) { utils.toast('Connect wallet to follow'); return; }
-    if (addr === this.state.signerAddr) {
-      utils.toast("You can't follow yourself"); return;
-    }
-    if (typeof this.publish !== 'function') return;
-
-    const wasFollowing = this.state.following.has(addr);
-    const prefix       = wasFollowing ? UNFOLLOW_PREFIX : FOLLOW_PREFIX;
-    /* Optimistic update — flips state and any visible buttons immediately. */
-    if (wasFollowing) this.state.following.delete(addr);
-    else              this.state.following.add(addr);
-    if (btn) {
-      btn.textContent = wasFollowing ? 'Follow' : 'Following';
-      btn.disabled    = true;
-      btn.style.opacity = '0.6';
-    }
-
-    /* Send TO the target address (not self) so they can find this follow. */
-    this.publish(`${prefix}${addr}`, null, addr).then(ok => {
-      if (!ok) {
-        /* Revert optimistic update on tx failure. */
-        if (wasFollowing) this.state.following.add(addr);
-        else              this.state.following.delete(addr);
-        if (btn) {
-          btn.textContent = wasFollowing ? 'Following' : 'Follow';
-          btn.style.opacity = '1';
-          btn.disabled = false;
-        }
-        return;
-      }
-      /* Success — refresh affected UI regions. */
-      if (btn) { btn.style.opacity = '1'; btn.disabled = false; }
-      setTimeout(() => {
-        this.renderWhoToFollow();
-        /* If the full profile page is open for this user, flip its button. */
-        const profBtn = document.getElementById('prof-follow-btn');
-        if (profBtn && this.state.mode === 'profile' &&
-            this.state.channel?.toLowerCase() === addr) {
-          if (this.state.following.has(addr)) {
-            profBtn.textContent = 'Following';
-            profBtn.className = 'prof-following-btn';
-            profBtn.id = 'prof-follow-btn';
-          } else {
-            profBtn.textContent = 'Follow';
-            profBtn.className = 'prof-follow-btn';
-            profBtn.id = 'prof-follow-btn';
-          }
-        }
-      }, 1500);
-    });
+    return this.toggleFollow(addr, btn);
   }
 
   /* Rotating compose placeholder — light Twitter polish. Only rotates when
