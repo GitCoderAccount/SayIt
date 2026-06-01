@@ -1196,6 +1196,10 @@ nav { flex:1; padding:4px 0; }
   border-radius:12px; position:relative; transition:color 0.18s;
 }
 .mn-btn .mn-icon { width:26px; height:26px; line-height:1; display:flex; align-items:center; justify-content:center; }
+.mn-btn .mn-avatar {
+  width:26px; height:26px; border-radius:50%; object-fit:cover;
+  border:2px solid var(--primary-lt);
+}
 .mn-btn.active,.mn-btn:hover { color:var(--primary-lt); }
 .mn-dot {
   display:none; position:absolute; top:4px; right:8px;
@@ -1587,15 +1591,15 @@ nav { flex:1; padding:4px 0; }
 /* ── Disclaimer ─────────────────────────────────────────────────────── */
 .disclaimer-body {
   /* The modal itself caps at 90vh and scrolls; keep the body flexible so the
-     header + Agree button always remain visible on short mobile screens
-     instead of being pushed off. */
+     header + Agree button stay visible without scrolling on typical screens
+     (still scrolls on very short ones). */
   max-height:none; overflow-y:visible; padding:2px 2px 4px;
-  font-size:14.5px; line-height:1.6; color:var(--text);
+  font-size:13px; line-height:1.5; color:var(--text);
 }
 @media (max-width:768px) {
-  .disclaimer-body { font-size:14px; line-height:1.55; }
+  .disclaimer-body { font-size:12.5px; line-height:1.45; }
 }
-.disclaimer-body p { margin-bottom:12px; }
+.disclaimer-body p { margin-bottom:9px; }
 .disclaimer-body p:last-child { margin-bottom:0; }
 .disclaimer-body strong { color:var(--text); font-weight:700; }
 
@@ -2633,7 +2637,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-40';
+const SW_CACHE_VER = '20260530-41';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -5676,6 +5680,48 @@ class DeFiX {
 
   async toggleWallet() { this.signer ? this.disconnect() : await this.connect(); }
 
+  /* Show the connected user's avatar on the mobile Profile nav button so the
+     connected identity is visible in the bottom nav (the sidebar account pill
+     is hidden on mobile). Reverts to the person icon on disconnect. */
+  _updateMobileProfileAvatar() {
+    const btn = document.querySelector('#mobile-nav [data-mn="profile"] .mn-icon');
+    if (!btn) return;
+    if (this.signer && this.state.signerAddr) {
+      const pic = this.state.profile?.picUrl || 'image1.jpeg';
+      btn.innerHTML = `<img src="${utils.safe(pic)}" alt="" class="mn-avatar" onerror="this.src='image1.jpeg'">`;
+    } else {
+      btn.innerHTML = `<svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 11c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zm0-6C9.239 5 7 7.239 7 10s2.239 5 5 5 5-2.239 5-5-2.239-5-5-5zM5.651 19h12.698c-.337-1.8-1.023-2.891-1.929-3.4-1.285-.736-3.574-1.1-4.42-1.1-.845 0-3.135.364-4.42 1.1-.906.509-1.592 1.6-1.929 3.4z"/></svg>`;
+    }
+  }
+
+  /* Switch the wallet to PulseChain. If the chain isn't known to the wallet
+     (EIP-1193 error 4902), add it first with the canonical RPC params, then
+     the wallet switches to it automatically. */
+  async _ensurePulseChain(eth) {
+    try {
+      await eth.request({ method:'wallet_switchEthereumChain', params:[{ chainId:'0x171' }] });
+    } catch (err) {
+      const code = err?.code ?? err?.data?.originalError?.code;
+      if (code === 4902 || /unrecognized chain|add this network|wallet_addEthereumChain/i.test(err?.message || '')) {
+        await eth.request({
+          method:'wallet_addEthereumChain',
+          params:[{
+            chainId:'0x171',
+            chainName:'PulseChain',
+            nativeCurrency:{ name:'Pulse', symbol:'PLS', decimals:18 },
+            rpcUrls:['https://rpc.pulsechain.com'],
+            blockExplorerUrls:['https://scan.pulsechain.com'],
+          }],
+        });
+        /* Adding a chain usually switches to it; make the switch explicit. */
+        try { await eth.request({ method:'wallet_switchEthereumChain', params:[{ chainId:'0x171' }] }); }
+        catch {}
+      } else {
+        throw err;
+      }
+    }
+  }
+
   async connect() {
     const eth = this._getEthereum();
     if (!eth) {
@@ -5692,7 +5738,7 @@ class DeFiX {
     try {
       const prov = new ethers.providers.Web3Provider(eth);
       if ((await prov.getNetwork()).chainId !== PULSE_CHAIN_ID) {
-        await eth.request({ method:'wallet_switchEthereumChain', params:[{ chainId:'0x171' }] });
+        await this._ensurePulseChain(eth);
       }
       await prov.send('eth_requestAccounts', []);
       this.signer = prov.getSigner();
@@ -5728,6 +5774,7 @@ class DeFiX {
     const addr = this.state.signerAddr;
     document.body.classList.add('wallet-connected');
     this.g('account-pill').style.display = 'flex';
+    this._updateMobileProfileAvatar();
     this.g('connect-btn').style.display  = 'none';
     this.g('ap-addr').textContent        = this.trunc(addr);
     this.g('ch-self').style.display      = 'block';
@@ -5827,6 +5874,7 @@ class DeFiX {
     this.state.signerAddr = null;
     this.state.profile    = { username:'', picUrl:'image1.jpeg', bio:'' };
     document.body.classList.remove('wallet-connected');
+    this._updateMobileProfileAvatar();
     this.g('account-pill').style.display = 'none';
     this.g('connect-btn').style.display  = 'block';
     this.g('compose-avatar').src         = 'image1.jpeg';
@@ -6034,6 +6082,8 @@ class DeFiX {
     this.g('modal-compose-avatar').src = this.state.profile.picUrl;
     this.g('ap-avatar').src       = this.state.profile.picUrl || 'image1.jpeg';
     this.g('ap-name').textContent = this.state.profile.username || this.trunc(this.state.signerAddr || '');
+    /* Keep the mobile Profile nav avatar in sync once the real pic loads. */
+    this._updateMobileProfileAvatar();
   }
 
   /* ── Profile page (full in-column view) ──────────────────────────────── */
