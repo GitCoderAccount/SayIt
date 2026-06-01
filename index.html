@@ -1387,14 +1387,8 @@ nav { flex:1; padding:4px 0; }
      rail itself is icon-only. The sidebar has overflow:hidden, so the popup
      would be clipped to 88px — escape that by positioning it FIXED relative
      to the viewport, anchored just above the bottom-left where More sits. */
-  .more-popup {
-    position:fixed; left:12px; bottom:150px; top:auto; right:auto;
-    min-width:240px; width:max-content; max-width:280px;
-    /* popIn animates transform:translateY, which would create a containing
-       block and re-trap position:fixed inside the sidebar's overflow:hidden
-       (clipping the popup to 88px). Use an opacity-only animation here. */
-    transform:none; animation:fadeInOnly 0.15s ease;
-  }
+  /* Collapsed rail: popup is body-level + fixed, anchor near the 88px rail. */
+  .more-popup { left:12px; bottom:90px; }
   .more-popup .more-label { display:inline; }
   .more-popup .nav-label { display:inline; }
   /* Nav buttons become equal-size rounded squares centered on their icons */
@@ -1461,40 +1455,36 @@ nav { flex:1; padding:4px 0; }
 @media (max-width:768px) {
   #sidebar-left { display:none; }
   #mobile-nav { display:flex; }
-  /* More menu becomes a bottom sheet anchored to the viewport (the left-nav
-     anchor is hidden on mobile). Centered, above the mobile nav bar. */
+  /* More menu as a bottom sheet, centered above the mobile nav bar. The
+     popup is body-level so it shows even though the sidebar is hidden. */
   .more-popup {
-    position:fixed; left:50%; right:auto;
-    bottom:80px; top:auto;
-    transform:translateX(-50%);
-    width:calc(100vw - 32px); min-width:0; max-width:420px;
+    left:16px; right:16px; bottom:84px;
+    width:auto; min-width:0; max-width:none;
     max-height:min(60vh, 420px);
   }
-  /* The wrap is normally position:relative inside the hidden sidebar; on
-     mobile we render the popup at the body level via fixed positioning, so
-     the wrap being hidden doesn't matter — but we must un-hide just the
-     popup when open. */
-  #nav-more-wrap { position:static; }
   #mobile-fab { display:flex; }
   #main { flex:1; width:100%; padding-bottom:68px; max-width:100%; border-left:none; border-right:none; }
   #app  { max-width:100%; }
   .modal { padding:16px; }
   #toast { bottom:76px; }
   .cb-content { padding:0 12px 12px; }
-  #channel-banner { display:block !important; }
+  /* No forced banner on mobile — the JS shows it only on channel/profile
+     views and hides it on the main feed. */
 }
 
 /* ── More popup ─────────────────────────────────────────────────────────── */
 .nav-more-wrap { position:relative; }
+/* Body-level popup: fixed to the viewport so it's never clipped by the
+   sidebar. Default (full desktop) anchors it bottom-left, above the account
+   pill where the More button sits. */
 .more-popup {
-  display:none; position:absolute; bottom:calc(100% + 4px); left:0;
+  display:none; position:fixed; left:20px; bottom:90px;
   background:var(--bg-mid); border:1px solid var(--border);
-  border-radius:16px; min-width:220px; z-index:300;
+  border-radius:16px; min-width:240px; width:max-content; max-width:300px;
+  z-index:600;
   box-shadow:0 8px 32px rgba(0,0,0,0.5);
-  /* Cap height so a tall menu near the bottom of the viewport scrolls
-     instead of extending off the top of the screen (the mobile cut-off). */
   max-height:min(70vh, 460px); overflow-y:auto; overscroll-behavior:contain;
-  animation:popIn 0.15s ease;
+  animation:fadeInOnly 0.15s ease;
 }
 .more-popup.open { display:block; }
 @keyframes popIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
@@ -2192,42 +2182,6 @@ nav { flex:1; padding:4px 0; }
             <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M3 12c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zm9 2c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm7 0c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2z"/></svg>
           </span><span class="nav-label">More</span>
         </button>
-        <div class="more-popup" id="more-popup">
-          <button class="more-item" id="more-lists">
-            <span class="more-icon">📋</span>
-            <span class="more-label">Lists</span>
-          </button>
-          <button class="more-item" id="more-communities">
-            <span class="more-icon">👥</span>
-            <span class="more-label">Communities</span>
-          </button>
-          <button class="more-item" id="more-bookmarks-mn">
-            <span class="more-icon">🔖</span>
-            <span class="more-label">Bookmarks</span>
-          </button>
-          <button class="more-item more-soon" disabled>
-            <span class="more-icon">🎬</span>
-            <span class="more-label">Creator Studio<span class="soon-tag">soon</span></span>
-          </button>
-          <button class="more-item more-soon" disabled>
-            <span class="more-icon">💼</span>
-            <span class="more-label">Business<span class="soon-tag">soon</span></span>
-          </button>
-          <button class="more-item more-soon" disabled>
-            <span class="more-icon">📢</span>
-            <span class="more-label">Ads<span class="soon-tag">soon</span></span>
-          </button>
-          <button class="more-item more-soon" disabled>
-            <span class="more-icon">✨</span>
-            <span class="more-label">Create your Space<span class="soon-tag">soon</span></span>
-          </button>
-          <button class="more-item" id="more-settings">
-            <span class="more-icon">
-              <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M10.54 2.751l.52-1.5h1.88l.52 1.5.72 2.08 2.08-.72 1.5-.52 1.33 1.33-.52 1.5-.72 2.08 2.08.72 1.5.52v1.88l-1.5.52-2.08.72.72 2.08.52 1.5-1.33 1.33-1.5-.52-2.08-.72-.72 2.08-.52 1.5H9.46l-.52-1.5-.72-2.08-2.08.72-1.5.52-1.33-1.33.52-1.5.72-2.08-2.08-.72-1.5-.52V9.46l1.5-.52 2.08-.72-.72-2.08-.52-1.5 1.33-1.33 1.5.52 2.08.72.72-2.08zM12 15.5c1.93 0 3.5-1.57 3.5-3.5S13.93 8.5 12 8.5 8.5 10.07 8.5 12s1.57 3.5 3.5 3.5z"/></svg>
-            </span>
-            <span class="more-label">Settings &amp; Privacy</span>
-          </button>
-        </div>
       </div>
     </nav>
 
@@ -2431,6 +2385,46 @@ nav { flex:1; padding:4px 0; }
     </div>
   </div>
 </div>
+
+<!-- More menu popup — lives at body level so it isn't clipped by the left
+     sidebar's overflow:hidden (desktop-collapsed) or hidden by its display:none
+     (mobile). Positioned via .more-popup CSS; toggled by the More buttons. -->
+<div class="more-popup" id="more-popup">
+          <button class="more-item" id="more-lists">
+            <span class="more-icon">📋</span>
+            <span class="more-label">Lists</span>
+          </button>
+          <button class="more-item" id="more-communities">
+            <span class="more-icon">👥</span>
+            <span class="more-label">Communities</span>
+          </button>
+          <button class="more-item" id="more-bookmarks-mn">
+            <span class="more-icon">🔖</span>
+            <span class="more-label">Bookmarks</span>
+          </button>
+          <button class="more-item more-soon" disabled>
+            <span class="more-icon">🎬</span>
+            <span class="more-label">Creator Studio<span class="soon-tag">soon</span></span>
+          </button>
+          <button class="more-item more-soon" disabled>
+            <span class="more-icon">💼</span>
+            <span class="more-label">Business<span class="soon-tag">soon</span></span>
+          </button>
+          <button class="more-item more-soon" disabled>
+            <span class="more-icon">📢</span>
+            <span class="more-label">Ads<span class="soon-tag">soon</span></span>
+          </button>
+          <button class="more-item more-soon" disabled>
+            <span class="more-icon">✨</span>
+            <span class="more-label">Create your Space<span class="soon-tag">soon</span></span>
+          </button>
+          <button class="more-item" id="more-settings">
+            <span class="more-icon">
+              <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M10.54 2.751l.52-1.5h1.88l.52 1.5.72 2.08 2.08-.72 1.5-.52 1.33 1.33-.52 1.5-.72 2.08 2.08.72 1.5.52v1.88l-1.5.52-2.08.72.72 2.08.52 1.5-1.33 1.33-1.5-.52-2.08-.72-.72 2.08-.52 1.5H9.46l-.52-1.5-.72-2.08-2.08.72-1.5.52-1.33-1.33.52-1.5.72-2.08-2.08-.72-1.5-.52V9.46l1.5-.52 2.08-.72-.72-2.08-.52-1.5 1.33-1.33 1.5.52 2.08.72.72-2.08zM12 15.5c1.93 0 3.5-1.57 3.5-3.5S13.93 8.5 12 8.5 8.5 10.07 8.5 12s1.57 3.5 3.5 3.5z"/></svg>
+            </span>
+            <span class="more-label">Settings &amp; Privacy</span>
+          </button>
+        </div>
 
 <!-- Mobile FAB -->
 <button id="mobile-fab" aria-label="New post">✦</button>
@@ -2655,7 +2649,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-30';
+const SW_CACHE_VER = '20260530-31';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
