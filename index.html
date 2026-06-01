@@ -2590,7 +2590,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-26';
+const SW_CACHE_VER = '20260530-27';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -6321,10 +6321,7 @@ class DeFiX {
 
     /* Scan the address's received txs for FOLLOW markers */
     const addr = address.toLowerCase();
-    const s = this._getSettings();
-    const apiUrl = s.apiUrl || 'https://api.scan.pulsechain.com/api';
     const follows = new Map();
-    let emptyStreak = 0;
     try {
       const flimit2 = this._getMaxScanPages();
       const emptyEl2 = feed.querySelector('.prof-empty');
@@ -6501,9 +6498,6 @@ class DeFiX {
     try {
       const addr = address.toLowerCase();
       const follows = new Map(); /* follower address → 'follow'|'unfollow' */
-      const s = this._getSettings();
-      const apiUrl = s.apiUrl || 'https://api.scan.pulsechain.com/api';
-      let emptyStreak = 0;
 
       /* Respect the user's scan-depth setting fully (unlimited if they set
          it to 0). Follows can appear anywhere in history — recent followers
@@ -6514,20 +6508,24 @@ class DeFiX {
          followers. Accept a follow if the payload names this address OR the
          tx was sent to it. */
       const fcLimit = this._getMaxScanPages();
+      let _dbgTotalTx = 0, _dbgIncoming = 0, _dbgFollowTxs = 0;
       for (let page = 1; (fcLimit === Infinity || page <= fcLimit); page++) {
         let raw = [];
         try { raw = await this.apiFetch(addr, page); }
         catch { break; }
+        _dbgTotalTx += raw.length;
 
         let pageHadFollow = false;
         raw.forEach(tx => {
           const from = tx.from?.toLowerCase();
           const to   = tx.to?.toLowerCase();
+          if (to === addr) _dbgIncoming++;
           if (from === addr) return; /* a follow FROM this addr isn't a follower */
           if (!tx.input || tx.input === '0x') return;
           try {
             const text = ethers.utils.toUtf8String(tx.input).trim();
             if (text.startsWith(FOLLOW_PREFIX)) {
+              _dbgFollowTxs++;
               const target = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
               if (target === addr || to === addr) { follows.set(from, 'follow'); pageHadFollow = true; }
             } else if (text.startsWith(UNFOLLOW_PREFIX)) {
@@ -6547,7 +6545,10 @@ class DeFiX {
            long history would otherwise be cut off before reaching them.
            The scan-depth setting is the bound; raising it finds more. */
       }
-    } catch { /* silent */ }
+      console.info(`[follower-scan] ${addr}: scanned ${_dbgTotalTx} txs, `
+        + `${_dbgIncoming} incoming, ${_dbgFollowTxs} FOLLOW txs, `
+        + `${[...follows.values()].filter(v => v === 'follow').length} net followers`);
+    } catch (err) { console.warn('[follower-scan] error:', err); }
   }
 
   async toggleFollow(address, btn) {
