@@ -324,10 +324,6 @@ nav { flex:1; padding:4px 0; }
   font-family:monospace; cursor:pointer; display:inline-block;
 }
 #cb-address:hover { color:var(--primary-lt); text-decoration:underline; }
-#channel-banner.wave-banner .cb-cover {
-  background:linear-gradient(135deg,rgba(255,60,172,0.45),rgba(120,75,160,0.25),rgba(43,134,197,0.2));
-}
-
 /* ── Compose ─────────────────────────────────────────────────────────────── */
 #compose-area {
   display:flex; gap:12px; padding:12px 16px 8px;
@@ -1116,44 +1112,6 @@ nav { flex:1; padding:4px 0; }
   padding:6px 16px 12px; display:block; word-break:break-all;
 }
 
-.wave-inner {
-  background:linear-gradient(135deg,rgba(255,60,172,0.08),rgba(43,134,197,0.06));
-  padding:14px 16px; cursor:pointer; transition:background 0.2s;
-  border-radius:16px;
-}
-.wave-inner:hover {
-  background:linear-gradient(135deg,rgba(255,60,172,0.14),rgba(43,134,197,0.1));
-}
-.wave-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
-.wave-brand { display:flex; align-items:center; gap:10px; }
-.wave-icon {
-  width:36px; height:36px;
-  background:linear-gradient(135deg,var(--wave-a),var(--wave-b),var(--wave-c));
-  border-radius:10px; display:flex; align-items:center;
-  justify-content:center; font-size:18px; flex-shrink:0;
-}
-.wave-name {
-  font-size:14px; font-weight:700;
-  background:linear-gradient(90deg,var(--wave-a),var(--wave-c));
-  -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
-}
-.wave-sub  { font-size:11px; color:var(--muted); }
-.wave-tune { font-size:11px; font-weight:700; color:var(--wave-a); }
-.wave-bars { display:flex; align-items:flex-end; gap:2px; height:18px; margin-bottom:6px; }
-.wave-bars span {
-  width:2px; border-radius:2px;
-  background:linear-gradient(to top,var(--wave-a),var(--wave-c));
-  animation:wbar 1s ease-in-out infinite;
-}
-.wave-bars span:nth-child(1){height:40%;animation-delay:0s}
-.wave-bars span:nth-child(2){height:70%;animation-delay:.1s}
-.wave-bars span:nth-child(3){height:100%;animation-delay:.2s}
-.wave-bars span:nth-child(4){height:60%;animation-delay:.3s}
-.wave-bars span:nth-child(5){height:85%;animation-delay:.15s}
-.wave-bars span:nth-child(6){height:45%;animation-delay:.25s}
-.wave-bars span:nth-child(7){height:75%;animation-delay:.05s}
-@keyframes wbar { 0%,100%{transform:scaleY(1)} 50%{transform:scaleY(0.4)} }
-.wave-desc { font-size:12px; color:var(--muted); line-height:1.5; }
 
 .sb-footer {
   font-size:13px; color:var(--muted); line-height:1.6;
@@ -1206,14 +1164,22 @@ nav { flex:1; padding:4px 0; }
 }
 #mobile-fab:hover { background:var(--primary-lt); transform:scale(1.05); }
 #mobile-connect {
-  display:none; position:fixed; bottom:148px; right:16px; z-index:90;
-  padding:12px 20px; border:none; border-radius:9999px;
-  background:var(--primary); color:#fff; font-size:14px; font-weight:700;
-  cursor:pointer; box-shadow:0 4px 20px rgba(124,77,255,0.5);
+  display:none; position:fixed; bottom:84px; right:16px; z-index:91;
+  padding:13px 22px; border:none; border-radius:9999px;
+  background:var(--primary); color:#fff; font-size:15px; font-weight:700;
+  cursor:pointer; box-shadow:0 4px 20px rgba(124,77,255,0.6);
   transition:background 0.2s, transform 0.15s;
 }
 #mobile-connect:hover { background:var(--primary-lt); transform:scale(1.03); }
-/* Only meaningful on mobile (the bottom FAB layout). */
+/* On mobile, show the connect button by default (disconnected state). It is
+   hidden once connected via the body.wallet-connected class, and always
+   hidden on desktop where the sidebar connect button is used instead. */
+@media (max-width:768px) {
+  #mobile-connect { display:block; }
+  body.wallet-connected #mobile-connect { display:none; }
+  /* When the connect button is showing, lift the post FAB above it. */
+  body:not(.wallet-connected) #mobile-fab { bottom:148px; }
+}
 @media (min-width:769px) { #mobile-connect { display:none !important; } }
 
 #mobile-nav {
@@ -2667,7 +2633,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-39';
+const SW_CACHE_VER = '20260530-40';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -5119,6 +5085,17 @@ class DeFiX {
        a description on hover/touch. Click opens the channel. */
     const featured = [
       {
+        id: 'main',
+        name: 'Main Feed',
+        sub: 'The public timeline',
+        desc: 'The main public feed — everything posted to the shared timeline.',
+        icon: '🏠',
+        gradient: 'linear-gradient(135deg,rgba(124,77,255,0.16),rgba(94,45,219,0.10))',
+        accent: 'var(--primary-lt)',
+        link: null,
+        onclick: 'pulse.goHome()',
+      },
+      {
         id: 'defix',
         name: 'Say It DeFi Channel',
         sub: 'Official updates & tech',
@@ -5749,8 +5726,8 @@ class DeFiX {
 
   async afterConnect() {
     const addr = this.state.signerAddr;
+    document.body.classList.add('wallet-connected');
     this.g('account-pill').style.display = 'flex';
-    this.g('mobile-connect')?.style && (this.g('mobile-connect').style.display = 'none');
     this.g('connect-btn').style.display  = 'none';
     this.g('ap-addr').textContent        = this.trunc(addr);
     this.g('ch-self').style.display      = 'block';
@@ -5849,10 +5826,8 @@ class DeFiX {
     this.signer = null;
     this.state.signerAddr = null;
     this.state.profile    = { username:'', picUrl:'image1.jpeg', bio:'' };
+    document.body.classList.remove('wallet-connected');
     this.g('account-pill').style.display = 'none';
-    /* On mobile, surface the connect FAB while disconnected. */
-    { const mc = this.g('mobile-connect');
-      if (mc && window.innerWidth <= 768) mc.style.display = 'block'; }
     this.g('connect-btn').style.display  = 'block';
     this.g('compose-avatar').src         = 'image1.jpeg';
     this.g('ch-self').style.display      = 'none';
@@ -7636,7 +7611,6 @@ class DeFiX {
       const msgs = {
         notifications: 'No new notifications',
         self:  'No posts to your channel yet',
-        wave:  'No Wave transmissions yet',
       };
       feed.innerHTML = `
         <div class="empty-state">
