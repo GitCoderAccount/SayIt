@@ -1383,6 +1383,17 @@ nav { flex:1; padding:4px 0; }
   #sidebar-left { width:88px; flex:0 0 88px; }
   .nav-label { display:none; }
   .site-name { display:none; }
+  /* The More popup must stay full-width with readable labels even though the
+     rail itself is icon-only. The sidebar has overflow:hidden, so the popup
+     would be clipped to 88px — escape that by positioning it FIXED relative
+     to the viewport, anchored just above the bottom-left where More sits. */
+  .more-popup {
+    position:fixed; left:12px; bottom:150px; top:auto; right:auto;
+    min-width:240px; width:max-content; max-width:280px;
+    transform:none;
+  }
+  .more-popup .more-label { display:inline; }
+  .more-popup .nav-label { display:inline; }
   /* Nav buttons become equal-size rounded squares centered on their icons */
   .nav-btn {
     width:50px; height:50px;
@@ -2634,7 +2645,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-28';
+const SW_CACHE_VER = '20260530-29';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -6569,36 +6580,20 @@ class DeFiX {
          followers. Accept a follow if the payload names this address OR the
          tx was sent to it. */
       const fcLimit = this._getMaxScanPages();
-      let _dbgTotalTx = 0, _dbgIncoming = 0, _dbgIncomingWithData = 0, _dbgFollowTxs = 0;
-      const _dbgSamples = [];
       for (let page = 1; (fcLimit === Infinity || page <= fcLimit); page++) {
         let raw = [];
         try { raw = await this.apiFetch(addr, page); }
         catch { break; }
-        _dbgTotalTx += raw.length;
 
         let pageHadFollow = false;
         raw.forEach(tx => {
           const from = tx.from?.toLowerCase();
           const to   = tx.to?.toLowerCase();
-          if (to === addr) {
-            _dbgIncoming++;
-            if (tx.input && tx.input !== '0x') {
-              _dbgIncomingWithData++;
-              /* Sample the first few incoming-with-data txs so we can see
-                 what their payloads actually look like on-chain. */
-              if (_dbgSamples.length < 5) {
-                try { _dbgSamples.push(ethers.utils.toUtf8String(tx.input).slice(0, 40)); }
-                catch { _dbgSamples.push('(non-utf8)'); }
-              }
-            }
-          }
           if (from === addr) return; /* a follow FROM this addr isn't a follower */
           if (!tx.input || tx.input === '0x') return;
           try {
             const text = ethers.utils.toUtf8String(tx.input).trim();
             if (text.startsWith(FOLLOW_PREFIX)) {
-              _dbgFollowTxs++;
               const target = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
               if (target === addr || to === addr) { follows.set(from, 'follow'); pageHadFollow = true; }
             } else if (text.startsWith(UNFOLLOW_PREFIX)) {
@@ -6618,12 +6613,7 @@ class DeFiX {
            long history would otherwise be cut off before reaching them.
            The scan-depth setting is the bound; raising it finds more. */
       }
-      console.info(`[follower-scan] ${addr}: scanned ${_dbgTotalTx} txs, `
-        + `${_dbgIncoming} incoming (${_dbgIncomingWithData} with input data), `
-        + `${_dbgFollowTxs} FOLLOW txs, `
-        + `${[...follows.values()].filter(v => v === 'follow').length} net followers`);
-      if (_dbgSamples.length) console.info('[follower-scan] sample incoming payloads:', _dbgSamples);
-    } catch (err) { console.warn('[follower-scan] error:', err); }
+    } catch { /* silent */ }
   }
 
   async toggleFollow(address, btn) {
@@ -9843,13 +9833,14 @@ class DeFiX {
     }).join('');
   }
 
-  /* Toggle follow/unfollow for an address. Emits FOLLOW: or UNFOLLOW:
-     tx to your own address (self-send pattern). Updates state.following
-     optimistically; reverts on tx failure. Called from:
-       - Who-to-follow sidebar card
-       - Profile popup card  (Follow / Following button)
-       - Full profile page   (prof-follow-btn)
-     The optional `btn` updates UI in-place when given. */
+  /* Toggle follow/unfollow for an address. Sends a FOLLOW:/UNFOLLOW: tx
+     addressed TO the target. This is what makes followers discoverable:
+       - your OUTGOING FOLLOW txs  = who you follow
+       - a user's INCOMING FOLLOW txs = who follows them
+     Previously this self-sent (to your own address), so a target could
+     never see who followed them — the cause of the "0 followers" bug.
+     Updates state.following optimistically; reverts on tx failure.
+     Called from the Who-to-follow card, profile popup, and profile page. */
   toggleFollowAddr(addr, btn) {
     addr = addr.toLowerCase();
     if (!this.signer) { utils.toast('Connect wallet to follow'); return; }
@@ -9869,7 +9860,8 @@ class DeFiX {
       btn.style.opacity = '0.6';
     }
 
-    this.publish(`${prefix}${addr}`, null, this.state.signerAddr).then(ok => {
+    /* Send TO the target address (not self) so they can find this follow. */
+    this.publish(`${prefix}${addr}`, null, addr).then(ok => {
       if (!ok) {
         /* Revert optimistic update on tx failure. */
         if (wasFollowing) this.state.following.add(addr);
