@@ -2663,7 +2663,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-36';
+const SW_CACHE_VER = '20260530-37';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -6372,7 +6372,7 @@ class DeFiX {
          the most recent action regardless of page order). */
       try {
         const targetAddr = address.toLowerCase();
-        const lastAction = new Map(); /* target → { action, ts } */
+        const lastAction = new Map(); /* target → { action, order } */
         const flimit = this._getMaxScanPages();
         const emptyD = feed.querySelector('.prof-empty');
         const progFL = emptyD ? document.createElement('p') : null;
@@ -6385,7 +6385,12 @@ class DeFiX {
           raw.forEach(tx => {
             if (tx.from?.toLowerCase() !== targetAddr) return; /* only their sent txs */
             if (!tx.input || tx.input === '0x') return;
-            const ts = Number(tx.timeStamp) || 0;
+            /* Composite on-chain order: block timestamps are per-SECOND, so
+               an unfollow + re-follow in the same block share a ts and the
+               tie-break becomes ambiguous (scan-order dependent). blockNumber
+               then transactionIndex give the true, deterministic order. */
+            const order = (Number(tx.blockNumber) || 0) * 100000
+                        + (Number(tx.transactionIndex) || 0);
             try {
               const text = ethers.utils.toUtf8String(tx.input).trim();
               let tgt = null, action = null;
@@ -6396,7 +6401,7 @@ class DeFiX {
               }
               if (tgt && action) {
                 const prev = lastAction.get(tgt);
-                if (!prev || ts >= prev.ts) lastAction.set(tgt, { action, ts });
+                if (!prev || order >= prev.order) lastAction.set(tgt, { action, order });
               }
             } catch {}
           });
@@ -6434,7 +6439,7 @@ class DeFiX {
     const addr = address.toLowerCase();
     /* Track the LATEST action per follower (txs arrive newest-first; an
        unfollow→refollow must resolve to the most recent action). */
-    const lastAction = new Map(); /* from → { action, ts } */
+    const lastAction = new Map(); /* from → { action, order } */
     try {
       const flimit2 = this._getMaxScanPages();
       const emptyEl2 = feed.querySelector('.prof-empty');
@@ -6450,7 +6455,11 @@ class DeFiX {
           const from = tx.from?.toLowerCase();
           const to   = tx.to?.toLowerCase();
           if (from === addr) return; /* a follow FROM this addr isn't a follower */
-          const ts = Number(tx.timeStamp) || 0;
+          /* Composite on-chain order — see note in the following-list scan:
+             same-block unfollow+refollow share a per-second ts, so we order by
+             blockNumber then transactionIndex for a deterministic latest action. */
+          const order = (Number(tx.blockNumber) || 0) * 100000
+                      + (Number(tx.transactionIndex) || 0);
           try {
             const text = ethers.utils.toUtf8String(tx.input).trim();
             let action = null;
@@ -6463,7 +6472,7 @@ class DeFiX {
             }
             if (action) {
               const prev = lastAction.get(from);
-              if (!prev || ts >= prev.ts) lastAction.set(from, { action, ts });
+              if (!prev || order >= prev.order) lastAction.set(from, { action, order });
             }
           } catch {}
         });
@@ -6472,17 +6481,8 @@ class DeFiX {
       }
     } catch {}
     const addrs = [...lastAction.entries()].filter(([,v]) => v.action === 'follow').map(([a]) => a);
-    /* Visible diagnostic: what did the scan actually resolve? */
-    const followCount = [...lastAction.values()].filter(v => v.action === 'follow').length;
-    const unfollowCount = [...lastAction.values()].filter(v => v.action === 'unfollow').length;
-    this._lastFollowerScanDiag = `lastAction entries: ${lastAction.size} · `
-      + `follows: ${followCount} · unfollows: ${unfollowCount} · `
-      + `mode now: ${this.state.mode} · token ok: ${navToken === this._navToken}`;
-    /* If navigation changed since we started, don't paint over the new view. */
-    if (this.state.mode !== 'followlist' || navToken !== this._navToken) {
-      console.info('[follower-list] aborted render —', this._lastFollowerScanDiag);
-      return;
-    }
+    /* If navigation changed during the scan, don't paint over the new view. */
+    if (this.state.mode !== 'followlist' || navToken !== this._navToken) return;
     this._renderFollowList(feed, headerHTML, address, isOwn, addrs, 'Followers', backBtn);
   }
 
@@ -6540,10 +6540,7 @@ class DeFiX {
      Shows avatar, name, handle, follow button — exactly like X. */
   _renderFollowList(feed, headerHTML, profileAddr, profileIsOwn, addrs, title, backBtn) {
     if (!addrs.length) {
-      const diag = this._lastFollowerScanDiag
-        ? `<p style="margin-top:12px;font-size:11px;color:var(--muted);font-family:monospace;max-width:90%;word-break:break-word">${utils.safe(this._lastFollowerScanDiag)}</p>`
-        : '';
-      feed.innerHTML = headerHTML + `<div class="prof-empty"><span>👥</span><h3>No ${title}</h3><p>None yet.</p>${diag}</div>`;
+      feed.innerHTML = headerHTML + `<div class="prof-empty"><span>👥</span><h3>No ${title}</h3><p>None yet.</p></div>`;
       const nb = feed.querySelector('.page-header-back');
       if (nb) nb.onclick = () => this.goProfilePage(profileAddr, profileIsOwn);
       return;
@@ -6639,7 +6636,7 @@ class DeFiX {
          (sort=desc), and an address may follow→unfollow→refollow. Keeping
          the highest-timestamp action (not last-write) is the only correct
          way to resolve the final state regardless of scan/page order. */
-      const lastAction = new Map(); /* from → { action, ts } */
+      const lastAction = new Map(); /* from → { action, order } */
       const fcLimit = this._getMaxScanPages();
       for (let page = 1; (fcLimit === Infinity || page <= fcLimit); page++) {
         let raw = [];
@@ -6651,7 +6648,11 @@ class DeFiX {
           const to   = tx.to?.toLowerCase();
           if (from === addr) return; /* a follow FROM this addr isn't a follower */
           if (!tx.input || tx.input === '0x') return;
-          const ts = Number(tx.timeStamp) || 0;
+          /* Composite on-chain order — see note in the following-list scan:
+             same-block unfollow+refollow share a per-second ts, so we order by
+             blockNumber then transactionIndex for a deterministic latest action. */
+          const order = (Number(tx.blockNumber) || 0) * 100000
+                      + (Number(tx.transactionIndex) || 0);
           try {
             const text = ethers.utils.toUtf8String(tx.input).trim();
             let action = null;
@@ -6664,7 +6665,7 @@ class DeFiX {
             }
             if (action) {
               const prev = lastAction.get(from);
-              if (!prev || ts >= prev.ts) lastAction.set(from, { action, ts });
+              if (!prev || order >= prev.order) lastAction.set(from, { action, order });
             }
           } catch {}
         });
