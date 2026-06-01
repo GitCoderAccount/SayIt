@@ -266,6 +266,23 @@ nav { flex:1; padding:4px 0; }
   animation:newpost-slidein 0.25s ease-out;
 }
 #new-banner:hover { background:rgba(124,77,255,0.18); }
+
+/* Floating new-posts pill — fixed near the top center of the feed column,
+   shown only when scrolled down and there are pending posts. */
+#new-pill {
+  display:none; position:fixed; top:70px; left:50%;
+  transform:translateX(-50%) translateY(-8px);
+  z-index:40; align-items:center; gap:7px;
+  padding:9px 18px; border:none; border-radius:9999px;
+  background:var(--primary); color:#fff; font-size:14px; font-weight:700;
+  cursor:pointer; box-shadow:0 4px 18px rgba(124,77,255,0.55);
+  opacity:0; transition:opacity 0.2s, transform 0.2s, background 0.15s;
+}
+#new-pill.visible {
+  display:flex; opacity:1; transform:translateX(-50%) translateY(0);
+}
+#new-pill:hover { background:var(--primary-lt); }
+@media (max-width:768px) { #new-pill { top:auto; bottom:84px; } }
 #new-banner .new-banner-avatars {
   display:flex; align-items:center;
 }
@@ -1430,6 +1447,20 @@ nav { flex:1; padding:4px 0; }
 @media (max-width:768px) {
   #sidebar-left { display:none; }
   #mobile-nav { display:flex; }
+  /* More menu becomes a bottom sheet anchored to the viewport (the left-nav
+     anchor is hidden on mobile). Centered, above the mobile nav bar. */
+  .more-popup {
+    position:fixed; left:50%; right:auto;
+    bottom:80px; top:auto;
+    transform:translateX(-50%);
+    width:calc(100vw - 32px); min-width:0; max-width:420px;
+    max-height:min(60vh, 420px);
+  }
+  /* The wrap is normally position:relative inside the hidden sidebar; on
+     mobile we render the popup at the body level via fixed positioning, so
+     the wrap being hidden doesn't matter — but we must un-hide just the
+     popup when open. */
+  #nav-more-wrap { position:static; }
   #mobile-fab { display:flex; }
   #main { flex:1; width:100%; padding-bottom:68px; max-width:100%; border-left:none; border-right:none; }
   #app  { max-width:100%; }
@@ -1446,7 +1477,10 @@ nav { flex:1; padding:4px 0; }
   background:var(--bg-mid); border:1px solid var(--border);
   border-radius:16px; min-width:220px; z-index:300;
   box-shadow:0 8px 32px rgba(0,0,0,0.5);
-  overflow:hidden; animation:popIn 0.15s ease;
+  /* Cap height so a tall menu near the bottom of the viewport scrolls
+     instead of extending off the top of the screen (the mobile cut-off). */
+  max-height:min(70vh, 460px); overflow-y:auto; overscroll-behavior:contain;
+  animation:popIn 0.15s ease;
 }
 .more-popup.open { display:block; }
 @keyframes popIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
@@ -2251,6 +2285,13 @@ nav { flex:1; padding:4px 0; }
       <span class="new-banner-avatars" id="new-banner-avatars"></span>
       <span class="new-banner-text" id="new-banner-text">New posts</span>
     </button>
+    <!-- Floating variant: appears when the user has scrolled down and new
+         posts arrive. Clicking it jumps to the top and loads them — same
+         action as the stationary bar. -->
+    <button id="new-pill" aria-label="Show new posts">
+      <svg viewBox="0 0 24 24" width="16" height="16" style="flex-shrink:0"><path fill="currentColor" d="M12 3.293l6.354 6.353-.708.708L12 4.707 6.354 10.354l-.708-.708L12 3.293zM12 9.293l6.354 6.353-.708.708L12 10.707l-5.646 5.647-.708-.708L12 9.293z"/></svg>
+      <span id="new-pill-text">New posts</span>
+    </button>
 
     <div id="feed"></div>
     <div id="loading-more">Scanning the chain…</div>
@@ -2393,6 +2434,9 @@ nav { flex:1; padding:4px 0; }
   </button>
   <button class="mn-btn" data-mn="profile">
     <span class="mn-icon"><svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 11c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zm0-6C9.239 5 7 7.239 7 10s2.239 5 5 5 5-2.239 5-5-2.239-5-5-5zM5.651 19h12.698c-.337-1.8-1.023-2.891-1.929-3.4-1.285-.736-3.574-1.1-4.42-1.1-.845 0-3.135.364-4.42 1.1-.906.509-1.592 1.6-1.929 3.4z"/></svg></span>Profile
+  </button>
+  <button class="mn-btn" id="mn-more" data-mn="more">
+    <span class="mn-icon"><svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M3 12a2 2 0 114 0 2 2 0 01-4 0zm7 0a2 2 0 114 0 2 2 0 01-4 0zm7 0a2 2 0 114 0 2 2 0 01-4 0z"/></svg></span>More
   </button>
 </nav>
 
@@ -2590,7 +2634,7 @@ const MAIN_CHANNEL   = '0x9cd83be15a79646a3d22b81fc8ddf7b7240a62cb';
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-27';
+const SW_CACHE_VER = '20260530-28';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -3475,7 +3519,9 @@ class DeFiX {
         }
       }
       /* close More popup on outside click */
-      if (!g('nav-more-wrap').contains(e.target)) this.hideMoreMenu();
+      if (!g('nav-more-wrap').contains(e.target)
+          && !e.target.closest('#mn-more')
+          && !e.target.closest('#more-popup')) this.hideMoreMenu();
     });
 
     const apill = g('account-pill');
@@ -3495,6 +3541,8 @@ class DeFiX {
        items so the account pill isn't pushed off-screen on short displays). */
     g('nav-profile').onclick   = () => this.openProfileModal();
     g('nav-more').onclick      = e => { e.stopPropagation(); this.toggleMoreMenu(); };
+    const mnMore = g('mn-more');
+    if (mnMore) mnMore.onclick = e => { e.stopPropagation(); this.toggleMoreMenu(); };
     g('more-settings').onclick = () => { this.hideMoreMenu(); this.goSettings(); };
     const mlBtn = g('more-lists');
     if (mlBtn) mlBtn.onclick = () => { this.hideMoreMenu(); this.goLists(); };
@@ -3751,6 +3799,19 @@ class DeFiX {
     }, 250);
 
     g('new-banner').onclick  = () => this.loadPending();
+    const newPill = g('new-pill');
+    if (newPill) newPill.onclick = () => this.loadPending();
+    /* Show the floating pill only when there are pending posts AND the user
+       has scrolled the stationary bar out of view. Throttled via rAF. */
+    let _pillTick = false;
+    window.addEventListener('scroll', () => {
+      if (_pillTick) return;
+      _pillTick = true;
+      requestAnimationFrame(() => {
+        _pillTick = false;
+        this._updateFloatingPill();
+      });
+    }, { passive: true });
 
     g('ch-main').onclick = () => this.goHome();
     g('ch-self').onclick = () => this.goSelf();
@@ -6508,7 +6569,8 @@ class DeFiX {
          followers. Accept a follow if the payload names this address OR the
          tx was sent to it. */
       const fcLimit = this._getMaxScanPages();
-      let _dbgTotalTx = 0, _dbgIncoming = 0, _dbgFollowTxs = 0;
+      let _dbgTotalTx = 0, _dbgIncoming = 0, _dbgIncomingWithData = 0, _dbgFollowTxs = 0;
+      const _dbgSamples = [];
       for (let page = 1; (fcLimit === Infinity || page <= fcLimit); page++) {
         let raw = [];
         try { raw = await this.apiFetch(addr, page); }
@@ -6519,7 +6581,18 @@ class DeFiX {
         raw.forEach(tx => {
           const from = tx.from?.toLowerCase();
           const to   = tx.to?.toLowerCase();
-          if (to === addr) _dbgIncoming++;
+          if (to === addr) {
+            _dbgIncoming++;
+            if (tx.input && tx.input !== '0x') {
+              _dbgIncomingWithData++;
+              /* Sample the first few incoming-with-data txs so we can see
+                 what their payloads actually look like on-chain. */
+              if (_dbgSamples.length < 5) {
+                try { _dbgSamples.push(ethers.utils.toUtf8String(tx.input).slice(0, 40)); }
+                catch { _dbgSamples.push('(non-utf8)'); }
+              }
+            }
+          }
           if (from === addr) return; /* a follow FROM this addr isn't a follower */
           if (!tx.input || tx.input === '0x') return;
           try {
@@ -6546,8 +6619,10 @@ class DeFiX {
            The scan-depth setting is the bound; raising it finds more. */
       }
       console.info(`[follower-scan] ${addr}: scanned ${_dbgTotalTx} txs, `
-        + `${_dbgIncoming} incoming, ${_dbgFollowTxs} FOLLOW txs, `
+        + `${_dbgIncoming} incoming (${_dbgIncomingWithData} with input data), `
+        + `${_dbgFollowTxs} FOLLOW txs, `
         + `${[...follows.values()].filter(v => v === 'follow').length} net followers`);
+      if (_dbgSamples.length) console.info('[follower-scan] sample incoming payloads:', _dbgSamples);
     } catch (err) { console.warn('[follower-scan] error:', err); }
   }
 
@@ -7266,6 +7341,23 @@ class DeFiX {
     ).join('');
     textEl.textContent = `Show ${n} post${n > 1 ? 's' : ''}`;
     btn.classList.add('visible');
+    /* Keep the floating pill's label in sync; visibility is scroll-driven. */
+    const pillText = this.g('new-pill-text');
+    if (pillText) pillText.textContent = `Show ${n} post${n > 1 ? 's' : ''}`;
+    this._updateFloatingPill();
+  }
+
+  /* Show the floating pill when there are pending posts and the stationary
+     bar has scrolled out of view; hide it otherwise. */
+  _updateFloatingPill() {
+    const pill = this.g('new-pill');
+    if (!pill) return;
+    const n = this.state.pending.length;
+    const bar = this.g('new-banner');
+    /* Bar is considered "out of view" once its top passes above the header. */
+    const barOutOfView = bar ? bar.getBoundingClientRect().bottom < 60 : (window.scrollY > 300);
+    if (n > 0 && barOutOfView) pill.classList.add('visible');
+    else pill.classList.remove('visible');
   }
 
   /* Update all visible relative timestamps in place. Reads the raw
@@ -7285,6 +7377,7 @@ class DeFiX {
     this.state.posts   = [...this.state.pending, ...this.state.posts];
     this.state.pending = [];
     this.g('new-banner').classList.remove('visible');
+    this.g('new-pill')?.classList.remove('visible');
     this.renderFeed();
     window.scrollTo({ top: 0, behavior: 'smooth' });
     /* Wire video autoplay observer for newly prepended posts */
@@ -9332,7 +9425,7 @@ class DeFiX {
           if (i % 50 === 49) await new Promise(res => setTimeout(res, 0));
         }
         utils.safeLS.set(key, '1');
-        console.log('[search] Indexed ' + posts.length + ' cached posts');
+        console.info('[search] Indexed ' + posts.length + ' cached posts');
       } catch (err) { console.warn('[search] Rebuild failed:', err); }
     };
     if (typeof requestIdleCallback !== 'undefined') {
@@ -11116,7 +11209,7 @@ if ('serviceWorker' in navigator) {
             utils.toast('↺ New version available — refresh to update');
           }
         });
-        console.log('[SW] Registered, scope:', reg.scope);
+        console.info('[SW] Registered, scope:', reg.scope);
       })
       .catch(err => console.warn('[SW] Registration failed:', err));
   });
