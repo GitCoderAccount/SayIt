@@ -525,6 +525,9 @@ nav { flex:1; padding:4px 0; }
 .vid-unmute-btn:hover { background:rgba(0,0,0,0.85); }
 .post-yt-wrap { padding-top:56.25%; position:relative; margin-top:8px; border-radius:12px; overflow:hidden; }
 .post-yt-frame { position:absolute; top:0; left:0; width:100%; height:100%; border:0; }
+/* Container after a facade is clicked: holds a 16:9 box for the iframe, which
+   is absolutely positioned and would otherwise leave the wrapper at 0 height. */
+.post-embed-playing { position:relative; aspect-ratio:16/9; margin-top:8px; border-radius:12px; overflow:hidden; background:#000; }
 .post-yt-facade, .post-vimeo-facade { position:relative; }
 .post-yt-thumb  { width:100%; display:block; border-radius:0; }
 .post-yt-play, .post-vimeo-play {
@@ -4065,7 +4068,11 @@ class DeFiX {
     frame.setAttribute('title', yt ? 'YouTube video' : 'Vimeo video');
     el.innerHTML = '';
     el.appendChild(frame);
+    /* Drop the facade affordances and give the container a 16:9 box so the
+       absolutely-positioned iframe has height (emptying the thumbnail would
+       otherwise collapse the wrapper to 0 and hide the player). */
     el.classList.remove('post-yt-facade', 'post-vimeo-facade');
+    el.classList.add('post-embed-playing');
   }
 
   onFeedClick(e, inModal) {
