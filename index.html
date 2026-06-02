@@ -432,7 +432,7 @@ nav { flex:1; padding:4px 0; }
   display:flex; align-items:baseline; flex-wrap:nowrap;
   gap:0; line-height:1.4; margin-bottom:0; overflow:hidden;
 }
-.post-name   { font-weight:700; font-size:15px; flex-shrink:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; max-width:200px; }
+.post-name   { font-weight:700; font-size:15px; color:#f3f4f5; flex-shrink:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; max-width:200px; letter-spacing:-0.1px; }
 .post-name:hover { text-decoration:underline; cursor:pointer; }
 .post-dot    { color:var(--muted); font-size:14px; margin:0 4px; flex-shrink:0; }
 .post-handle {
@@ -1856,7 +1856,9 @@ nav { flex:1; padding:4px 0; }
   object-fit:cover; flex-shrink:0; background:var(--bg-mid);
 }
 .notif-body { flex:1; min-width:0; font-size:15px; line-height:1.5; }
-.notif-name { font-weight:700; }
+.notif-name { font-weight:700; color:#f3f4f5; }
+.notif-pop { cursor:pointer; }
+.notif-name.notif-pop:hover { text-decoration:underline; }
 .notif-label { color:var(--text); }
 .notif-preview {
   color:var(--muted); font-size:14px; margin-top:2px;
@@ -2097,14 +2099,16 @@ nav { flex:1; padding:4px 0; }
       <svg class="logo-svg" viewBox="0 0 220 44" xmlns="http://www.w3.org/2000/svg"
            aria-hidden="true" focusable="false">
         <defs>
-          <!-- PulseChain-style diagonal gradient: pink → purple → blue → cyan.
-               Brighter + multi-hue so the mark doesn't read as flat purple
-               when shrunk to the icon. -->
+          <!-- Exact PulseChain gradient, sampled from the official circular
+               logo (mean color diff ~19). Axis bottom-left → top-right:
+               hot-pink → magenta → purple → blue → cyan. -->
           <linearGradient id="logoG" x1="0" y1="1" x2="1" y2="0">
-            <stop offset="0%"   stop-color="#f40868"/>
-            <stop offset="38%"  stop-color="#9621dd"/>
-            <stop offset="70%"  stop-color="#4c34ff"/>
-            <stop offset="100%" stop-color="#01b6ff"/>
+            <stop offset="0%"   stop-color="#f30c72"/>
+            <stop offset="20%"  stop-color="#e817cb"/>
+            <stop offset="42%"  stop-color="#9105fe"/>
+            <stop offset="64%"  stop-color="#1966ff"/>
+            <stop offset="84%"  stop-color="#009dfe"/>
+            <stop offset="100%" stop-color="#00c0fe"/>
           </linearGradient>
           <linearGradient id="logoText" x1="0" y1="0" x2="1" y2="0">
             <stop offset="0%"   stop-color="#ffffff"/>
@@ -2654,7 +2658,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-43';
+const SW_CACHE_VER = '20260530-47';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -4603,14 +4607,14 @@ class DeFiX {
         this.fetchOtherProfile(n.from);
         /* Votes open the poll thread; others open the tx on the explorer. */
         const clickAttr = n.type === 'vote'
-          ? `onclick="pulse.openThreadByHash('${utils.safe(n.target)}')"`
-          : `onclick="window.open('${txLink}','_blank','noopener,noreferrer')"`;
+          ? `onclick="if(event.target.closest('.notif-pop'))return;pulse.openThreadByHash('${utils.safe(n.target)}')"`
+          : `onclick="if(event.target.closest('.notif-pop'))return;window.open('${txLink}','_blank','noopener,noreferrer')"`;
         return `
           <div class="notif-item" data-from="${utils.safe(n.from)}" ${clickAttr}>
             <div class="notif-icon-wrap">${icon}</div>
-            <img src="${pic}" class="notif-avatar" onerror="this.src='image1.jpeg'">
+            <img src="${pic}" class="notif-avatar notif-pop" data-pop-addr="${utils.safe(n.from)}" onerror="this.src='image1.jpeg'">
             <div class="notif-body">
-              <span class="notif-name">${name}</span>
+              <span class="notif-name notif-pop" data-pop-addr="${utils.safe(n.from)}">${name}</span>
               <span class="notif-label"> ${label}</span>
               ${n.preview ? `<div class="notif-preview">${utils.safe(n.preview)}</div>` : ''}
             </div>
@@ -4626,6 +4630,34 @@ class DeFiX {
     this.g('feed').querySelectorAll('[data-notif-tab]').forEach(btn => {
       btn.onclick = () => { this._notifTab = btn.dataset.notifTab; this._renderNotifs(); };
     });
+    /* Profile popup on a notifier's name/avatar — click opens it; on desktop
+       a 400ms hover does too. stopPropagation so the row's open-tx onclick
+       doesn't also fire. */
+    const list = this.g('feed').querySelector('.notif-list');
+    if (list) {
+      list.addEventListener('click', e => {
+        const t = e.target.closest('.notif-pop');
+        if (!t) return;
+        e.stopPropagation();
+        if (t.dataset.popAddr) this.showProfilePopup(t.dataset.popAddr, t);
+      });
+      const isTouch = () => window.matchMedia('(hover: none)').matches;
+      let hov = null;
+      list.addEventListener('mouseover', e => {
+        if (isTouch()) return;
+        const t = e.target.closest('.notif-pop');
+        if (!t || !t.dataset.popAddr) return;
+        clearTimeout(hov);
+        const addr = t.dataset.popAddr;
+        hov = setTimeout(() => this.showProfilePopup(addr, t, 'hover'), 400);
+      });
+      list.addEventListener('mouseout', e => {
+        if (isTouch()) return;
+        const popup = this.g('profile-popup');
+        if (popup?.contains(e.relatedTarget)) return;
+        clearTimeout(hov);
+      });
+    }
   }
 
   async goSelf() {
