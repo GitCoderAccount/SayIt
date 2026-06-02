@@ -2729,6 +2729,9 @@ const utils = {
       try {
         const host = new URL(url).hostname;
         if (imgHosts.has(host)) return 'img';
+        /* YouTube / Vimeo — embedded as click-to-play facades (can't autoplay) */
+        if (/(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com)$/i.test(host) && ytId(url)) return 'youtube';
+        if (/(^|\.)vimeo\.com$/i.test(host) && vimeoId(url)) return 'vimeo';
       } catch { /* invalid URL — skip */ }
       return null;
     };
@@ -2737,6 +2740,25 @@ const utils = {
       if (u.startsWith('ar://'))      return 'https://arweave.net/' + u.slice(5);
       if (u.startsWith('arweave://')) return 'https://arweave.net/' + u.slice(10);
       return u;
+    };
+    /* Extract the 11-char YouTube video ID from any common URL form
+       (watch?v=, youtu.be/, /embed/, /shorts/). Returns null if not found. */
+    const ytId = url => {
+      try {
+        const u = new URL(url);
+        const h = u.hostname.replace(/^www\./, '');
+        let id = '';
+        if (h === 'youtu.be')               id = u.pathname.slice(1).split('/')[0];
+        else if (u.pathname.startsWith('/shorts/')) id = u.pathname.split('/')[2] || '';
+        else if (u.pathname.startsWith('/embed/'))  id = u.pathname.split('/')[2] || '';
+        else                                id = u.searchParams.get('v') || '';
+        return /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
+      } catch { return null; }
+    };
+    /* Extract the numeric Vimeo video ID. Returns null if not found. */
+    const vimeoId = url => {
+      const m = url.match(/vimeo\.com\/(?:video\/)?(\d+)/i);
+      return m ? m[1] : null;
     };
 
     /* ── Pass 1: extract ALL media from fullText (never truncated) ── */
@@ -2762,7 +2784,7 @@ const utils = {
           data-raw-url="${safeRaw}">`;
         mediaCount++;
       } else if (mtype === 'vid') {
-        mediaUrls.add(normalizeForDedup(resolved));
+        mediaUrls.add(resolved);
         const safeR = utils.safe(resolved);
         imgHtml += `<div class="post-vid-wrap">
           <video src="${safeR}" class="post-vid-thumb"
@@ -2775,7 +2797,7 @@ const utils = {
       } else if (mtype === 'youtube') {
         const vid = ytId(resolved);
         if (vid) {
-          mediaUrls.add(normalizeForDedup(resolved));
+          mediaUrls.add(resolved);
           const safeVid = utils.safe(vid);
           /* Thumbnail + play button — iframe loads on click (faster, avoids
              Google tracking before user interaction, and works in feed context
@@ -2799,7 +2821,7 @@ const utils = {
       } else if (mtype === 'vimeo') {
         const vid = vimeoId(resolved);
         if (vid) {
-          mediaUrls.add(normalizeForDedup(resolved));
+          mediaUrls.add(resolved);
           const safeVid = utils.safe(vid);
           /* Facade: thumbnail from vumbnail.com + branded play button.
              Clicking loads the real iframe with autoplay — same pattern as YouTube. */
@@ -9606,7 +9628,7 @@ class DeFiX {
       : queued.content;
     el.innerHTML = `
       <div style="padding:12px 16px;display:flex;gap:10px;align-items:flex-start">
-        <img src="${this.state.profile.picUrl || 'image1.jpeg'}" style="width:40px;height:40px;border-radius:50%;flex-shrink:0;object-fit:cover" onerror="this.src='image1.jpeg'">
+        <img src="${utils.safe(this.state.profile.picUrl || 'image1.jpeg')}" style="width:40px;height:40px;border-radius:50%;flex-shrink:0;object-fit:cover" onerror="this.src='image1.jpeg'">
         <div style="flex:1;min-width:0">
           <div style="font-size:13px;color:var(--primary-lt);margin-bottom:4px">
             ⌛ Publishing… <span style="color:var(--muted);font-size:12px">(saved offline)</span>
