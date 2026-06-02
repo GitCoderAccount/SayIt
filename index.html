@@ -2802,10 +2802,7 @@ const utils = {
           /* Thumbnail + play button — iframe loads on click (faster, avoids
              Google tracking before user interaction, and works in feed context
              where autoplay is blocked by browser sandbox). */
-          imgHtml += `<div class="post-vid-wrap post-yt-facade"
-              data-yt-id="${safeVid}"
-              onclick="event.stopPropagation();this.innerHTML='<iframe src=\"https://www.youtube-nocookie.com/embed/${safeVid}?autoplay=1&rel=0\" class=\"post-yt-frame\" allowfullscreen allow=\"autoplay;accelerometer;clipboard-write;encrypted-media;gyroscope;picture-in-picture\" title=\"YouTube video\"></iframe>';this.classList.remove('post-yt-facade')"
-              style="cursor:pointer">
+          imgHtml += `<div class="post-vid-wrap post-yt-facade" data-yt-id="${safeVid}">
             <img src="https://i.ytimg.com/vi/${safeVid}/hqdefault.jpg"
               class="post-yt-thumb" alt="YouTube video" loading="lazy"
               onerror="this.src='https://i.ytimg.com/vi/${safeVid}/default.jpg'">
@@ -2825,10 +2822,7 @@ const utils = {
           const safeVid = utils.safe(vid);
           /* Facade: thumbnail from vumbnail.com + branded play button.
              Clicking loads the real iframe with autoplay — same pattern as YouTube. */
-          imgHtml += `<div class="post-vid-wrap post-yt-facade post-vimeo-facade"
-              data-vimeo-id="${safeVid}"
-              onclick="event.stopPropagation();this.innerHTML='<iframe src=\'https://player.vimeo.com/video/${safeVid}?autoplay=1&dnt=1\' class=\'post-yt-frame\' allowfullscreen allow=\'autoplay;fullscreen;picture-in-picture\' title=\'Vimeo video\'></iframe>';this.classList.remove('post-yt-facade','post-vimeo-facade')"
-              style="cursor:pointer">
+          imgHtml += `<div class="post-vid-wrap post-yt-facade post-vimeo-facade" data-vimeo-id="${safeVid}">
             <img src="https://vumbnail.com/${safeVid}.jpg"
               class="post-yt-thumb" alt="Vimeo video" loading="lazy"
               onerror="this.style.display='none'">
@@ -4006,7 +4000,36 @@ class DeFiX {
     });
   }
 
+  /* Replace a YouTube/Vimeo facade thumbnail with the real autoplaying iframe.
+     IDs were validated at render time (ytId: [A-Za-z0-9_-]{11}; vimeoId: \d+)
+     and are URL-encoded here as defense in depth. */
+  _playFacade(el) {
+    const yt = el.dataset.ytId, vm = el.dataset.vimeoId;
+    let src = '';
+    if (yt)      src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(yt)}?autoplay=1&rel=0`;
+    else if (vm) src = `https://player.vimeo.com/video/${encodeURIComponent(vm)}?autoplay=1&dnt=1`;
+    if (!src) return;
+    const frame = document.createElement('iframe');
+    frame.src = src;
+    frame.className = 'post-yt-frame';
+    frame.allowFullscreen = true;
+    frame.setAttribute('allow', 'autoplay;accelerometer;clipboard-write;encrypted-media;gyroscope;picture-in-picture;fullscreen');
+    frame.setAttribute('title', yt ? 'YouTube video' : 'Vimeo video');
+    el.innerHTML = '';
+    el.appendChild(frame);
+    el.classList.remove('post-yt-facade', 'post-vimeo-facade');
+  }
+
   onFeedClick(e, inModal) {
+    /* YouTube/Vimeo click-to-play facade → swap the thumbnail for the real
+       player iframe (autoplay on). Handled before post routing so it doesn't
+       open the thread. Iframe is built via DOM APIs (no HTML-string nesting). */
+    const facade = e.target.closest('.post-yt-facade');
+    if (facade) {
+      e.stopPropagation();
+      this._playFacade(facade);
+      return;
+    }
     /* Poll vote buttons are handled before the generic post routing. */
     const voteBtn = e.target.closest('[data-poll-vote]');
     if (voteBtn) {
