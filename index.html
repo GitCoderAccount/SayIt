@@ -2097,13 +2097,18 @@ nav { flex:1; padding:4px 0; }
       <svg class="logo-svg" viewBox="0 0 220 44" xmlns="http://www.w3.org/2000/svg"
            aria-hidden="true" focusable="false">
         <defs>
-          <linearGradient id="logoG" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%"  stop-color="#7c4dff"/>
-            <stop offset="100%" stop-color="#b388ff"/>
+          <!-- PulseChain-style diagonal gradient: pink → purple → blue → cyan.
+               Brighter + multi-hue so the mark doesn't read as flat purple
+               when shrunk to the icon. -->
+          <linearGradient id="logoG" x1="0" y1="1" x2="1" y2="0">
+            <stop offset="0%"   stop-color="#f40868"/>
+            <stop offset="38%"  stop-color="#9621dd"/>
+            <stop offset="70%"  stop-color="#4c34ff"/>
+            <stop offset="100%" stop-color="#01b6ff"/>
           </linearGradient>
           <linearGradient id="logoText" x1="0" y1="0" x2="1" y2="0">
             <stop offset="0%"   stop-color="#ffffff"/>
-            <stop offset="100%" stop-color="#b388ff"/>
+            <stop offset="100%" stop-color="#c9a9ff"/>
           </linearGradient>
         </defs>
         <!-- Speech bubble silhouette -->
@@ -2117,9 +2122,21 @@ nav { flex:1; padding:4px 0; }
                  C 44 11, 36 4, 26 4
                  Z"
               fill="url(#logoG)"/>
+        <!-- White outline around the bubble so its shape stays legible at
+             small sizes / on dark backgrounds (was hard to see before). -->
+        <path d="M22 4
+                 C 12 4, 4 11, 4 20
+                 C 4 27, 8.5 32, 14 34
+                 L 13 41
+                 L 21 35
+                 L 30 35
+                 C 38 35, 44 28, 44 21
+                 C 44 11, 36 4, 26 4
+                 Z"
+              fill="none" stroke="#ffffff" stroke-width="3" opacity="0.95"/>
         <!-- Lightning bolt inside the bubble -->
         <path d="M26 11 L 18 23 L 23 23 L 22 31 L 30 18 L 25 18 L 26 11 Z"
-              fill="#ffffff" opacity="0.95"/>
+              fill="#ffffff"/>
         <!-- Wordmark: "Say It DeFi" — two-tone for visual depth -->
         <text x="56" y="22" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif"
               font-size="15" font-weight="800" letter-spacing="0.3"
@@ -2637,7 +2654,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-41';
+const SW_CACHE_VER = '20260530-43';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -6339,8 +6356,9 @@ class DeFiX {
       followBtn.onclick = () => this.toggleFollow(address, followBtn);
     }
 
-    /* Count following and fetch follower count */
-    this._showFollowingCount();
+    /* Count following and fetch follower count. Following count is
+       address-aware: own profile reads state.following; others are scanned. */
+    this._showFollowingCount(address, isOwn);
     this._fetchFollowerCount(address);
 
     /* Follower/Following counts → open list screen (Twitter/X pattern) */
@@ -6633,11 +6651,58 @@ class DeFiX {
     slice.forEach(addr => this._hydrateFollowRow(feed, addr));
   }
 
-  _showFollowingCount() {
+  async _showFollowingCount(address = null, isOwn = false) {
     const el = document.getElementById('prof-following-count');
-    if (el) {
-      const n = this.state.following.size;
-      el.innerHTML = `<strong>${n}</strong> Following`;
+    if (!el) return;
+    /* Own profile: state.following is already loaded and authoritative. */
+    if (isOwn || (address && address.toLowerCase() === this.state.signerAddr)) {
+      el.innerHTML = `<strong>${this.state.following.size}</strong> Following`;
+      return;
+    }
+    if (!address) { el.innerHTML = `<strong>0</strong> Following`; return; }
+    /* Other profile: scan THEIR outgoing FOLLOW/UNFOLLOW txs, latest action
+       per target wins (composite blockNumber+txIndex order). */
+    const navAddr = address.toLowerCase();
+    const lastAction = new Map(); /* target → { action, order } */
+    try {
+      const limit = this._getMaxScanPages();
+      for (let page = 1; (limit === Infinity || page <= limit); page++) {
+        let raw = [];
+        try { raw = await this.apiFetch(navAddr, page); }
+        catch { break; }
+        raw.forEach(tx => {
+          if (tx.from?.toLowerCase() !== navAddr) return; /* only their sent txs */
+          if (!tx.input || tx.input === '0x') return;
+          const order = (Number(tx.blockNumber) || 0) * 100000
+                      + (Number(tx.transactionIndex) || 0);
+          try {
+            const text = ethers.utils.toUtf8String(tx.input).trim();
+            let tgt = null, action = null;
+            if (text.startsWith(FOLLOW_PREFIX)) {
+              tgt = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase(); action = 'follow';
+            } else if (text.startsWith(UNFOLLOW_PREFIX)) {
+              tgt = text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase(); action = 'unfollow';
+            }
+            if (tgt && action) {
+              const prev = lastAction.get(tgt);
+              if (!prev || order >= prev.order) lastAction.set(tgt, { action, order });
+            }
+          } catch {}
+        });
+        /* Live update as pages come in (only while still on this profile). */
+        if (this.state.mode === 'profile' && this.state.channel === navAddr) {
+          const live = [...lastAction.values()].filter(v => v.action === 'follow').length;
+          const elNow = document.getElementById('prof-following-count');
+          if (elNow) elNow.innerHTML = `<strong>${live}</strong> Following`;
+        }
+        if (raw.length < 50) break;
+        await this._scanDelay(150);
+      }
+    } catch {}
+    if (this.state.mode === 'profile' && this.state.channel === navAddr) {
+      const n = [...lastAction.values()].filter(v => v.action === 'follow').length;
+      const elNow = document.getElementById('prof-following-count');
+      if (elNow) elNow.innerHTML = `<strong>${n}</strong> Following`;
     }
   }
 
@@ -8003,7 +8068,9 @@ class DeFiX {
       ? post.display.slice(0, MAX_PREVIEW) + '…'
       : post.display;
     const { text: bodyHtml, images: imgHtml } = utils.linkify(textToRender, post.display);
-    const needsMore  = !inModal && !expanded && post.display.length > MAX_PREVIEW;
+    const isLong     = !inModal && post.display.length > MAX_PREVIEW;
+    const needsMore  = isLong && !expanded;
+    const canCollapse = isLong && expanded;
     /* Repost / quote card + badges */
     const repostCard = this._postRepostCard(post);
     const { dirBadge, toLabel, replyBadge } = this._postBadges(post);
@@ -8047,6 +8114,7 @@ class DeFiX {
           ${post.poll ? this._pollHTML(post) : ''}
           ${repostCard}
           ${needsMore ? `<button class="read-more-btn" data-action="expand">Show more ↓</button>` : ''}
+          ${canCollapse ? `<button class="read-more-btn" data-action="expand">Show less ↑</button>` : ''}
           ${imgHtml ? `<div class="post-images">${imgHtml}</div>` : ''}
           <div class="post-actions">
             <div class="post-actions-left">
