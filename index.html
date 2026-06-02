@@ -79,20 +79,23 @@ a { color:inherit; text-decoration:none; }
 #sidebar-left > * { width:100%; max-width:268px; }
 #sidebar-left nav { width:100%; max-width:268px; }
 .logo-wrap {
-  display:flex; align-items:center;
-  padding:12px 16px 8px; cursor:pointer;
+  display:flex; align-items:center; gap:10px;
+  padding:10px 14px 8px; cursor:pointer;
   border-radius:9999px;
   width:fit-content;
   transition:background 0.2s;
 }
 .logo-wrap:hover { background:var(--primary-hov); }
-/* SVG wordmark — sits where the old logo+text combo was.
-   Fixed dimensions matched to viewBox aspect ratio so the SVG scales
-   crisply at any DPR. */
-.logo-svg {
-  width:170px; height:34px;
-  display:block; flex-shrink:0;
+/* Bubble icon (PNG, real PulseChain gradient pixels) + text wordmark. */
+.logo-icon {
+  width:42px; height:auto; display:block; flex-shrink:0;
 }
+.logo-text {
+  display:flex; flex-direction:column; line-height:1.05;
+  font-weight:800; letter-spacing:0.2px; white-space:nowrap;
+}
+.logo-text-1 { color:#ffffff; font-size:18px; }
+.logo-text-2 { color:#c9a9ff; font-size:18px; }
 nav { flex:1; padding:4px 0; }
 .nav-btn {
   display:flex; align-items:center; gap:20px;
@@ -1400,11 +1403,10 @@ nav { flex:1; padding:4px 0; }
      than squeezing the whole 220-wide wordmark into 44px (which made the
      title tiny/unreadable when the sidebar collapsed or at high zoom). The
      wrapper crops; the SVG keeps its natural aspect so the icon stays crisp. */
-  .logo-wrap { overflow:hidden; }
-  /* Scale so the ~48-unit icon (of the 220-wide viewBox) fills ~46px, then
-     the 50px wrapper crops away the wordmark — icon stays full-size + crisp. */
-  .logo-svg { width:210px; height:42px; margin-left:0; }
-  #logo-wrap { width:50px; max-width:50px; padding:10px 0 8px; margin:0 auto; justify-content:flex-start; }
+  /* Collapsed rail: hide the wordmark text, show just the bubble icon. */
+  .logo-text { display:none; }
+  #logo-wrap { width:50px; max-width:50px; padding:10px 0 8px; margin:0 auto; justify-content:center; gap:0; }
+  .logo-icon { width:40px; }
   /* Account pill: hide text, show just the avatar */
   #ap-info, #ap-dots { display:none; }
   #account-pill {
@@ -2092,63 +2094,15 @@ nav { flex:1; padding:4px 0; }
   <!-- Left sidebar -->
   <div id="sidebar-left">
     <div class="logo-wrap" id="logo-wrap" aria-label="Say It DeFi — Home">
-      <!-- Inline SVG wordmark: chat bubble + lightning bolt mark, then the
-           wordmark in bold sans-serif. The icon uses CSS variables so the
-           colors stay in sync with the rest of the site if --primary
-           changes. Compact: fits inside the 275px sidebar. -->
-      <svg class="logo-svg" viewBox="0 0 220 44" xmlns="http://www.w3.org/2000/svg"
-           aria-hidden="true" focusable="false">
-        <defs>
-          <!-- Exact PulseChain gradient, sampled from the official circular
-               logo (mean color diff ~19). Axis bottom-left → top-right:
-               hot-pink → magenta → purple → blue → cyan. -->
-          <linearGradient id="logoG" x1="0" y1="1" x2="1" y2="0">
-            <stop offset="0%"   stop-color="#f30c72"/>
-            <stop offset="20%"  stop-color="#e817cb"/>
-            <stop offset="42%"  stop-color="#9105fe"/>
-            <stop offset="64%"  stop-color="#1966ff"/>
-            <stop offset="84%"  stop-color="#009dfe"/>
-            <stop offset="100%" stop-color="#00c0fe"/>
-          </linearGradient>
-          <linearGradient id="logoText" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%"   stop-color="#ffffff"/>
-            <stop offset="100%" stop-color="#c9a9ff"/>
-          </linearGradient>
-        </defs>
-        <!-- Speech bubble silhouette -->
-        <path d="M22 4
-                 C 12 4, 4 11, 4 20
-                 C 4 27, 8.5 32, 14 34
-                 L 13 41
-                 L 21 35
-                 L 30 35
-                 C 38 35, 44 28, 44 21
-                 C 44 11, 36 4, 26 4
-                 Z"
-              fill="url(#logoG)"/>
-        <!-- White outline around the bubble so its shape stays legible at
-             small sizes / on dark backgrounds (was hard to see before). -->
-        <path d="M22 4
-                 C 12 4, 4 11, 4 20
-                 C 4 27, 8.5 32, 14 34
-                 L 13 41
-                 L 21 35
-                 L 30 35
-                 C 38 35, 44 28, 44 21
-                 C 44 11, 36 4, 26 4
-                 Z"
-              fill="none" stroke="#ffffff" stroke-width="3" opacity="0.95"/>
-        <!-- Lightning bolt inside the bubble -->
-        <path d="M26 11 L 18 23 L 23 23 L 22 31 L 30 18 L 25 18 L 26 11 Z"
-              fill="#ffffff"/>
-        <!-- Wordmark: "Say It DeFi" — two-tone for visual depth -->
-        <text x="56" y="22" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif"
-              font-size="15" font-weight="800" letter-spacing="0.3"
-              fill="#ffffff">Say It</text>
-        <text x="56" y="38" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif"
-              font-size="15" font-weight="800" letter-spacing="0.3"
-              fill="url(#logoText)">DeFi</text>
-      </svg>
+      <!-- Bubble icon: a PNG using the REAL PulseChain gradient pixels (same
+           source as the favicon / profile image) so the color match is exact.
+           Everything outside the bubble is transparent. Beside it, the
+           "Say It DeFi" wordmark as styled text. -->
+      <img class="logo-icon" src="title_icon.png" alt="" aria-hidden="true">
+      <span class="logo-text">
+        <span class="logo-text-1">Say It</span>
+        <span class="logo-text-2">DeFi</span>
+      </span>
     </div>
 
     <nav>
@@ -2658,7 +2612,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-47';
+const SW_CACHE_VER = '20260530-50';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
