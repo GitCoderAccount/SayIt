@@ -1932,6 +1932,21 @@ nav { flex:1; padding:4px 0; }
 .repost-card-name { font-size:13px; font-weight:700; }
 .repost-card-body { font-size:14px; color:var(--text); line-height:1.5; word-break:break-word; }
 
+/* X / Twitter post link card (no third-party script — links out to X) */
+.x-embed-card {
+  display:block; text-decoration:none; color:var(--text);
+  border:1px solid var(--border); border-radius:14px;
+  padding:12px 14px; margin:8px 0 4px;
+  background:var(--bg-dark); transition:background 0.15s, border-color 0.15s;
+}
+.x-embed-card:hover { background:rgba(255,255,255,0.04); border-color:var(--muted); }
+.x-embed-hdr { display:flex; align-items:center; gap:8px; }
+.x-embed-logo { color:var(--text); flex-shrink:0; }
+.x-embed-title { font-size:14px; font-weight:700; }
+.x-embed-arrow { color:var(--muted); font-size:13px; margin-left:auto; }
+.x-embed-handle { display:block; font-size:14px; color:var(--primary-lt); margin-top:6px; }
+.x-embed-cta { display:block; font-size:13px; color:var(--muted); margin-top:2px; }
+
 /* Profile page (full in-column view) ─────────────────────────────────── */
 .prof-page { flex:1; overflow-y:auto; }
 
@@ -2733,6 +2748,7 @@ const utils = {
         if (/(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com)$/i.test(host) && ytId(url)) return 'youtube';
         if (/(^|\.)vimeo\.com$/i.test(host) && vimeoId(url)) return 'vimeo';
       } catch { /* invalid URL — skip */ }
+      if (xPost(url)) return 'tweet';   /* X / Twitter post → styled link card */
       return null;
     };
     const resolveUrl = u => {
@@ -2760,10 +2776,23 @@ const utils = {
       const m = url.match(/vimeo\.com\/(?:video\/)?(\d+)/i);
       return m ? m[1] : null;
     };
+    /* Parse an X/Twitter post URL → { handle, id } or null. Only matches
+       real status URLs (x.com/<handle>/status/<id>); anything else (profiles,
+       search, etc.) falls through to a plain link. No third-party script is
+       loaded — we render our own styled card that links out to X. */
+    const xPost = url => {
+      try {
+        const u = new URL(url);
+        const h = u.hostname.replace(/^(www|mobile|m)\./, '');
+        if (h !== 'x.com' && h !== 'twitter.com') return null;
+        const m = u.pathname.match(/^\/([A-Za-z0-9_]{1,15})\/status(?:es)?\/(\d+)/);
+        return m ? { handle: m[1], id: m[2] } : null;
+      } catch { return null; }
+    };
 
     /* ── Pass 1: extract ALL media from fullText (never truncated) ── */
     const scanText = fullText || text;
-    let imgHtml = '', mediaCount = 0;
+    let imgHtml = '', embedHtml = '', mediaCount = 0;
     const mediaUrls = new Set(); /* dedup */
     let mScan;
     re.lastIndex = 0;
@@ -2835,6 +2864,25 @@ const utils = {
           </div>`;
           mediaCount++;
         }
+      } else if (mtype === 'tweet') {
+        const tw = xPost(resolved);
+        if (tw) {
+          mediaUrls.add(resolved);
+          /* Canonical URL (drops tracking params); handle is [A-Za-z0-9_] only. */
+          const href = `https://x.com/${tw.handle}/status/${tw.id}`;
+          const safeHandle = utils.safe(tw.handle);
+          embedHtml += `<a class="x-embed-card" href="${utils.safe(href)}"
+              target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">
+            <span class="x-embed-hdr">
+              <svg class="x-embed-logo" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+              <span class="x-embed-title">Post on X</span>
+              <span class="x-embed-arrow" aria-hidden="true">↗</span>
+            </span>
+            <span class="x-embed-handle">@${safeHandle}</span>
+            <span class="x-embed-cta">View this post on X</span>
+          </a>`;
+          mediaCount++;
+        }
       }
     }
 
@@ -2865,7 +2913,7 @@ const utils = {
       }
     }
     result += utils.safe(text.slice(last)).replace(/\n/g, '<br>');
-    return { text: result, images: imgHtml };
+    return { text: result, images: imgHtml, embeds: embedHtml };
   },
   resolveIPFS(uri) {
     if (!uri) return null;
@@ -8098,7 +8146,7 @@ class DeFiX {
     const textToRender = (!inModal && !expanded && post.display.length > MAX_PREVIEW)
       ? post.display.slice(0, MAX_PREVIEW) + '…'
       : post.display;
-    const { text: bodyHtml, images: imgHtml } = utils.linkify(textToRender, post.display);
+    const { text: bodyHtml, images: imgHtml, embeds: embedHtml } = utils.linkify(textToRender, post.display);
     const isLong     = !inModal && post.display.length > MAX_PREVIEW;
     const needsMore  = isLong && !expanded;
     const canCollapse = isLong && expanded;
@@ -8144,6 +8192,7 @@ class DeFiX {
           <div class="post-body">${bodyHtml}</div>
           ${post.poll ? this._pollHTML(post) : ''}
           ${repostCard}
+          ${embedHtml || ''}
           ${needsMore ? `<button class="read-more-btn" data-action="expand">Show more ↓</button>` : ''}
           ${canCollapse ? `<button class="read-more-btn" data-action="expand">Show less ↑</button>` : ''}
           ${imgHtml ? `<div class="post-images">${imgHtml}</div>` : ''}
