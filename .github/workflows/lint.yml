@@ -1,0 +1,29 @@
+name: Lint
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Extract inline app script
+        run: node .ci/extract-inline-script.js index.html .ci/app.extracted.js
+
+      - name: Syntax check (node --check)
+        run: |
+          node --check .ci/app.extracted.js
+          node --check sw.js
+
+      - name: ESLint (catches undefined references, etc.)
+        run: >
+          npx --yes eslint@8.57.1
+          --no-eslintrc --config .ci/eslintrc.json
+          .ci/app.extracted.js sw.js
