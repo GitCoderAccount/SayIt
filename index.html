@@ -2089,9 +2089,31 @@ nav { flex:1; padding:4px 0; }
 /* Edit modal cover preview */
 #pe-cover-preview.has-cover { color:transparent; }
 
+/* ── Accessibility ─────────────────────────────────────────────────────── */
+/* Respect users who prefer reduced motion — curtail animations/transitions */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+/* Visually hidden but exposed to screen readers (page title landmark) */
+.visually-hidden {
+  position:absolute !important; width:1px; height:1px;
+  padding:0; margin:-1px; overflow:hidden; clip:rect(0 0 0 0);
+  white-space:nowrap; border:0;
+}
+/* Visible keyboard-focus ring for custom (role="button") interactive rows */
+.notif-item:focus-visible, .explore-row:focus-visible, .news-row:focus-visible,
+.sb-card-row:focus-visible, .ch-history-item:focus-visible {
+  outline:2px solid var(--primary, #7c4dff); outline-offset:-2px; border-radius:8px;
+}
 </style>
 </head>
 <body>
+<h1 class="visually-hidden">Say It DeFi — uncensorable social on PulseChain</h1>
 <!-- Icon sprite — symbols defined once, referenced via <use> from every post.
      Biggest DOM-weight win: 12 SVGs per post × 2000 posts collapses to
      one sprite + 12 small <use> elements per post. -->
@@ -2310,7 +2332,7 @@ nav { flex:1; padding:4px 0; }
       <div id="sb-trending-list">
         <!-- Dynamic trending hashtags inserted by renderTrending().
              Pinned partner rows always shown at the bottom. -->
-        <div class="sb-card-row" id="sb-pulsechain-row" style="cursor:pointer"
+        <div class="sb-card-row" role="button" tabindex="0" id="sb-pulsechain-row" style="cursor:pointer"
           onclick="window.open('https://pulsechain.com','_blank','noopener,noreferrer')">
           <div style="flex:1">
             <span class="trend-label">Powered by</span>
@@ -2442,9 +2464,9 @@ nav { flex:1; padding:4px 0; }
 
 <!-- Fullscreen compose modal -->
 <div class="modal-bg" id="compose-modal">
-  <div class="modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-label="Compose post">
     <div class="modal-head">
-      <button class="modal-close" id="close-compose-modal">✕</button>
+      <button class="modal-close" aria-label="Close" id="close-compose-modal">✕</button>
       <span></span>
     </div>
     <div style="display:flex;gap:12px;align-items:flex-start">
@@ -2476,10 +2498,10 @@ nav { flex:1; padding:4px 0; }
 
 <!-- Edit Profile modal (view is now a full in-column page) -->
 <div class="modal-bg" id="profile-modal">
-  <div class="modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-label="Edit profile">
     <div class="modal-head">
       <span class="modal-title">Edit Profile</span>
-      <button class="modal-close" id="close-profile">✕</button>
+      <button class="modal-close" aria-label="Close" id="close-profile">✕</button>
     </div>
 
     <!-- Cover photo row -->
@@ -2543,10 +2565,10 @@ nav { flex:1; padding:4px 0; }
 
 <!-- Share card modal -->
 <div class="modal-bg" id="share-modal">
-  <div class="modal" style="max-width:520px">
+  <div class="modal" style="max-width:520px" role="dialog" aria-modal="true" aria-label="Share post">
     <div class="modal-head">
       <span class="modal-title">Share Post</span>
-      <button class="modal-close" id="close-share-modal">✕</button>
+      <button class="modal-close" aria-label="Close" id="close-share-modal">✕</button>
     </div>
     <canvas id="share-canvas" style="width:100%;border-radius:12px;display:block;background:#16181c;margin-bottom:12px"></canvas>
     <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
@@ -2559,10 +2581,10 @@ nav { flex:1; padding:4px 0; }
 
 <!-- Reply modal -->
 <div class="modal-bg" id="reply-modal">
-  <div class="modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-label="Reply">
     <div class="modal-head">
       <span class="modal-title">Reply</span>
-      <button class="modal-close" id="close-reply">✕</button>
+      <button class="modal-close" aria-label="Close" id="close-reply">✕</button>
     </div>
     <div class="reply-quote" id="reply-quote"></div>
     <textarea class="auto-textarea" id="reply-input" placeholder="Post your reply…"></textarea>
@@ -2577,10 +2599,10 @@ nav { flex:1; padding:4px 0; }
 <!-- Thread modal -->
 <!-- Repost modal -->
 <div class="modal-bg" id="repost-modal">
-  <div class="modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-label="Repost or quote">
     <div class="modal-head">
       <span class="modal-title">Repost</span>
-      <button class="modal-close" id="close-repost">✕</button>
+      <button class="modal-close" aria-label="Close" id="close-repost">✕</button>
     </div>
     <textarea class="auto-textarea" id="repost-input"
       placeholder="Add your quote…" style="margin-bottom:4px"></textarea>
@@ -2595,10 +2617,10 @@ nav { flex:1; padding:4px 0; }
 
 <!-- Media attach modal -->
 <div class="modal-bg" id="media-modal">
-  <div class="modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-label="Attach media">
     <div class="modal-head">
       <span class="modal-title" id="media-modal-title">Attach Image</span>
-      <button class="modal-close" id="close-media-modal">✕</button>
+      <button class="modal-close" aria-label="Close" id="close-media-modal">✕</button>
     </div>
     <p id="media-url-hint" style="font-size:13px;color:var(--muted);margin-bottom:12px">
       Paste any image URL (https://, ipfs://, or arweave://)
@@ -3876,6 +3898,16 @@ class DeFiX {
     document.addEventListener('keydown', e => {
       const active = document.activeElement?.tagName;
       if (active === 'INPUT' || active === 'TEXTAREA') return;
+      /* Enter/Space activates a focused custom button (role="button" on a
+         non-native element) — keyboard parity for clickable rows/cards. */
+      const ae = document.activeElement;
+      if (ae && ae.getAttribute && ae.getAttribute('role') === 'button' &&
+          ae.tagName !== 'BUTTON' && ae.tagName !== 'A' &&
+          (e.key === 'Enter' || e.key === ' ')) {
+        e.preventDefault();
+        ae.click();
+        return;
+      }
       /* ── Compose / nav shortcuts ── */
       if (e.key === 'n' || e.key === 'N') {
         e.preventDefault();
@@ -4646,7 +4678,7 @@ class DeFiX {
            headline with the poll hash opening the thread, no "from" user. */
         if (n.type === 'pollend') {
           return `
-            <div class="notif-item" onclick="pulse.openThreadByHash('${utils.safe(n.target)}')">
+            <div class="notif-item" role="button" tabindex="0" onclick="pulse.openThreadByHash('${utils.safe(n.target)}')">
               <div class="notif-icon-wrap">${icon}</div>
               <div class="notif-body">
                 <span class="notif-label">${utils.safe(n.preview)}</span>
@@ -4664,7 +4696,7 @@ class DeFiX {
           ? `onclick="if(event.target.closest('.notif-pop'))return;pulse.openThreadByHash('${utils.safe(n.target)}')"`
           : `onclick="if(event.target.closest('.notif-pop'))return;window.open('${txLink}','_blank','noopener,noreferrer')"`;
         return `
-          <div class="notif-item" data-from="${utils.safe(n.from)}" ${clickAttr}>
+          <div class="notif-item" role="button" tabindex="0" data-from="${utils.safe(n.from)}" ${clickAttr}>
             <div class="notif-icon-wrap">${icon}</div>
             <img src="${pic}" class="notif-avatar notif-pop" data-pop-addr="${utils.safe(n.from)}" onerror="this.src='image1.jpeg'">
             <div class="notif-body">
@@ -4816,7 +4848,7 @@ class DeFiX {
     const tagHTML = topTags.length
       ? topTags.map(([tag, count], i) => {
           const display = tag.replace(/^#/, '');
-          return `<div class="explore-row" onclick="pulse.filterByTag('${utils.safe(display)}')">
+          return `<div class="explore-row" role="button" tabindex="0" onclick="pulse.filterByTag('${utils.safe(display)}')">
             <div class="explore-rank">${i+1}</div>
             <div class="explore-content">
               <div class="explore-label">Trending on PulseChain</div>
@@ -4833,7 +4865,7 @@ class DeFiX {
           const prof = this.state.profCache[addr];
           const name = prof?.username ? utils.safe(prof.username) : this.trunc(addr);
           const pic  = utils.safe(prof?.picUrl || 'image1.jpeg');
-          return `<div class="explore-row" onclick="pulse.goProfilePage('${utils.safe(addr)}', ${addr===this.state.signerAddr})">
+          return `<div class="explore-row" role="button" tabindex="0" onclick="pulse.goProfilePage('${utils.safe(addr)}', ${addr===this.state.signerAddr})">
             <img src="${pic}" class="explore-avatar" onerror="this.src='image1.jpeg'">
             <div class="explore-content">
               <div class="explore-name">${name}</div>
@@ -4849,7 +4881,7 @@ class DeFiX {
           const prof = this.state.profCache[ch.address];
           const name = prof?.username || ch.label || this.trunc(ch.address);
           const pic  = utils.safe(prof?.picUrl || ch.picUrl || 'image1.jpeg');
-          return `<div class="explore-row" onclick="pulse.g('custom-input').value='${utils.safe(ch.address)}';pulse.goCustom()">
+          return `<div class="explore-row" role="button" tabindex="0" onclick="pulse.g('custom-input').value='${utils.safe(ch.address)}';pulse.goCustom()">
             <img src="${pic}" class="explore-avatar" onerror="this.src='image1.jpeg'">
             <div class="explore-content">
               <div class="explore-name">${utils.safe(name)}</div>
@@ -5270,7 +5302,7 @@ class DeFiX {
         const prev = utils.safe(ch.preview || '');
         const time = ch.lastActivity ? this.relTime(ch.lastActivity) : '';
         html += `
-          <div class="ch-history-item" data-addr="${addr}" onclick="pulse._openChannelFromHistory('${addr}')">
+          <div class="ch-history-item" role="button" tabindex="0" data-addr="${addr}" onclick="pulse._openChannelFromHistory('${addr}')">
             <img src="${pic}" class="ch-hist-avatar" alt="" onerror="this.src='image1.jpeg'">
             <div class="ch-hist-body">
               <div class="ch-hist-top">
@@ -9250,7 +9282,7 @@ class DeFiX {
       <div class="modal">
         <div class="modal-head">
           <span class="modal-title">${utils.safe(title)}</span>
-          <button class="modal-close" id="generic-modal-close">✕</button>
+          <button class="modal-close" aria-label="Close" id="generic-modal-close">✕</button>
         </div>
         <div>${bodyHTML}</div>
       </div>`;
@@ -9933,7 +9965,7 @@ class DeFiX {
         winPct = Math.round((tally.counts[maxIdx] / tally.total) * 100);
       }
       return `
-        <div class="news-row" onclick="pulse.openThreadByHash('${utils.safe(p.txHash)}')">
+        <div class="news-row" role="button" tabindex="0" onclick="pulse.openThreadByHash('${utils.safe(p.txHash)}')">
           <div class="news-body">
             <div class="news-label">📊 Poll · Final results</div>
             <div class="news-headline">${utils.safe(p.poll.question)}</div>
@@ -9961,7 +9993,7 @@ class DeFiX {
       const headline = utils.safe(headlineRaw.slice(0, 140));
       const time = this.relTime(p.timestamp);
       return `
-        <div class="news-row" onclick="pulse.openThreadByHash('${utils.safe(p.txHash)}')">
+        <div class="news-row" role="button" tabindex="0" onclick="pulse.openThreadByHash('${utils.safe(p.txHash)}')">
           <div class="news-body">
             <div class="news-label">${label}</div>
             <div class="news-headline">${headline}</div>
@@ -10012,7 +10044,7 @@ class DeFiX {
 
     const trendHTML = top.map(([tag, count]) => {
       const display = tag.replace(/^#/, '');
-      return `<div class="sb-card-row" onclick="pulse.filterByTag('${utils.safe(display)}')" style="cursor:pointer">
+      return `<div class="sb-card-row" role="button" tabindex="0" onclick="pulse.filterByTag('${utils.safe(display)}')" style="cursor:pointer">
         <div style="flex:1">
           <span class="trend-label">Trending on PulseChain</span>
           <span class="trend-name">#${utils.safe(display)}</span>
@@ -10024,7 +10056,7 @@ class DeFiX {
 
     /* Fallback when nothing trends yet — keeps the card from looking empty. */
     const fallback = (top.length === 0)
-      ? `<div class="sb-card-row" onclick="pulse.filterByTag('PulseChain')" style="cursor:pointer">
+      ? `<div class="sb-card-row" role="button" tabindex="0" onclick="pulse.filterByTag('PulseChain')" style="cursor:pointer">
           <div style="flex:1">
             <span class="trend-label">Trending on PulseChain</span>
             <span class="trend-name">#PulseChain</span>
@@ -10087,7 +10119,7 @@ class DeFiX {
       const c = this.state.profCache[addr];
       const name = c?.username ? utils.safe(c.username) : this.trunc(addr);
       const pic  = c?.picUrl || 'image1.jpeg';
-      return `<div class="sb-card-row" style="cursor:pointer" onclick="pulse.goProfilePage('${utils.safe(addr)}', false)">
+      return `<div class="sb-card-row" role="button" tabindex="0" style="cursor:pointer" onclick="pulse.goProfilePage('${utils.safe(addr)}', false)">
         <img src="${utils.safe(pic)}" class="w2f-avatar" onerror="this.src='image1.jpeg'"
           alt="" style="width:40px;height:40px;border-radius:50%;margin-right:10px;flex-shrink:0">
         <div style="flex:1;min-width:0">
