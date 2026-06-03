@@ -3,8 +3,11 @@
  * Place this file at the ROOT of your GitHub Pages repo (same directory as index.html).
  *
  * Strategy:
- *   - Static shell (index.html, ethers.js CDN): Cache-First. Served from cache
- *     instantly on repeat visits. Cache is invalidated by SW_CACHE_VER in index.html.
+ *   - HTML shell (index.html / navigations): Stale-While-Revalidate. Served
+ *     from cache instantly, then refreshed from the network in the background
+ *     so the NEXT load is current — freshness no longer depends on the page's
+ *     CACHE_VER message firing.
+ *   - Other static assets (manifest, icons, ethers.js CDN): Cache-First.
  *   - API calls (api.scan.pulsechain.com, otter.pulsechain.com): Network-Only.
  *     Never cached — chain data must always be fresh.
  *   - Everything else: Network-First with cache fallback.
@@ -82,9 +85,20 @@ self.addEventListener('activate', event => {
       const ours = keys.filter(k => k.startsWith(CACHE_NAME_PREFIX));
       if (ours.length && currentCacheName === CACHE_NAME_PREFIX + 'v1') {
         /* Adopt the most recent existing cache as current. There's normally
-           just one; if multiple, the newest by name sort wins. */
-        ours.sort();
-        currentCacheName = ours[ours.length - 1];
+           just one; if multiple, pick the newest. Compare version segments
+           numerically so e.g. '20260530-10' beats '20260530-2' (a plain
+           string sort would pick '-2' as larger). */
+        const verKey = name => name.slice(CACHE_NAME_PREFIX.length)
+          .split(/\D+/).filter(Boolean).map(Number);
+        const cmpVer = (a, b) => {
+          const ka = verKey(a), kb = verKey(b);
+          for (let i = 0; i < Math.max(ka.length, kb.length); i++) {
+            const d = (ka[i] || 0) - (kb[i] || 0);
+            if (d) return d;
+          }
+          return 0;
+        };
+        currentCacheName = ours.slice().sort(cmpVer)[ours.length - 1];
         console.log('[SW] Recovered current cache:', currentCacheName);
       }
       return Promise.all(
@@ -114,8 +128,37 @@ self.addEventListener('fetch', event => {
 
   event.respondWith(
     caches.open(currentCacheName).then(async cache => {
-      /* Cache-First for static assets (same origin + whitelisted CDN paths).
-         Exact-prefix match on CDN URLs avoids accidentally caching a
+      /* Stale-While-Revalidate for the HTML shell (navigations + index.html).
+         Serve the cached shell instantly, but always kick off a background
+         refresh so the next load picks up a new deploy — even if the page's
+         CACHE_VER handshake never fires. This removes the "stuck on an old
+         index.html forever" failure mode. */
+      const isShell = request.mode === 'navigate' ||
+        (url.origin === self.location.origin &&
+         (url.pathname === '/' || url.pathname.endsWith('/') ||
+          url.pathname.endsWith('/index.html') || url.pathname === '/index.html'));
+
+      if (isShell) {
+        const cached = await cache.match(request, { ignoreSearch: true })
+                    || await cache.match('./index.html');
+        const networkPromise = fetchWithTimeout(request, 10000).then(fresh => {
+          /* Refresh both the request URL and the canonical './index.html'. */
+          safeCachePut(cache, request, fresh);
+          safeCachePut(cache, new Request('./index.html'), fresh);
+          return fresh;
+        }).catch(() => null);
+        if (cached) {
+          /* keep the SW alive long enough to finish the background refresh */
+          event.waitUntil(networkPromise);
+          return cached;
+        }
+        return (await networkPromise) || new Response(
+          'Offline — please reload when connected.',
+          { status: 503, headers: { 'Content-Type': 'text/plain' } });
+      }
+
+      /* Cache-First for other static assets (same origin + whitelisted CDN
+         paths). Exact-prefix match on CDN URLs avoids accidentally caching a
          different library when the ethers path/version changes. */
       const isStatic = url.origin === self.location.origin ||
         STATIC_CDN_PATHS.some(prefix => url.href.startsWith(prefix));
