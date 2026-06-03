@@ -3952,7 +3952,7 @@ class DeFiX {
           this._kbFocusedPost = null;
           return;
         }
-        ['compose-modal','profile-modal','reply-modal','repost-modal','media-modal'].forEach(id => {
+        ['compose-modal','profile-modal','reply-modal','repost-modal','media-modal','share-modal'].forEach(id => {
           if (g(id).classList.contains('open')) this.closeModal(id);
         });
       }
@@ -4567,9 +4567,8 @@ class DeFiX {
       if (navToken !== this._navToken) return;
 
       if (!allNotifs.length) {
-        this.g('feed').innerHTML = this._applyPageHeader
-          ? `<div class="prof-empty"><span>🔔</span><h3>No notifications yet</h3><p>When someone likes, follows, replies, or votes on your poll, it appears here.</p></div>`
-          : '';
+        this.g('feed').innerHTML = this._applyPageHeader() +
+          `<div class="prof-empty"><span>🔔</span><h3>No notifications yet</h3><p>When someone likes, follows, replies, or votes on your poll, it appears here.</p></div>`;
         return;
       }
 
@@ -5458,9 +5457,9 @@ class DeFiX {
           No server, no backend, no ads.
         </div>
         <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
-          <a href="https://github.com/HyperLightCoder/Pulse-Underground" target="_blank"
+          <a href="https://github.com/HyperLightCoder/Pulse-Underground" target="_blank" rel="noopener noreferrer"
             class="settings-btn" style="text-decoration:none;display:inline-block">GitHub ↗</a>
-          <a href="https://pulsechain.com" target="_blank"
+          <a href="https://pulsechain.com" target="_blank" rel="noopener noreferrer"
             class="settings-btn" style="text-decoration:none;display:inline-block">PulseChain ↗</a>
         </div>
       </div>
@@ -7118,7 +7117,7 @@ class DeFiX {
     /* Cover preview */
     const prev = g('pe-cover-preview');
     if (p.coverUrl) {
-      prev.style.backgroundImage    = `url("${p.coverUrl.replace(/["\\]/g, c => '\\' + c)}")`;
+      prev.style.backgroundImage    = `url('${utils.cssUrlValue(p.coverUrl)}')`;
       prev.style.backgroundSize     = 'cover';
       prev.style.backgroundPosition = 'center';
       prev.classList.add('has-cover');
@@ -7236,11 +7235,9 @@ class DeFiX {
     const backup  = s.backupApiUrl || '';
     const qs = `?module=account&action=txlist&address=${address}&offset=50&page=${page}&sort=desc`;
 
-    /* 15s timeout per attempt prevents a hung PulseScan from indefinitely
-       holding state.loading=true and breaking the rest of the UI. */
-    /* fetchWithRetry: 3 attempts with exponential backoff (1s, 2s, 4s).
-       Retries on 429 (rate limit) and 5xx (server errors).
-       Aborts and throws on 4xx (client errors, won't be fixed by retry). */
+    /* fetchWithRetry: up to 3 attempts with exponential backoff (1s, 2s).
+       Retries on network errors, timeouts, 429 (rate limit), and 5xx.
+       Stops immediately on other 4xx (client errors a retry won't fix). */
     const fetchWithRetry = async url => {
       let lastErr;
       for (let attempt = 0; attempt < 3; attempt++) {
@@ -7248,24 +7245,33 @@ class DeFiX {
           const delay = Math.pow(2, attempt - 1) * 1000; /* 1s, 2s */
           await new Promise(res => setTimeout(res, delay));
         }
+        /* 15s timeout per attempt prevents a hung explorer from indefinitely
+           holding state.loading=true and breaking the rest of the UI. */
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), 15000);
+        let res;
         try {
-          const res = await fetch(url + qs, { signal: ctrl.signal });
-          if (!res.ok) {
-            const status = res.status;
-            /* Don't retry 4xx (except 429) — they won't get better */
-            if (status >= 400 && status < 500 && status !== 429) throw new Error(`API ${status}`);
-            throw new Error(`API ${status}`);
-          }
-          const data = await res.json();
-          return (data.status === '1' && Array.isArray(data.result)) ? data.result : [];
+          res = await fetch(url + qs, { signal: ctrl.signal });
         } catch (err) {
+          /* Network error or timeout (AbortError) — retry. */
           lastErr = err;
-          if (err.name === 'AbortError') break; /* timeout — don't retry */
+          continue;
         } finally {
           clearTimeout(timer);
         }
+        if (res.ok) {
+          try {
+            const data = await res.json();
+            return (data.status === '1' && Array.isArray(data.result)) ? data.result : [];
+          } catch (err) {
+            lastErr = err; /* malformed JSON — retry */
+            continue;
+          }
+        }
+        lastErr = new Error(`API ${res.status}`);
+        /* Don't retry 4xx (except 429) — they won't improve with a retry. */
+        if (res.status >= 400 && res.status < 500 && res.status !== 429) break;
+        /* 429 / 5xx → loop retries after backoff. */
       }
       throw lastErr;
     };
@@ -7630,6 +7636,9 @@ class DeFiX {
   }
 
   loadPending() {
+    /* Keep the dedup set in sync, otherwise the next pagination fetch treats
+       these just-promoted posts as unseen and re-appends duplicates. */
+    this.state.pending.forEach(p => this._postHashSet.add(p.txHash));
     this.state.posts   = [...this.state.pending, ...this.state.posts];
     this.state.pending = [];
     this.g('new-banner').classList.remove('visible');
@@ -8187,7 +8196,7 @@ class DeFiX {
               title="Click to copy address">@${this.trunc(post.reporter)}</span>
             <span class="post-time-dot">·</span>
             <a href="https://otter.pulsechain.com/tx/${utils.safe(post.txHash)}"
-              target="_blank" class="post-time" title="${utils.safe(fullDate)}"
+              target="_blank" rel="noopener noreferrer" class="post-time" title="${utils.safe(fullDate)}"
               data-ts="${utils.safe(post.timestamp)}"
               onclick="event.stopPropagation()">${utils.safe(relT)}</a>
             ${dirBadge}
@@ -8224,7 +8233,7 @@ class DeFiX {
               <span class="act-icon">${this.icon(isBookmarked ? 'ic-bookmark-full' : 'ic-bookmark-empty')}</span>
             </button>
             <a href="https://otter.pulsechain.com/tx/${utils.safe(post.txHash)}"
-              target="_blank" class="otter-link" title="Share / View on OtterScan" aria-label="Share / View transaction on OtterScan" onclick="event.stopPropagation()">
+              target="_blank" rel="noopener noreferrer" class="otter-link" title="Share / View on OtterScan" aria-label="Share / View transaction on OtterScan" onclick="event.stopPropagation()">
               <span class="act-icon">${this.icon('ic-share')}</span>
             </a>
             </div><!-- /.post-actions-right -->
@@ -9723,23 +9732,32 @@ class DeFiX {
 
   async _retryPendingPosts() {
     if (!this.signer || !navigator.onLine) return;
-    let pending;
-    try { pending = await this.cache.getPendingPosts(); }
-    catch { return; }
-    if (!pending.length) return;
-    for (const queued of pending) {
-      /* Skip if not from this wallet (different account logged in) */
-      if (queued.signerAddr !== this.state.signerAddr) continue;
-      utils.toast(`↺ Retrying queued post…`);
-      try {
-        const ok = await this.publish(queued.content, queued.parentTx, queued.toAddress);
-        if (ok) {
-          await this.cache.deletePendingPost(queued.queueId);
-          /* Remove pending indicator from feed */
-          const el = document.querySelector(`[data-queueid="${queued.queueId}"]`);
-          if (el) el.remove();
-        }
-      } catch { /* leave in queue for next retry */ }
+    /* Re-entrancy guard: both the 'online' listener and afterConnect schedule
+       this, and overlapping runs would read the same queue and double-publish
+       (duplicate on-chain txs) before either deletes the entry. */
+    if (this._retrying) return;
+    this._retrying = true;
+    try {
+      let pending;
+      try { pending = await this.cache.getPendingPosts(); }
+      catch { return; }
+      if (!pending.length) return;
+      for (const queued of pending) {
+        /* Skip if not from this wallet (different account logged in) */
+        if (queued.signerAddr !== this.state.signerAddr) continue;
+        utils.toast(`↺ Retrying queued post…`);
+        try {
+          const ok = await this.publish(queued.content, queued.parentTx, queued.toAddress);
+          if (ok) {
+            await this.cache.deletePendingPost(queued.queueId);
+            /* Remove pending indicator from feed */
+            const el = document.querySelector(`[data-queueid="${queued.queueId}"]`);
+            if (el) el.remove();
+          }
+        } catch { /* leave in queue for next retry */ }
+      }
+    } finally {
+      this._retrying = false;
     }
   }
 
