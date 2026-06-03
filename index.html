@@ -523,7 +523,6 @@ nav { flex:1; padding:4px 0; }
   color:#fff; transition:background 0.15s; z-index:2;
 }
 .vid-unmute-btn:hover { background:rgba(0,0,0,0.85); }
-.post-yt-wrap { padding-top:56.25%; position:relative; margin-top:8px; border-radius:12px; overflow:hidden; }
 .post-yt-frame { position:absolute; top:0; left:0; width:100%; height:100%; border:0; }
 /* Container after a facade is clicked: holds a 16:9 box for the iframe, which
    is absolutely positioned and would otherwise leave the wrapper at 0 height. */
@@ -5527,7 +5526,7 @@ class DeFiX {
       const rawPrimary = g('set-api-primary').value.trim();
       const rawBackup  = g('set-api-backup').value.trim();
       /* Validate URLs before saving — a bad URL causes confusing fetch errors */
-      const isValidUrl = u => { try { new URL(u); return true; } catch { return false; } };
+      const isValidUrl = u => { try { return ['http:', 'https:'].includes(new URL(u).protocol); } catch { return false; } };
       if (rawPrimary && !isValidUrl(rawPrimary)) {
         utils.toast('Primary API URL is not a valid URL'); return;
       }
@@ -8382,7 +8381,8 @@ class DeFiX {
     }
     /* Record the vote immediately so the UI flips to results and the
        buttons disappear — prevents accidental double-clicks while the tx
-       is in flight. */
+       is in flight. Remember any prior choice so we can restore it on error. */
+    const prevVote = this._myVotes.get(pollHash);
     this._myVotes.set(pollHash, optIdx);
     this._refreshPollBlock(pollHash);
     const channel = post.to || post.channel || this.state.channel;
@@ -8411,8 +8411,10 @@ class DeFiX {
       const rejected = err.code === 4001 || err.code === 'ACTION_REJECTED' ||
         /user (denied|rejected)/i.test(msg);
       utils.toast(rejected ? 'Vote cancelled' : 'Vote failed: ' + msg);
-      /* Roll back the optimistic session vote so the user can try again. */
-      this._myVotes.delete(pollHash);
+      /* Roll back the optimistic session vote so the user can try again,
+         restoring any previous choice rather than clearing it outright. */
+      if (prevVote !== undefined) this._myVotes.set(pollHash, prevVote);
+      else this._myVotes.delete(pollHash);
       this._refreshPollBlock(pollHash);
     }
   }
