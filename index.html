@@ -20,7 +20,7 @@
 <link rel="manifest" href="./manifest.json">
 <link rel="apple-touch-icon" href="./image1.jpeg">
 <meta name="theme-color" content="#7c4dff">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js" integrity="sha384-Htz1SE4Sl5aitpvFgr2j0sfsGUIuSXI6t8hEyrlQ93zflEF3a29bH2AvkUROUw7J" crossorigin="anonymous"></script>
 <style>
 /* ── Variables ──────────────────────────────────────────────────────────── */
 :root {
@@ -2695,6 +2695,23 @@ const ERC721_ABI = [
   'function ownerOf(uint256 tokenId) view returns (address)',
 ];
 
+/* Linkify patterns — hoisted and compiled once. linkify() runs on every post
+   render, so recreating these regexes/Set per call was wasted work. */
+const _LK_RE         = /ipfs:\/\/\S+|ar:\/\/\S+|arweave:\/\/\S+|https?:\/\/[^\s<>"{}|\\^[\]`]+|#([a-zA-Z]\w{0,99})|@(0x[a-fA-F0-9]{40})/g;
+const _LK_IMG_RE     = /\.(jpg|jpeg|png|gif|webp|svg|avif|tiff|bmp)(\?[^\s]*)?$/i;
+const _LK_VID_RE     = /\.(mp4|webm|ogg|mov|m4v)(\?[^\s]*)?$/i;
+const _LK_IMG_DOMAINS = /\/(ipfs|ipns)\//i;          /* IPFS gateways: .../ipfs/Qm... */
+const _LK_IMG_HOSTS  = new Set([
+  'pbs.twimg.com', 'ton.twimg.com',                  /* Twitter/X image CDN */
+  'i.imgur.com', 'imgur.com',                        /* Imgur */
+  'cdn.discordapp.com', 'media.discordapp.net',      /* Discord attachments */
+  'media.tenor.com', 'c.tenor.com',                  /* Tenor GIFs */
+  'media.giphy.com', 'i.giphy.com',                  /* Giphy */
+  'media1.giphy.com', 'media2.giphy.com', 'media3.giphy.com', 'media4.giphy.com',
+  'nftstorage.link', 'gateway.pinata.cloud',         /* IPFS gateways */
+  'cloudflare-ipfs.com', 'dweb.link',
+]);
+
 /* ── Utils ────────────────────────────────────────────────────────────── */
 const utils = {
   _t: null,
@@ -2734,32 +2751,9 @@ const utils = {
   linkify(text, fullText) {
     /* fullText = complete post text for image extraction (ignores MAX_PREVIEW truncation)
        text     = possibly truncated text for body rendering */
-    const re    = /ipfs:\/\/\S+|ar:\/\/\S+|arweave:\/\/\S+|https?:\/\/[^\s<>"{}|\\^[\]`]+|#([a-zA-Z]\w{0,99})|@(0x[a-fA-F0-9]{40})/g;
-    const imgRe  = /\.(jpg|jpeg|png|gif|webp|svg|avif|tiff|bmp)(\?[^\s]*)?$/i;
-    const vidRe  = /\.(mp4|webm|ogg|mov|m4v)(\?[^\s]*)?$/i;
-    /* Domains that always serve images/video even without a file extension */
-    const imgDomains = /\/(ipfs|ipns)\//i;          /* IPFS gateways: .../ipfs/Qm... */
-    /* Known image-only CDN hostnames — any URL from these is treated as an image */
-    const imgHosts = new Set([
-      'pbs.twimg.com',           /* Twitter/X image CDN */
-      'ton.twimg.com',           /* Twitter card images */
-      'i.imgur.com',             /* Imgur */
-      'imgur.com',
-      'cdn.discordapp.com',      /* Discord attachments */
-      'media.discordapp.net',
-      'media.tenor.com',         /* Tenor GIFs */
-      'c.tenor.com',
-      'media.giphy.com',         /* Giphy */
-      'i.giphy.com',
-      'media1.giphy.com',
-      'media2.giphy.com',
-      'media3.giphy.com',
-      'media4.giphy.com',
-      'nftstorage.link',         /* NFT.Storage IPFS gateway */
-      'gateway.pinata.cloud',    /* Pinata IPFS gateway */
-      'cloudflare-ipfs.com',     /* Cloudflare IPFS */
-      'dweb.link',               /* Protocol Labs IPFS */
-    ]);
+    /* Cheap aliases to the module-level compiled patterns (see _LK_* above). */
+    const re = _LK_RE, imgRe = _LK_IMG_RE, vidRe = _LK_VID_RE,
+          imgDomains = _LK_IMG_DOMAINS, imgHosts = _LK_IMG_HOSTS;
     const isMediaUrl = url => {
       if (imgRe.test(url)) return 'img';
       if (vidRe.test(url)) return 'vid';
@@ -4264,7 +4258,7 @@ class DeFiX {
     if (!newPosts.length) return;
     if (myToken !== this._followingFetchToken) return;
     this.state.posts = [...this.state.posts, ...newPosts]
-      .sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp))
+      .sort((a,b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()))
       .slice(0, this._getPostCap());
     /* Update _postHashSet with new posts */
     if (this._postHashSet) newPosts.forEach(p => this._postHashSet.add(p.txHash));
@@ -4590,7 +4584,7 @@ class DeFiX {
       try {
         const pollNotifs = await this._scanPollNotifications();
         if (pollNotifs.length) allNotifs.push(...pollNotifs);
-        allNotifs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        allNotifs.sort((a, b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()));
       } catch (err) { console.warn('Poll notif scan:', err); }
 
       /* User navigated away while we were scanning — don't paint over the
@@ -5036,7 +5030,7 @@ class DeFiX {
     if (myToken !== this._bkLoadToken) return;
     /* Combine, sort newest-first by timestamp */
     const all = [...inMemory.values(), ...fromIDB.values()]
-      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+      .sort((a, b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()));
     const stillMissing = wantedHashes.filter(h => !inMemory.has(h) && !fromIDB.has(h));
 
     if (!all.length && !stillMissing.length) {
@@ -6980,7 +6974,7 @@ class DeFiX {
             if (cached.length) posts.push(cached[0]);
           } catch { /* skip */ }
         }
-        posts.sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
+        posts.sort((a,b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()));
       } else {
         /* Posts / Replies / Media: scan once, cache, reuse across tabs */
         this._profileScanCache = this._profileScanCache || {};
@@ -7366,7 +7360,7 @@ class DeFiX {
           if (unique.length > 0) {
             unique.forEach(p => this._postHashSet.add(p.txHash));
             this.state.posts = [...this.state.posts, ...unique]
-              .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+              .sort((a, b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()))
               .slice(0, this._getPostCap()); /* cap — configurable in Settings */
             await this.cache.savePosts(unique);
             if (myToken !== this._fetchToken) return;
@@ -7749,7 +7743,7 @@ class DeFiX {
       if (mode === 'self')  return p.mode === 'self'  && p.channel === signerAddr;
       return p.channel === channel && p.mode === mode;
     });
-    this.state.posts = posts.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    this.state.posts = posts.sort((a, b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()));
     /* Rebuild _postHashSet from cached posts so fetchPosts() doesn't
        re-add them as "new". Without this, every cached post appears
        twice in the feed after a channel switch: once from IDB via
@@ -7814,7 +7808,7 @@ class DeFiX {
             const fresh = posts.filter(p => !known.has(p.txHash));
             if (fresh.length) {
               this.state.posts = [...this.state.posts, ...fresh]
-                .sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp))
+                .sort((a,b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()))
                 .slice(0, this._getPostCap());
               fresh.forEach(p => { if (this._postHashSet) this._postHashSet.add(p.txHash); });
               this.renderFeed();
@@ -8355,6 +8349,7 @@ class DeFiX {
       for (const idx of voters.values()) counts[idx]++;
       const tally = { counts, voters, total: voters.size, scannedAt: Date.now() };
       this._pollTallies.set(hash, tally);
+      this._prunePollMaps();
       /* If the scan found the user's own vote, record it so the buttons
          stay hidden on subsequent renders (e.g. after a reload). */
       const mine = voters.get(this.state.signerAddr);
@@ -9035,7 +9030,7 @@ class DeFiX {
 
     const replies = this.state.posts
       .filter(p => p.parentTx === post.txHash && p.postType !== 'like' && p.postType !== 'follow')
-      .sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
+      .sort((a,b) => (a._tsMs ??= new Date(a.timestamp).getTime()) - (b._tsMs ??= new Date(b.timestamp).getTime()));
 
     let repliesHTML = '';
     replies.forEach((r, i) => {
@@ -9183,7 +9178,7 @@ class DeFiX {
 
     if (newFound.length > 0) {
       this.state.posts = [...this.state.posts, ...newFound]
-        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+        .sort((a, b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()))
         .slice(0, this._getPostCap());
       if (this._postHashSet) newFound.forEach(p => this._postHashSet.add(p.txHash));
       await this.cache.savePosts(newFound);
@@ -9525,6 +9520,19 @@ class DeFiX {
     /* Remove the oldest (first inserted) entries */
     const toRemove = keys.slice(0, keys.length - maxSize);
     toRemove.forEach(k => delete this.state.profCache[k]);
+  }
+
+  /* Cap the poll session maps so a long session browsing many polls doesn't
+     grow them without bound. Maps keep insertion order, so we evict the
+     oldest entries first. The cap is generous — eviction only matters after
+     hundreds of distinct polls, and an evicted poll simply re-tallies on its
+     next render. */
+  _prunePollMaps(maxSize = 800) {
+    for (const m of [this._pollTallies, this._myVotes]) {
+      if (m.size <= maxSize) continue;
+      const keys = [...m.keys()];
+      for (let i = 0; i < keys.length - maxSize; i++) m.delete(keys[i]);
+    }
   }
 
   /* Prepend the pending page header to the feed if not already present.
@@ -9889,7 +9897,7 @@ class DeFiX {
         const aClosed = this._pollIsClosed(a.poll) ? 1 : 0;
         const bClosed = this._pollIsClosed(b.poll) ? 1 : 0;
         if (aClosed !== bClosed) return aClosed - bClosed;
-        return new Date(b.timestamp) - new Date(a.timestamp);
+        return (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime());
       })
       .slice(0, 4);
     if (polls.length === 0) { card.style.display = 'none'; return; }
@@ -10987,7 +10995,7 @@ class DeFiX {
     }
     if (myToken !== this._listFetchToken) return;
     if (this.state.mode !== 'lists' || this.state.activeList !== list.id) return;
-    collected.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    collected.sort((a, b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()));
     /* Render into the feed using the standard post pipeline */
     this.state.posts = collected;
     collected.forEach(pp => this._postMap.set(pp.txHash, pp));

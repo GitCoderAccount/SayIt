@@ -24,6 +24,7 @@ const STATIC_ASSETS = [
   './index.html',
   './manifest.json',
   './image1.jpeg',
+  './image1.png',
   './title_icon.png',
   /* Ethers.js from CDN — cache it so the app works offline after first load */
   'https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js',
