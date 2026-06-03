@@ -3896,6 +3896,7 @@ class DeFiX {
       const ae = document.activeElement;
       if (ae && ae.getAttribute && ae.getAttribute('role') === 'button' &&
           ae.tagName !== 'BUTTON' && ae.tagName !== 'A' &&
+          !ae.hasAttribute('onkeydown') && /* element handles its own keys */
           (e.key === 'Enter' || e.key === ' ')) {
         e.preventDefault();
         ae.click();
@@ -8423,6 +8424,7 @@ class DeFiX {
     this._refreshPollBlock(pollHash);
     const channel = post.to || post.channel || this.state.channel;
     const body = `${VOTE_PREFIX}${pollHash}:${optIdx}`;
+    let optimisticApplied = false;
     try {
       const data  = ethers.utils.hexlify(ethers.utils.toUtf8Bytes(body));
       let gas     = await this.signer.estimateGas({ to: channel, value: '0', data });
@@ -8438,6 +8440,7 @@ class DeFiX {
       tally.counts[optIdx] = (tally.counts[optIdx] || 0) + 1;
       tally.scannedAt = Date.now();
       this._pollTallies.set(pollHash, tally);
+      optimisticApplied = true;
       this._refreshPollBlock(pollHash);
       utils.toast('Vote submitted ✓ confirming on-chain…');
       await tx.wait();
@@ -8451,6 +8454,13 @@ class DeFiX {
          restoring any previous choice rather than clearing it outright. */
       if (prevVote !== undefined) this._myVotes.set(pollHash, prevVote);
       else this._myVotes.delete(pollHash);
+      /* If the tx was broadcast and we already applied the optimistic tally
+         but it then reverted, the cached counts are now wrong — invalidate so
+         the next render re-tallies from chain. */
+      if (optimisticApplied) {
+        const t = this._pollTallies.get(pollHash);
+        if (t) t.scannedAt = 0;
+      }
       this._refreshPollBlock(pollHash);
     }
   }
