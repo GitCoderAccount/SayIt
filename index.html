@@ -4205,7 +4205,8 @@ class DeFiX {
     /* 200 followed addresses — generous cap for the parallel fetch strategy */
     const addrs = [...this.state.following].slice(0, 200);
     if (!addrs.length) return;
-    const known = this._postHashSet || new Set(this.state.posts.map(p => p.txHash));
+    const known = new Set(this._postHashSet || this.state.posts.map(p => p.txHash));
+    if (this._followingExtra) for (const h of this._followingExtra.keys()) known.add(h);
     let newPosts = [];
     /* Fetch pages from each followed address, 5 addresses at a time.
        Page count per address: 1 for small scan depth, up to 3 for larger.
@@ -4273,11 +4274,15 @@ class DeFiX {
     this.g('feed')?.querySelector('.following-progress')?.remove();
     if (!newPosts.length) return;
     if (myToken !== this._followingFetchToken) return;
-    this.state.posts = [...this.state.posts, ...newPosts]
-      .sort((a,b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()))
-      .slice(0, this._getPostCap());
-    /* Update _postHashSet with new posts */
-    if (this._postHashSet) newPosts.forEach(p => this._postHashSet.add(p.txHash));
+    /* Store following-only posts SEPARATELY so they show in the Following feed
+       but never leak into the For You (main-channel) timeline. */
+    this._followingExtra = this._followingExtra || new Map();
+    newPosts.forEach(p => this._followingExtra.set(p.txHash, p));
+    /* Cap the store so a long session can't grow it without bound. */
+    if (this._followingExtra.size > 1000) {
+      const keys = [...this._followingExtra.keys()];
+      for (let k = 0; k < keys.length - 1000; k++) this._followingExtra.delete(keys[k]);
+    }
     if (newPosts.some(pp => pp.poll)) setTimeout(() => this._tallyVisiblePolls(), 150);
     await this.cache.savePosts(newPosts);
     if (this._followingFilter && myToken === this._followingFetchToken) {
@@ -7807,9 +7812,19 @@ class DeFiX {
     const term = this.state.searchTerm;
     let list = this.state.posts;
 
-    /* Following tab filter */
+    /* Following tab filter. The Following feed = posts from followed accounts,
+       drawn from the main list PLUS a separate _followingExtra store (posts
+       fetched only for this tab). Keeping them separate means they never leak
+       into the For You / main-channel timeline. */
     if (this._followingFilter && this.state.following.size > 0) {
-      list = list.filter(p => this.state.following.has(p.reporter?.toLowerCase()));
+      const fset = this.state.following;
+      const seen = new Set();
+      const extra = this._followingExtra ? [...this._followingExtra.values()] : [];
+      list = [...this.state.posts, ...extra].filter(p => {
+        const r = p.reporter?.toLowerCase();
+        if (!fset.has(r) || seen.has(p.txHash)) return false;
+        seen.add(p.txHash); return true;
+      }).sort((a, b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()));
     }
 
     /* Search filter */
