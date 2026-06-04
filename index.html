@@ -103,7 +103,7 @@ nav { flex:1; padding:4px 0; }
   background:transparent; border:none; border-radius:9999px;
   color:var(--text); font-weight:400;
   cursor:pointer; text-align:left; position:relative;
-  transition:background 0.18s; margin-bottom:2px; white-space:nowrap;
+  transition:background 0.18s; margin-bottom:0; white-space:nowrap;
 }
 .nav-btn:hover  { background:rgba(255,255,255,0.06); }
 .nav-btn.active { font-weight:800; color:var(--text); }
@@ -129,7 +129,7 @@ nav { flex:1; padding:4px 0; }
 .notif-badge.on { display:block; }
 
 #nav-post-btn {
-  display:block; width:calc(100% - 32px); margin:12px 16px;
+  display:block; width:calc(100% - 48px); margin:12px 24px;
   padding:16px; background:var(--primary); color:#fff;
   border:none; border-radius:9999px;
   font-size:17px; font-weight:700; cursor:pointer;
@@ -2172,11 +2172,6 @@ nav { flex:1; padding:4px 0; }
           <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M1.998 5.5c0-1.381 1.119-2.5 2.5-2.5h15c1.381 0 2.5 1.119 2.5 2.5v13c0 1.381-1.119 2.5-2.5 2.5h-15c-1.381 0-2.5-1.119-2.5-2.5v-13zm2.5-.5a.5.5 0 00-.5.5v2.764l8 3.638 8-3.638V5.5a.5.5 0 00-.5-.5h-15zM19.998 10.236l-8 3.636-8-3.636V18.5a.5.5 0 00.5.5h15a.5.5 0 00.5-.5v-8.264z"/></svg>
         </span><span class="nav-label">Channels</span>
       </button>
-      <button class="nav-btn" id="nav-bookmarks">
-        <span class="nav-icon">
-          <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5zM6.5 4c-.276 0-.5.22-.5.5v14.56l6-4.29 6 4.29V4.5c0-.28-.224-.5-.5-.5h-11z"/></svg>
-        </span><span class="nav-label">Bookmarks</span>
-      </button>
       <button class="nav-btn" id="nav-profile">
         <span class="nav-icon">
           <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M5.651 19h12.698c-.337-1.8-1.023-2.891-1.929-3.4-1.285-.736-3.574-1.1-4.42-1.1-.845 0-3.135.364-4.42 1.1-.906.509-1.592 1.6-1.929 3.4zM12 11c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zm0 2c-2.5 0-4.418.733-5.649 1.896C5.23 16.02 4.617 17.467 4.39 19.5c-.046.441.233.9.683.9h13.854c.45 0 .729-.459.683-.9-.226-2.033-.84-3.48-1.961-4.604C16.418 13.733 14.5 13 12 13zm0-8C9.239 5 7 7.239 7 10s2.239 5 5 5 5-2.239 5-5-2.239-5-5-5z"/></svg>
@@ -3597,9 +3592,8 @@ class DeFiX {
     g('nav-notifs').onclick    = () => this.goNotifications();
     g('nav-channels').onclick  = () => this.goChannels();
     w('nav-mychannel', 'onclick', () => this.goSelf());
-    g('nav-bookmarks').onclick = () => this.goBookmarks();
-    /* Lists/Communities live in the More menu (keeps the left nav at 8
-       items so the account pill isn't pushed off-screen on short displays). */
+    /* Bookmarks lives only in the More menu now (removed from the main nav).
+       Lists/Communities also live in More, keeping the left rail compact. */
     g('nav-profile').onclick   = () => this.openProfileModal();
     g('nav-more').onclick      = e => { e.stopPropagation(); this.toggleMoreMenu(); };
     /* The mobile #mn-more button is wired via the [data-mn="more"]
