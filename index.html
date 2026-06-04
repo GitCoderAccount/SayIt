@@ -3454,7 +3454,7 @@ class DeFiX {
     this._draftSave       = utils.debounce(() => this._saveDraft(), 500);
   }
 
-  async init() {
+  async init(opts = {}) {
     this.wireListeners();
     this.updateChLabel();
     /* Use the user's pruneAgeDays setting (default 7). */
@@ -3474,7 +3474,12 @@ class DeFiX {
     this._restoreDraft();
     await this.loadCached();
     await this.tryAutoReconnect();
-    await this.fetchPosts(true);
+    /* Skip the home-feed scan when the page was opened on a deep link that
+       loads its own data (post / profile / channel) — otherwise that view
+       waits behind a full home scan before its own scan even starts. The
+       home feed loads lazily when the user navigates Home. Cached posts from
+       loadCached() are still in state.posts for anything that needs them. */
+    if (!opts.skipHomeFetch) await this.fetchPosts(true);
     this._initComposePlaceholderRotation();
     this._refreshSidebarPanels();
     /* First-visit disclaimer — shown once per device, then remembered. */
@@ -10841,6 +10846,8 @@ class DeFiX {
         if (text.startsWith(FOLLOW_PREFIX) || text.startsWith(UNFOLLOW_PREFIX)) return;
         /* VOTE txs aren't posts — never show them on a profile. */
         if (text.startsWith(VOTE_PREFIX)) return;
+        /* Community notes + ratings aren't posts either. */
+        if (text.startsWith(NOTE_PREFIX) || text.startsWith(NOTERATE_PREFIX)) return;
         const isReply = text.startsWith(REPLY_PREFIX);
         if (tab === 'posts'   &&  isReply) return;
         if (tab === 'replies' && !isReply) return;
@@ -11973,6 +11980,10 @@ const pulse = new DeFiX();
 /* Capture the URL hash at load time so a deep link (#/post/…, #/profile/…)
    isn't clobbered by the default Home bootstrap before we can route to it. */
 const INITIAL_HASH = location.hash;
+/* post/profile/channel views fetch their own data, so on a deep link to one
+   of them we skip the default home-feed scan (it would otherwise run first
+   and delay the deep-linked view's own scan). */
+const DEEP_SELF_LOADING = /^#\/?(post|profile|channel)\//.test(INITIAL_HASH);
 
 /* ── Service Worker — offline shell + fast repeat loads ──────────────
    Registers sw.js which caches index.html and ethers.js for instant
@@ -12008,7 +12019,7 @@ if ('serviceWorker' in navigator) {
       .catch(err => console.warn('[SW] Registration failed:', err));
   });
 }
-pulse.init().then(() => {
+pulse.init({ skipHomeFetch: DEEP_SELF_LOADING }).then(() => {
   /* Wire back/forward + manual hash edits, then honor any deep link the page
      was opened with (otherwise the normal Home bootstrap stands). */
   pulse._initRouter();
