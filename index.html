@@ -2703,7 +2703,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260604-53';
+const SW_CACHE_VER = '20260604-54';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -3500,10 +3500,14 @@ class DeFiX {
                               likeMap is derived from this. */
                            likeState: new Map() };
     this._engagementReady = false;
-    /* Poll vote tallies: pollTxHash → { counts:[n], voters:Map(addr→optIdx),
-       total, scannedAt }. Populated lazily by _tallyPoll on render. */
-    this._pollTallies  = new Map();
-    this._pollScanning = new Set(); /* poll hashes with an in-flight tally */
+    /* Poll votes ride in on the same channel scan the feed already does:
+       parseTxs/_parsePostTx capture every VOTE tx into _voteAccum instead of
+       discarding it, so visible polls tally for free with no per-poll
+       re-scan. _voteAccum: pollHash → Map(voter → {optIdx, ts}) (newest-wins
+       by ts). Tallies are aggregated on the fly from this by _pollTally. */
+    this._voteAccum    = new Map();
+    this._pollScanned  = new Map(); /* pollHash → ts of last cold-scan fallback */
+    this._pollScanning = new Set(); /* poll hashes with an in-flight cold scan */
     this._myVotes      = new Map(); /* pollHash → optIdx the user has voted (session) */
     /* Community Notes: per-post note data, scan throttle, session ratings,
        and which posts have their pending-note panel expanded. */
@@ -7685,7 +7689,7 @@ class DeFiX {
     if (!text) return null;
     /* Non-post payloads that never render as feed items. */
     if (text.startsWith(PROFILE_PREFIX)) return null;
-    if (text.startsWith(VOTE_PREFIX)) return null;
+    if (text.startsWith(VOTE_PREFIX)) { this._captureVote(text, tx); return null; }
     /* Community notes + ratings are not feed posts — gathered via _scanChannelNotes. */
     if (text.startsWith(NOTE_PREFIX) || text.startsWith(NOTERATE_PREFIX)) return null;
     if (text.startsWith(LIKE_PREFIX) || text.startsWith(UNLIKE_PREFIX)
@@ -7752,9 +7756,10 @@ class DeFiX {
          UN* checks first to avoid prefix collisions on naive matching. */
       let postType = 'post';
       let reactionTarget = null;
-      /* VOTE txs are not feed posts — they're tallied separately. Drop
-         them from the post list entirely. */
-      if (raw.startsWith(VOTE_PREFIX)) return acc;
+      /* VOTE txs aren't feed posts, but the feed is already paging the
+         channel where votes live — capture them into the tally accumulator
+         here instead of re-scanning the channel per poll later. */
+      if (raw.startsWith(VOTE_PREFIX)) { this._captureVote(raw, tx); return acc; }
       /* Community notes + ratings — not feed posts (handled by _scanChannelNotes) */
       if (raw.startsWith(NOTE_PREFIX) || raw.startsWith(NOTERATE_PREFIX)) return acc;
       if (raw.startsWith(UNLIKE_PREFIX)) {
@@ -8268,12 +8273,9 @@ class DeFiX {
     el.innerHTML = this.postHTML(post, false,
       maps.replyMap, maps.likeMap, maps.repostMap, maps.engagerMap);
     this._vfMountedRef.set(el, post);
-    /* If this post is a poll, tally it in the background and refresh the
-       poll block when results arrive. Cached for 60s so repeated mounts
-       don't rescan. */
-    if (post.poll) {
-      this._tallyPoll(post).then(() => this._refreshPollBlock(post.txHash)).catch(() => {});
-    }
+    /* If this post is a poll, render it from votes already captured by the
+       feed scan (instant); _ensurePollTally cold-scans only if none seen. */
+    if (post.poll) this._ensurePollTally(post);
     return el;
   }
 
@@ -8615,21 +8617,69 @@ class DeFiX {
     return `${Math.floor(hrs / 24)}d left`;
   }
 
-  /* Tally a poll by scanning its channel for VOTE txs. Last vote per
-     address wins. Results cached for 60s to avoid rescanning on each
-     render. */
+  /* Pull a VOTE tx into the running vote accumulator. Called from the feed
+     parsers (parseTxs / _parsePostTx) so votes are tallied from the channel
+     scan the feed already performs — no separate per-poll re-scan needed. */
+  _captureVote(text, tx) {
+    const m = text.match(/^VOTE:(0x[a-f0-9]{64}):(\d+)/i);
+    if (!m) return;
+    this._recordVote(m[1].toLowerCase(), tx.from?.toLowerCase(), Number(m[2]),
+      Number(tx.timeStamp) ? Number(tx.timeStamp) * 1000 : 0);
+  }
+  /* Upsert a single vote, newest-wins by timestamp. */
+  _recordVote(pollHash, voter, optIdx, ts) {
+    if (!pollHash || !voter || !Number.isInteger(optIdx) || optIdx < 0) return;
+    let m = this._voteAccum.get(pollHash);
+    if (!m) { m = new Map(); this._voteAccum.set(pollHash, m); }
+    const prev = m.get(voter);
+    if (!prev || ts >= prev.ts) m.set(voter, { optIdx, ts });
+  }
+  /* Aggregate the accumulated votes for one poll into the render shape
+     { counts:[n per option], voters:Map(addr→optIdx), total }. Out-of-range
+     option indexes (malformed/older polls) are ignored. */
+  _pollTally(post) {
+    const optCount = post && post.poll ? post.poll.options.length : 0;
+    const counts = new Array(optCount).fill(0);
+    const voters = new Map();
+    const accum = this._voteAccum.get(post.txHash);
+    if (accum) {
+      for (const [voter, v] of accum) {
+        if (v.optIdx < 0 || v.optIdx >= optCount) continue;
+        voters.set(voter, v.optIdx);
+        counts[v.optIdx]++;
+      }
+    }
+    return { counts, voters, total: voters.size };
+  }
+  /* Render a poll from already-accumulated votes (instant), then cold-scan
+     the channel ONLY if we've seen no votes for it yet — i.e. the poll was
+     opened directly before the feed scanned its channel. Polls the feed has
+     already paged past never trigger a scan, so there's no double-scan. */
+  _ensurePollTally(post) {
+    if (!post || !post.poll) return;
+    this._refreshPollBlock(post.txHash);
+    const haveVotes = (this._voteAccum.get(post.txHash)?.size || 0) > 0;
+    const last = this._pollScanned.get(post.txHash) || 0;
+    if (!haveVotes && Date.now() - last >= 60000) {
+      this._tallyPoll(post).then(() => this._refreshPollBlock(post.txHash)).catch(() => {});
+    }
+  }
+  /* Cold-scan fallback: scan the poll's channel for VOTE txs and feed them
+     into the accumulator. Used only when a poll is viewed without the feed
+     having scanned its channel. Honors the user's Max scan depth setting
+     (votes can be sparse across many pages), with an empty-streak early-out
+     so quiet channels don't always scan to the full depth. */
   async _tallyPoll(post) {
     const hash = post.txHash;
-    const cached = this._pollTallies.get(hash);
-    if (cached && Date.now() - cached.scannedAt < 60000) return cached;
-    if (this._pollScanning.has(hash)) return cached || null;
+    if (this._pollScanning.has(hash)) return;
+    const last = this._pollScanned.get(hash) || 0;
+    if (Date.now() - last < 60000) return;
     this._pollScanning.add(hash);
-    const channel = post.to || post.channel || this.state.channel;
+    const channel  = post.to || post.channel || this.state.channel;
     const optCount = post.poll ? post.poll.options.length : 0;
-    const counts = new Array(optCount).fill(0);
-    const voters = new Map(); /* addr → optIdx (last wins) */
     try {
-      const scanLimit = Math.min(this._getMaxScanPages(), 20);
+      const scanLimit = this._getMaxScanPages();
+      let emptyStreak = 0;
       for (let page = 1; page <= scanLimit; page++) {
         let raw;
         try { raw = await this.apiFetch(channel, page); }
@@ -8647,47 +8697,43 @@ class DeFiX {
           if (optIdx < 0 || optIdx >= optCount) continue;
           const voter = tx.from?.toLowerCase();
           if (!voter) continue;
-          /* Last vote wins: only count the most recent per voter. Since we
-             scan newest-first, the FIRST occurrence we see is the latest. */
-          if (!voters.has(voter)) voters.set(voter, optIdx);
+          this._recordVote(hash, voter, optIdx,
+            Number(tx.timeStamp) ? Number(tx.timeStamp) * 1000 : 0);
           any = true;
         }
         if (raw.length < 50) break;
-        if (!any && page > 3) break; /* stop after a few empty pages */
+        emptyStreak = any ? 0 : emptyStreak + 1;
+        if (emptyStreak >= 5) break; /* quiet run — likely past all votes */
       }
-      /* Aggregate counts from the last-vote-wins map */
-      for (const idx of voters.values()) counts[idx]++;
-      const tally = { counts, voters, total: voters.size, scannedAt: Date.now() };
-      this._pollTallies.set(hash, tally);
+      this._pollScanned.set(hash, Date.now());
       this._prunePollMaps();
-      /* If the scan found the user's own vote, record it so the buttons
-         stay hidden on subsequent renders (e.g. after a reload). */
-      const mine = voters.get(this.state.signerAddr);
+      /* Surface the user's own vote so the vote buttons stay hidden. */
+      const mine = this._voteAccum.get(hash)?.get(this.state.signerAddr)?.optIdx;
       if (mine !== undefined && !this._myVotes.has(hash)) this._myVotes.set(hash, mine);
-      return tally;
     } finally {
       this._pollScanning.delete(hash);
     }
   }
 
-  /* Build the poll UI for a post. Initially renders with cached/zero data,
-     then kicks off a tally and re-renders the poll block in place. */
+  /* Build the poll UI for a post, reading counts from votes already captured
+     during the feed scan (see _pollTally). Mounting triggers _ensurePollTally
+     for the cold-open fallback; this function itself does no fetching. */
   _pollHTML(post) {
     const poll = post.poll;
     if (!poll) return '';
-    const tally = this._pollTallies.get(post.txHash);
-    /* Prefer the session record (instant) over the tally (async). This stops
+    const tally = this._pollTally(post);
+    /* Prefer the session record (instant) over the accumulator. This stops
        the vote buttons from showing — and inviting a re-vote — before the
-       background tally scan finishes. */
+       user's own vote rides back in on a scan. */
     const sessionVote = this._myVotes.get(post.txHash);
     const myVote = sessionVote !== undefined
       ? sessionVote
-      : (tally ? tally.voters.get(this.state.signerAddr) : undefined);
+      : tally.voters.get(this.state.signerAddr);
     const closed = this._pollIsClosed(poll);
     const showResults = closed || myVote !== undefined;
-    const total = tally ? tally.total : 0;
+    const total = tally.total;
     const optsHTML = poll.options.map((opt, i) => {
-      const count = tally ? (tally.counts[i] || 0) : 0;
+      const count = tally.counts[i] || 0;
       const pct = total > 0 ? Math.round((count / total) * 100) : 0;
       const isMine = myVote === i;
       if (showResults) {
@@ -8725,32 +8771,21 @@ class DeFiX {
       utils.toast('You already voted for this option');
       return;
     }
-    /* Record the vote immediately so the UI flips to results and the
-       buttons disappear — prevents accidental double-clicks while the tx
-       is in flight. Remember any prior choice so we can restore it on error. */
+    /* Optimistically record our vote (session + accumulator) so the UI flips
+       to results and the buttons disappear immediately — prevents accidental
+       double-clicks while the tx is in flight. Remember any prior choice so
+       we can restore it on error. */
     const prevVote = this._myVotes.get(pollHash);
     this._myVotes.set(pollHash, optIdx);
+    this._recordVote(pollHash, this.state.signerAddr, optIdx, Date.now());
     this._refreshPollBlock(pollHash);
     const channel = post.to || post.channel || this.state.channel;
     const body = `${VOTE_PREFIX}${pollHash}:${optIdx}`;
-    let optimisticApplied = false;
     try {
       const data  = ethers.utils.hexlify(ethers.utils.toUtf8Bytes(body));
       let gas     = await this.signer.estimateGas({ to: channel, value: '0', data });
       gas         = gas.mul(130).div(100);
       const tx    = await this.signer.sendTransaction({ to: channel, value: '0', data, gasLimit: gas });
-      /* Optimistically record our vote and refresh the poll UI immediately
-         — don't wait for mining. */
-      const tally = this._pollTallies.get(pollHash) ||
-        { counts: new Array(post.poll.options.length).fill(0), voters: new Map(), total: 0, scannedAt: 0 };
-      const prev = tally.voters.get(this.state.signerAddr);
-      if (prev !== undefined) tally.counts[prev]--; else tally.total++;
-      tally.voters.set(this.state.signerAddr, optIdx);
-      tally.counts[optIdx] = (tally.counts[optIdx] || 0) + 1;
-      tally.scannedAt = Date.now();
-      this._pollTallies.set(pollHash, tally);
-      optimisticApplied = true;
-      this._refreshPollBlock(pollHash);
       utils.toast('Vote submitted ✓ confirming on-chain…');
       await tx.wait();
       utils.toast('Vote confirmed ✓');
@@ -8759,16 +8794,14 @@ class DeFiX {
       const rejected = err.code === 4001 || err.code === 'ACTION_REJECTED' ||
         /user (denied|rejected)/i.test(msg);
       utils.toast(rejected ? 'Vote cancelled' : 'Vote failed: ' + msg);
-      /* Roll back the optimistic session vote so the user can try again,
-         restoring any previous choice rather than clearing it outright. */
-      if (prevVote !== undefined) this._myVotes.set(pollHash, prevVote);
-      else this._myVotes.delete(pollHash);
-      /* If the tx was broadcast and we already applied the optimistic tally
-         but it then reverted, the cached counts are now wrong — invalidate so
-         the next render re-tallies from chain. */
-      if (optimisticApplied) {
-        const t = this._pollTallies.get(pollHash);
-        if (t) t.scannedAt = 0;
+      /* Roll back the optimistic vote in both the session map and the
+         accumulator, restoring any previous choice rather than clearing it. */
+      if (prevVote !== undefined) {
+        this._myVotes.set(pollHash, prevVote);
+        this._recordVote(pollHash, this.state.signerAddr, prevVote, Date.now());
+      } else {
+        this._myVotes.delete(pollHash);
+        this._voteAccum.get(pollHash)?.delete(this.state.signerAddr);
       }
       this._refreshPollBlock(pollHash);
     }
@@ -8792,12 +8825,8 @@ class DeFiX {
      _vfMountReal's per-mount tally doesn't run. */
   _tallyVisiblePolls() {
     document.querySelectorAll('[data-poll-container]').forEach(el => {
-      const hash = el.dataset.pollContainer;
-      const post = this._postMap.get(hash);
-      if (!post || !post.poll) return;
-      const cached = this._pollTallies.get(hash);
-      if (cached && Date.now() - cached.scannedAt < 60000) return;
-      this._tallyPoll(post).then(() => this._refreshPollBlock(hash)).catch(() => {});
+      const post = this._postMap.get(el.dataset.pollContainer);
+      if (post && post.poll) this._ensurePollTally(post);
     });
   }
 
@@ -10146,7 +10175,7 @@ class DeFiX {
      hundreds of distinct polls, and an evicted poll simply re-tallies on its
      next render. */
   _prunePollMaps(maxSize = 800) {
-    for (const m of [this._pollTallies, this._myVotes]) {
+    for (const m of [this._voteAccum, this._pollScanned, this._myVotes]) {
       if (m.size <= maxSize) continue;
       const keys = [...m.keys()];
       for (let i = 0; i < keys.length - maxSize; i++) m.delete(keys[i]);
@@ -10582,8 +10611,8 @@ class DeFiX {
     if (polls.length === 0) { card.style.display = 'none'; return; }
     card.style.display = '';
     list.innerHTML = polls.map(p => {
-      const tally = this._pollTallies.get(p.txHash);
-      const total = tally ? tally.total : 0;
+      const tally = this._pollTally(p);
+      const total = tally.total;
       const status = this._pollIsClosed(p.poll)
         ? 'Final results'
         : (p.poll.endMs ? this._pollTimeLeft(p.poll) : 'Open');
@@ -10663,9 +10692,9 @@ class DeFiX {
     card.style.display = '';
 
     const pollRows = endedPolls.map(p => {
-      const tally = this._pollTallies.get(p.txHash);
+      const tally = this._pollTally(p);
       let winner = '', winPct = 0;
-      if (tally && tally.total > 0) {
+      if (tally.total > 0) {
         let maxIdx = 0;
         tally.counts.forEach((c, i) => { if (c > (tally.counts[maxIdx] || 0)) maxIdx = i; });
         winner = p.poll.options[maxIdx] || '';
