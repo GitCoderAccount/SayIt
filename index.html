@@ -4210,7 +4210,7 @@ class DeFiX {
       this.toggleBookmark(post, item);
     } else if (action === 'share') {
       e.stopPropagation();
-      this.openShareCard(post);
+      this.sharePost(post);
     } else if (action === 'mute') {
       e.stopPropagation();
       this.muteAddress(post.reporter);
@@ -4344,6 +4344,7 @@ class DeFiX {
 
   filterByTag(tag) {
     this.state.activeTag  = tag;
+    this._setRoute('/tag/' + encodeURIComponent(tag));
     this.state.searchTerm = '#' + tag;
     this.g('search-input').value = '#' + tag;
     this._updateSearchClearBtn();
@@ -4375,6 +4376,7 @@ class DeFiX {
 
   async goHome() {
     this._updateTitle('Home');
+    this._setRoute('/home');
     if (this.state.mode === 'main' && this.state.channel === MAIN_CHANNEL) {
       if (this.state.searchTerm || this.state.activeTag) {
         this.state.searchTerm = '';
@@ -4590,6 +4592,7 @@ class DeFiX {
   async goNotifications() {
     if (!this.signer) { utils.toast('Connect wallet to view Notifications'); return; }
     this._updateTitle('Notifications');
+    this._setRoute('/notifications');
     this.setNav('nav-notifs','notifs');
     const navToken = this._navToken; /* if this changes, user navigated away */
     this.g('feed-tabs').classList.remove('tabs-sticky');
@@ -4816,6 +4819,7 @@ class DeFiX {
   async goSelf() {
     if (!this.signer) { utils.toast('Connect wallet to view your channel'); return; }
     this._updateTitle('My Channel');
+    this._setRoute('/channel/' + this.state.signerAddr);
     this.setNav('nav-mychannel', null);
     this.state.mode    = 'self';
     this.state.channel = this.state.signerAddr;
@@ -4835,6 +4839,7 @@ class DeFiX {
   async goCustom() {
     const raw = this.g('custom-input').value.trim().toLowerCase();
     if (!ethers.utils.isAddress(raw)) { utils.toast('Invalid address'); return; }
+    this._setRoute('/channel/' + raw);
     this.setNav(null, null);
     this.state.mode    = 'custom';
     this.state.channel = raw;
@@ -4871,6 +4876,7 @@ class DeFiX {
   /* ── New navigation methods ─────────────────────────────────────────── */
   goExplore() {
     this._updateTitle('Explore');
+    this._setRoute('/explore');
     this.setNav('nav-explore','explore');
     this.state.mode = 'explore';
     this.g('feed-tabs').classList.remove('tabs-sticky');
@@ -5047,6 +5053,7 @@ class DeFiX {
   goBookmarks() {
     if (!this.signer) { utils.toast('Connect wallet to view Bookmarks'); return; }
     this._updateTitle('Bookmarks');
+    this._setRoute('/bookmarks');
     this.setNav('nav-bookmarks', null);
     this.state.mode = 'bookmarks';
     this.g('feed-tabs').classList.remove('tabs-sticky');
@@ -5143,6 +5150,7 @@ class DeFiX {
 
   async goChannels() {
     this._updateTitle('Channels');
+    this._setRoute('/channels');
     this.setNav('nav-channels','channels');
     this.g('feed-tabs').classList.remove('tabs-sticky');
     this._pendingPageHeader = this._makePageHeader({ title: 'Channels', noBack: true });
@@ -5166,6 +5174,7 @@ class DeFiX {
 
   goSettings() {
     this._updateTitle('Settings');
+    this._setRoute('/settings');
     this.setNav(null, null);
     this.state.mode = 'settings';
     this.g('compose-area').style.display   = 'none';
@@ -6313,6 +6322,7 @@ class DeFiX {
   }
 
   async goProfilePage(address, isOwn = false) {
+    this._setRoute('/profile/' + address);
     this.setNav(isOwn ? 'nav-profile' : null, isOwn ? 'profile' : null);
     /* Title placeholder until profile resolves. Refined below if cached. */
     const cachedName = this.state.profCache[address]?.username
@@ -6478,6 +6488,10 @@ class DeFiX {
         <img src="${picUrl}" class="prof-page-avatar" id="prof-page-avatar"
           alt="" onerror="this.src='image1.jpeg'">
         <div class="prof-actions">
+          <button class="prof-edit-btn" title="Share profile" aria-label="Share profile" style="padding:6px 10px"
+            onclick="event.stopPropagation();pulse._shareUrl(pulse._profileUrl('${utils.safe(address)}'),'')">
+            <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.48-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>
+          </button>
           ${followBtn}
         </div>
       </div>
@@ -8367,10 +8381,9 @@ class DeFiX {
             <button class="act-btn act-bookmark ${isBookmarked ? 'bookmarked' : ''}" data-action="bookmark" title="${isBookmarked ? 'Remove bookmark' : 'Bookmark'}" aria-label="${isBookmarked ? 'Remove bookmark' : 'Bookmark this post'}" aria-pressed="${isBookmarked ? 'true' : 'false'}">
               <span class="act-icon">${this.icon(isBookmarked ? 'ic-bookmark-full' : 'ic-bookmark-empty')}</span>
             </button>
-            <a href="https://otter.pulsechain.com/tx/${utils.safe(post.txHash)}"
-              target="_blank" rel="noopener noreferrer" class="otter-link" title="Share / View on OtterScan" aria-label="Share / View transaction on OtterScan" onclick="event.stopPropagation()">
+            <button class="act-btn act-share" data-action="share" title="Share" aria-label="Share this post">
               <span class="act-icon">${this.icon('ic-share')}</span>
-            </a>
+            </button>
             </div><!-- /.post-actions-right -->
           </div><!-- /.post-actions -->
         </div>
@@ -9216,8 +9229,103 @@ class DeFiX {
     else utils.toast("Couldn't find that post on this channel");
   }
 
+  /* ── Hash-based routing ───────────────────────────────────────────────
+     Views map to URL hashes (#/profile/0x…, #/post/0x…, #/explore, …) so
+     pages are shareable and back/forward works. Hash routes are domain- and
+     base-path-independent, so they survive a custom-domain switch and work on
+     any static host (GitHub Pages, IPFS) with no server rewrites. */
+  _postUrl(hash)    { return location.origin + location.pathname + '#/post/' + hash; }
+  _profileUrl(addr) { return location.origin + location.pathname + '#/profile/' + addr; }
+
+  /* Push a route into the address bar. No-op when navigation was initiated BY
+     the router (back/forward / deep link), so we don't add duplicate history. */
+  _setRoute(path) {
+    if (this._suppressRoute) return;
+    const target = '#' + path;
+    if (location.hash === target) { this._lastRoutedHash = target; return; }
+    try {
+      /* First navigation replaces the load entry; later ones push so
+         back/forward walks the in-app history. */
+      if (!this._lastRoutedHash) history.replaceState(null, '', target);
+      else history.pushState(null, '', target);
+    } catch { location.hash = target; }
+    this._lastRoutedHash = target;
+  }
+
+  /* Drive the app from the current URL hash (initial load, back/forward, or a
+     manual address-bar edit). Dispatches to the matching view with route
+     pushes suppressed so it doesn't re-push the same entry. */
+  _routeTo() {
+    const cur = location.hash;
+    if (cur === this._lastRoutedHash) return; /* deduped (popstate+hashchange both fire) */
+    this._lastRoutedHash = cur;
+    const parts = cur.replace(/^#\/?/, '').split('/');
+    const seg = parts[0] || '';
+    const arg = parts[1] ? decodeURIComponent(parts[1]) : '';
+    this._suppressRoute = true;
+    try {
+      switch (seg) {
+        case '': case 'home':  this.goHome(); break;
+        case 'explore':        this.goExplore(); break;
+        case 'notifications':  this.goNotifications(); break;
+        case 'bookmarks':      this.goBookmarks(); break;
+        case 'channels':       this.goChannels(); break;
+        case 'settings':       this.goSettings(); break;
+        case 'lists':          this.goLists?.(); break;
+        case 'communities':    this.goCommunities?.(); break;
+        case 'profile':        /^0x[a-f0-9]{40}$/i.test(arg)
+                                 ? this.goProfilePage(arg.toLowerCase(), arg.toLowerCase() === this.state.signerAddr)
+                                 : this.goHome(); break;
+        case 'post':           /^0x[a-f0-9]{64}$/i.test(arg) ? this.openThreadByHash(arg.toLowerCase()) : this.goHome(); break;
+        case 'channel':        if (/^0x[a-f0-9]{40}$/i.test(arg)) { this.g('custom-input').value = arg; this.goCustom(); } else this.goHome(); break;
+        case 'tag':            arg ? this.filterByTag(arg) : this.goHome(); break;
+        default:               this.goHome();
+      }
+    } finally { this._suppressRoute = false; }
+  }
+
+  _initRouter() {
+    const handler = () => this._routeTo();
+    window.addEventListener('popstate', handler);
+    window.addEventListener('hashchange', handler);
+  }
+
+  /* Share a URL via the native share sheet when available, else copy it. */
+  _shareUrl(url, text) {
+    if (navigator.share) {
+      navigator.share({ title: 'Say It DeFi', text: text || '', url }).catch(() => {});
+    } else {
+      utils.copyToClipboard(url, 'Link copied!');
+    }
+  }
+  sharePost(post) {
+    if (!post) return;
+    this._shareUrl(this._postUrl(post.txHash), (post.display || '').slice(0, 80));
+  }
+
+  /* Fetch a single tx by hash (for deep-linking a post that isn't loaded).
+     Uses the explorer's eth_getTransactionByHash proxy so no channel is
+     needed. Timestamp isn't returned by the proxy, so it falls back to now. */
+  async _fetchTxByHash(hash) {
+    const s = this._getSettings();
+    const base = s.apiUrl || 'https://api.scan.pulsechain.com/api';
+    try {
+      const res = await fetch(`${base}?module=proxy&action=eth_getTransactionByHash&txhash=${hash}`);
+      const data = await res.json();
+      const tx = data?.result;
+      if (!tx || !tx.input || tx.input === '0x') return null;
+      const parsed = this._parsePostTx({
+        hash: tx.hash, from: tx.from, to: tx.to, input: tx.input,
+        blockNumber: tx.blockNumber ? parseInt(tx.blockNumber, 16) : null,
+      }, { mode: 'main' });
+      if (parsed) this._postMap.set(hash, parsed);
+      return parsed;
+    } catch { return null; }
+  }
+
   openThread(post) {
     if (!post) { utils.toast('Post not loaded yet — try again'); return; }
+    this._setRoute('/post/' + post.txHash);
     this._updateTitle('Post');
     /* Save previous view so back button can restore it */
     this._prevMode    = this.state.mode;
@@ -9961,7 +10069,7 @@ class DeFiX {
         label: 'Write a community note', action: () => this.openNoteComposer(post), danger: false },
       /* Copy link */
       { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.48-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>',
-        label: 'Copy post link', action: () => utils.copyToClipboard(`https://otter.pulsechain.com/tx/${post.txHash}`, 'Link copied!'), danger: false },
+        label: 'Copy post link', action: () => utils.copyToClipboard(this._postUrl(post.txHash), 'Link copied!'), danger: false },
       /* View on OtterScan */
       { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18.36 5.64c-1.95-1.96-5.11-1.96-7.07 0L9.88 7.05 8.46 5.64l1.42-1.42c2.73-2.73 7.16-2.73 9.9 0 2.73 2.74 2.73 7.17 0 9.9l-1.42 1.42-1.41-1.42 1.41-1.41c1.96-1.96 1.96-5.12 0-7.07zm-2.12 3.53l-7.07 7.07-1.41-1.41 7.07-7.07 1.41 1.41zm-12.02.71l1.42-1.42 1.41 1.42-1.41 1.41c-1.96 1.96-1.96 5.12 0 7.07 1.95 1.96 5.11 1.96 7.07 0l1.41-1.41 1.42 1.41-1.42 1.42c-2.73 2.73-7.16 2.73-9.9 0-2.73-2.74-2.73-7.17 0-9.9z"/></svg>',
         label: 'View on OtterScan', action: () => window.open(`https://otter.pulsechain.com/tx/${post.txHash}`, '_blank', 'noopener,noreferrer'), danger: false },
@@ -10413,10 +10521,17 @@ class DeFiX {
   }
 
   /* Helper for news card row clicks — looks up the post and opens its thread. */
-  openThreadByHash(hash) {
-    const post = this._postMap.get(hash) ||
-                 this.state.posts.find(p => p.txHash === hash);
+  async openThreadByHash(hash) {
+    hash = (hash || '').toLowerCase();
+    let post = this._postMap.get(hash) ||
+               this.state.posts.find(p => p.txHash === hash);
+    if (!post) {
+      /* Not loaded (e.g. a shared deep link opened cold) — fetch it. */
+      utils.toast('Loading post…');
+      post = await this._fetchTxByHash(hash);
+    }
     if (post) this.openThread(post);
+    else utils.toast('Post not found');
   }
 
   renderTrending() {
@@ -11144,6 +11259,7 @@ class DeFiX {
      from all member addresses (same strategy as the Following feed). */
   goLists() {
     this._updateTitle('Lists');
+    this._setRoute('/lists');
     this.setNav(null, null);
     this.state.mode = 'lists';
     this.state.activeList = null;
@@ -11409,6 +11525,7 @@ class DeFiX {
      channel address; viewing one reuses the channel-feed flow (goCustom). */
   goCommunities() {
     this._updateTitle('Communities');
+    this._setRoute('/communities');
     this.setNav(null, null);
     this.state.mode = 'communities';
     this.g('compose-area').style.display   = 'none';
@@ -11853,6 +11970,9 @@ class DeFiX {
 }
 
 const pulse = new DeFiX();
+/* Capture the URL hash at load time so a deep link (#/post/…, #/profile/…)
+   isn't clobbered by the default Home bootstrap before we can route to it. */
+const INITIAL_HASH = location.hash;
 
 /* ── Service Worker — offline shell + fast repeat loads ──────────────
    Registers sw.js which caches index.html and ethers.js for instant
@@ -11888,7 +12008,17 @@ if ('serviceWorker' in navigator) {
       .catch(err => console.warn('[SW] Registration failed:', err));
   });
 }
-pulse.init().catch(err => {
+pulse.init().then(() => {
+  /* Wire back/forward + manual hash edits, then honor any deep link the page
+     was opened with (otherwise the normal Home bootstrap stands). */
+  pulse._initRouter();
+  if (INITIAL_HASH && !/^#\/?(home)?$/.test(INITIAL_HASH)) {
+    /* The Home bootstrap above may have pushed '#/home'; restore the original
+       deep-link hash (no event) before routing to it. */
+    history.replaceState(null, '', INITIAL_HASH);
+    pulse._routeTo();
+  }
+}).catch(err => {
   console.error('Init error:', err);
   if (err.stack) console.error('Stack:', err.stack);
   utils.toast('Startup failed — reload and check console');
