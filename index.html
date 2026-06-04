@@ -6369,11 +6369,12 @@ class DeFiX {
         } catch (err) { console.warn('Profile cache miss:', err); }
       }
     } else {
-      prof = this.state.profCache[address] || null;
-      if (!prof) {
-        await this.fetchOtherProfile(address);
-        prof = this.state.profCache[address] || {};
-      }
+      /* Don't BLOCK on the profile-data fetch — render the page and start
+         loading posts immediately, then let the profile fill in async. Awaiting
+         here meant other users' profiles sat through a full profile-data scan
+         before their posts even began loading (looked like "just scanning"). */
+      prof = this.state.profCache[address] || {};
+      if (!this.state.profCache[address]) this.fetchOtherProfile(address);
     }
     if (!prof) prof = {};
 
@@ -6443,6 +6444,23 @@ class DeFiX {
         if (bioEl && this.state.profile.bio) {
           bioEl.textContent = this.state.profile.bio;
         }
+      }).catch(() => {});
+    } else {
+      /* Other user's profile: the fetch was kicked off non-blocking above —
+         when it lands, patch the header in place (name/avatar/bio). */
+      this.fetchOtherProfile(address).then(() => {
+        if (this.state.mode !== 'profile' || this.state.channel !== address) return;
+        const p = this.state.profCache[address];
+        const feed = this.g('feed');
+        if (!p || !feed || !feed.querySelector('.prof-page')) return;
+        const nameEl = feed.querySelector('.prof-display-name');
+        if (nameEl && p.username) nameEl.textContent = p.username;
+        const titleEl = feed.querySelector('.page-header-title');
+        if (titleEl && p.username) titleEl.textContent = p.username;
+        const avatarEl = feed.querySelector('.prof-page-avatar');
+        if (avatarEl && p.picUrl && p.picUrl !== 'image1.jpeg') avatarEl.src = p.picUrl;
+        const bioEl = feed.querySelector('.prof-bio');
+        if (bioEl && p.bio) bioEl.textContent = p.bio;
       }).catch(() => {});
     }
   }
@@ -7178,6 +7196,8 @@ class DeFiX {
       if (posts.some(pp => pp.poll)) {
         setTimeout(() => this._tallyVisiblePolls(), 100);
       }
+      /* Gather community notes for these posts (covers profile view). */
+      this._scanChannelNotes();
       /* Seed pagination state so infinite scroll won't re-show these posts. */
       if (this._profilePageState) {
         this._profilePageState.tab = tab;
@@ -8635,7 +8655,13 @@ class DeFiX {
   }
 
   async _scanChannelNotes() {
-    const channel = this.state.channel || MAIN_CHANNEL;
+    /* Scan the current channel AND the main channel — most posts/notes live in
+       main, and on profiles/threads state.channel differs — so notes show
+       across views, not just the main feed. */
+    const channels = new Set([this.state.channel || MAIN_CHANNEL, MAIN_CHANNEL]);
+    for (const ch of channels) await this._scanNotesForChannel(ch);
+  }
+  async _scanNotesForChannel(channel) {
     if (this._noteScanning.has(channel)) return;
     if (Date.now() - (this._noteScanAt.get(channel) || 0) < 60000) return;
     this._noteScanning.add(channel);
@@ -9550,6 +9576,9 @@ class DeFiX {
     const origEl = this.g('feed').querySelector('.thread-orig-item');
     if (origEl) origEl.addEventListener('click', e => this.onFeedClick(e, true));
     this._tallyVisiblePolls();
+    /* Gather community notes so the "Readers added context" card / proposed
+       marker shows on the thread's posts too. */
+    this._scanChannelNotes();
   }
 
   async _postThreadPageReply(post, inputEl) {
@@ -10839,48 +10868,22 @@ class DeFiX {
       if (from !== addrLow) return;
       if (!tx.input || tx.input === '0x') return;
       try {
-        const text = ethers.utils.toUtf8String(tx.input).trim();
-        if (text.startsWith(PROFILE_PREFIX)) return;
-        if (text.startsWith(LIKE_PREFIX) || text.startsWith(UNLIKE_PREFIX)) return;
-        if (text.startsWith(BOOKMARK_PREFIX) || text.startsWith(UNBOOKMARK_PREFIX)) return;
-        if (text.startsWith(FOLLOW_PREFIX) || text.startsWith(UNFOLLOW_PREFIX)) return;
-        /* VOTE txs aren't posts — never show them on a profile. */
-        if (text.startsWith(VOTE_PREFIX)) return;
-        /* Community notes + ratings aren't posts either. */
-        if (text.startsWith(NOTE_PREFIX) || text.startsWith(NOTERATE_PREFIX)) return;
-        const isReply = text.startsWith(REPLY_PREFIX);
+        /* Canonical parse — same as the main feed and the initial profile
+           load. Handles reposts/polls/replies and returns null for
+           profile/reaction/vote/note txs, so raw "REPOST:…" / "NOTE:…" never
+           leak into the profile feed. */
+        const parsed = this._parsePostTx(tx, { mode: 'profile' });
+        if (!parsed) return;
+        const isReply = !!parsed.parentTx;
         if (tab === 'posts'   &&  isReply) return;
         if (tab === 'replies' && !isReply) return;
-        const m = text.match(/^REPLY_TO:(0x[a-f0-9]{64})\n\n/i);
-        /* Poll posts: parse so the profile renders the poll card, not raw
-           POLL:{json} text. */
-        let poll = null, display;
-        if (text.startsWith(POLL_PREFIX)) {
-          poll = this._parsePoll(text);
-          display = poll ? poll.question : text;
-        } else {
-          display = m ? text.slice(m[0].length).trim() : text;
-        }
-        if (!display) return;
         if (tab === 'media') {
-          const urls = [...display.matchAll(/https?:\/\/[^\s<>"{}|\\^[\]`]+|ipfs:\/\/\S+|arweave:\/\/\S+/g)].map(m => m[0]);
+          const urls = [...(parsed.display || '').matchAll(/https?:\/\/[^\s<>"{}|\\^[\]`]+|ipfs:\/\/\S+|arweave:\/\/\S+/g)].map(mm => mm[0]);
           const resolveUrl = u => u.startsWith('ipfs://') ? 'https://ipfs.io/ipfs/' + u.slice(7)
             : u.startsWith('arweave://') ? 'https://arweave.net/' + u.slice(10) : u;
-          const hasImg = urls.some(u => isMediaUrl(resolveUrl(u)));
-          if (!hasImg) return;
+          if (!urls.some(u => isMediaUrl(resolveUrl(u)))) return;
         }
-        posts.push({
-          content: text, display,
-          parentTx: m ? m[1].toLowerCase() : null,
-          direction: null, poll,
-          postType: poll ? 'poll' : 'post',
-          reporter: from, to: to ?? null,
-          timestamp: tx.timeStamp
-            ? new Date(Number(tx.timeStamp)*1000).toISOString()
-            : new Date().toISOString(),
-          txHash: tx.hash.toLowerCase(),
-          channel: to, mode: 'profile',
-        });
+        posts.push(parsed);
       } catch { /* skip */ }
     });
     return posts;
