@@ -4814,7 +4814,12 @@ class DeFiX {
         const t = e.target.closest('.notif-pop');
         if (!t) return;
         e.stopPropagation();
-        if (t.dataset.popAddr) this.showProfilePopup(t.dataset.popAddr, t);
+        /* Click navigates to the profile (like the feed / X); hover still
+           shows the hovercard via the mouseover handler below. */
+        if (t.dataset.popAddr) {
+          this.hideProfilePopup();
+          this.goProfilePage(t.dataset.popAddr, t.dataset.popAddr === this.state.signerAddr);
+        }
       });
       const isTouch = () => window.matchMedia('(hover: none)').matches;
       let hov = null;
