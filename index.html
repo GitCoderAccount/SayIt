@@ -2199,6 +2199,11 @@ nav { flex:1; padding:4px 0; }
           <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M1.998 5.5c0-1.381 1.119-2.5 2.5-2.5h15c1.381 0 2.5 1.119 2.5 2.5v13c0 1.381-1.119 2.5-2.5 2.5h-15c-1.381 0-2.5-1.119-2.5-2.5v-13zm2.5-.5a.5.5 0 00-.5.5v2.764l8 3.638 8-3.638V5.5a.5.5 0 00-.5-.5h-15zM19.998 10.236l-8 3.636-8-3.636V18.5a.5.5 0 00.5.5h15a.5.5 0 00.5-.5v-8.264z"/></svg>
         </span><span class="nav-label">Channels</span>
       </button>
+      <button class="nav-btn" id="nav-premium">
+        <span class="nav-icon">
+          <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 1.5l2.917 6.064 6.583.79-4.86 4.494 1.27 6.652L12 16.98l-5.91 3.52 1.27-6.652L2.5 8.354l6.583-.79L12 1.5z"/></svg>
+        </span><span class="nav-label">Premium</span>
+      </button>
       <button class="nav-btn" id="nav-profile">
         <span class="nav-icon">
           <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M5.651 19h12.698c-.337-1.8-1.023-2.891-1.929-3.4-1.285-.736-3.574-1.1-4.42-1.1-.845 0-3.135.364-4.42 1.1-.906.509-1.592 1.6-1.929 3.4zM12 11c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zm0 2c-2.5 0-4.418.733-5.649 1.896C5.23 16.02 4.617 17.467 4.39 19.5c-.046.441.233.9.683.9h13.854c.45 0 .729-.459.683-.9-.226-2.033-.84-3.48-1.961-4.604C16.418 13.733 14.5 13 12 13zm0-8C9.239 5 7 7.239 7 10s2.239 5 5 5 5-2.239 5-5-2.239-5-5-5z"/></svg>
@@ -3639,6 +3644,7 @@ class DeFiX {
     w('nav-mychannel', 'onclick', () => this.goSelf());
     /* Bookmarks lives only in the More menu now (removed from the main nav).
        Lists/Communities also live in More, keeping the left rail compact. */
+    w('nav-premium', 'onclick', () => this.goPremium());
     g('nav-profile').onclick   = () => this.openProfileModal();
     g('nav-more').onclick      = e => { e.stopPropagation(); this.toggleMoreMenu(); };
     /* The mobile #mn-more button is wired via the [data-mn="more"]
@@ -6325,6 +6331,25 @@ class DeFiX {
   }
 
   /* ── Profile page (full in-column view) ──────────────────────────────── */
+  /* Premium — placeholder for now. A future subscription will unlock Articles
+     (long-form on-chain posts), unlimited post length, profile Highlights, etc. */
+  goPremium() {
+    this._showGenericModal('Premium', `
+      <div style="text-align:center;padding:8px 4px">
+        <div style="font-size:46px;margin-bottom:6px;color:var(--primary-lt)">✦</div>
+        <h3 style="margin:0 0 10px;font-size:20px">Say It Premium — coming soon</h3>
+        <p style="color:var(--muted);font-size:14px;line-height:1.6;margin-bottom:16px">
+          A future subscription unlocking long-form <strong>Articles</strong> (essays, guides,
+          even whole books on-chain), unlimited post length, profile <strong>Highlights</strong>,
+          and more — all settled on-chain.
+        </p>
+        <button class="btn-ghost" id="premium-close-btn">Got it</button>
+      </div>
+    `);
+    const b = document.getElementById('premium-close-btn');
+    if (b) b.onclick = () => this._closeGenericModal();
+  }
+
   openProfileModal() {
     /* Own profile: go to profile page */
     if (this.state.signerAddr) {
@@ -6523,6 +6548,10 @@ class DeFiX {
             onclick="event.stopPropagation();pulse._shareUrl(pulse._profileUrl('${utils.safe(address)}'),'')">
             <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.48-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>
           </button>
+          <button class="prof-edit-btn" title="Open channel / message" aria-label="Open this address's channel" style="padding:6px 10px"
+            onclick="event.stopPropagation();pulse.g('custom-input').value='${utils.safe(address)}';pulse.goCustom()">
+            <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M1.998 5.5c0-1.381 1.119-2.5 2.5-2.5h15c1.381 0 2.5 1.119 2.5 2.5v13c0 1.381-1.119 2.5-2.5 2.5h-15c-1.381 0-2.5-1.119-2.5-2.5v-13zm2.5-.5a.5.5 0 00-.5.5v2.764l8 3.638 8-3.638V5.5a.5.5 0 00-.5-.5h-15zM19.998 10.236l-8 3.636-8-3.636V18.5a.5.5 0 00.5.5h15a.5.5 0 00.5-.5v-8.264z"/></svg>
+          </button>
           ${followBtn}
         </div>
       </div>
@@ -6547,7 +6576,7 @@ class DeFiX {
         <button class="prof-tab" data-ptab="highlights">Highlights</button>
         <button class="prof-tab" data-ptab="articles">Articles</button>
         <button class="prof-tab" data-ptab="media">Media</button>
-        <button class="prof-tab" data-ptab="likes">Likes</button>
+        ${isOwn ? `<button class="prof-tab" data-ptab="likes">Likes</button>` : ''}
       </div>
       <div class="prof-feed" id="prof-feed">
         <div class="prof-empty">
