@@ -980,6 +980,22 @@ nav { flex:1; padding:4px 0; }
    doesn't overlap the text */
 .search-wrap input.has-value { padding-right:38px; }
 
+/* Premium upsell card (right column, X-style) */
+.sb-premium-card {
+  padding:16px;
+  background:linear-gradient(135deg, rgba(124,77,255,0.16), rgba(43,134,197,0.10));
+  border:1px solid var(--border); border-radius:16px;
+}
+.sb-premium-title { font-size:20px; font-weight:800; color:var(--text); margin-bottom:6px; }
+.sb-premium-star  { color:var(--primary-lt); }
+.sb-premium-desc  { font-size:13px; color:var(--muted); line-height:1.5; margin:0 0 12px; }
+.sb-premium-btn {
+  background:var(--primary); color:#fff; border:none; border-radius:9999px;
+  padding:8px 18px; font-size:14px; font-weight:700; cursor:pointer;
+  transition:background 0.2s, box-shadow 0.2s;
+}
+.sb-premium-btn:hover { background:var(--primary-lt); box-shadow:var(--neon); }
+
 .sb-card {
   /* Match the main column / sidebar background (pure black) so the cards
      blend into the page instead of appearing as a separate elevated
@@ -2325,6 +2341,14 @@ nav { flex:1; padding:4px 0; }
       </div>
     </div>
 
+    <!-- Premium upsell — top of the right column, matching X's
+         "Subscribe to Premium" box under the search bar. -->
+    <div class="sb-card sb-premium-card" id="sb-premium-card">
+      <div class="sb-premium-title"><span class="sb-premium-star">✦</span> Premium</div>
+      <p class="sb-premium-desc">Unlock Articles, longer posts, Highlights and more — all on-chain.</p>
+      <button class="sb-premium-btn" id="sb-premium-btn">Coming soon</button>
+    </div>
+
     <!-- PWA install prompt — visible when beforeinstallprompt fires.
          Top of the column, matching X's "Subscribe to Premium" slot. -->
     <div class="sb-card" id="sb-install-card">
@@ -3645,6 +3669,7 @@ class DeFiX {
     /* Bookmarks lives only in the More menu now (removed from the main nav).
        Lists/Communities also live in More, keeping the left rail compact. */
     w('nav-premium', 'onclick', () => this.goPremium());
+    w('sb-premium-btn', 'onclick', () => this.goPremium());
     g('nav-profile').onclick   = () => this.openProfileModal();
     g('nav-more').onclick      = e => { e.stopPropagation(); this.toggleMoreMenu(); };
     /* The mobile #mn-more button is wired via the [data-mn="more"]
