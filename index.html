@@ -2703,7 +2703,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260530-52';
+const SW_CACHE_VER = '20260604-53';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -2800,9 +2800,18 @@ const utils = {
     document.getElementById('loading-label').textContent = label;
   },
   safe(str) {
-    const d = document.createElement('div');
-    d.textContent = String(str ?? '');
-    return d.innerHTML;
+    /* Escapes for BOTH text and attribute contexts. The old textContent→
+       innerHTML trick does NOT escape quotes (HTML text-node serialization
+       never does), so any value interpolated into a "..." attribute — e.g.
+       <img src="${safe(picUrl)}"> — could close the attribute with a " and
+       inject an event handler. picUrl/website/etc. are attacker-controlled
+       on-chain data, so escaping quotes here is what blocks that XSS. */
+    return String(str ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   },
   linkify(text, fullText) {
     /* fullText = complete post text for image extraction (ignores MAX_PREVIEW truncation)
@@ -3158,7 +3167,7 @@ class Cache {
     const tx    = this._db.transaction('posts', 'readwrite');
     const store = tx.objectStore('posts');
     posts.forEach(p => store.put(p));
-    return new Promise((res, rej) => {
+    return new Promise((res) => {
       tx.oncomplete = () => {
         /* Index for search in ONE batched IDB transaction instead of N.
            Was: 100 posts = 100 transactions = ~1s of overhead. */
@@ -3167,20 +3176,46 @@ class Cache {
         });
         res();
       };
-      tx.onerror = () => rej(tx.error);
+      tx.onerror = () => {
+        /* Almost always QuotaExceededError — local storage is full. Don't
+           hard-reject: the posts are already in memory (and on-chain), so
+           persistence is best-effort. Free space by force-pruning old posts
+           so the NEXT save can land, and warn the user once. */
+        const err = tx.error;
+        if (err && err.name === 'QuotaExceededError') {
+          if (!this._quotaWarned) {
+            this._quotaWarned = true;
+            utils.toast?.('Local storage full — clearing old cached posts');
+          }
+          this.pruneIfStale(3, /*force=*/true).catch(() => {});
+        }
+        res();
+      };
     });
   }
   /* Batched search-index writer. One IDB transaction per call instead of
-     one-per-post. Trigram entries previously accumulated stale duplicates
-     because the original indexPost never deleted old rows (TODO comment
-     in code). This implementation does the delete if the txHash index
-     exists; without it, we skip the delete (acceptable — pruneSearchIndex
-     bounds total size). */
+     one-per-post. Posts are immutable on-chain, so a post only ever needs
+     indexing once; polling re-returns the same recent posts every cycle, so
+     without a guard we'd append the same trigram rows over and over —
+     unbounded duplicate growth that eventually trips pruneSearchIndex and
+     silently degrades search. We seed a set of already-indexed txHashes once
+     per session (from the existing index) and skip anything in it. */
   async indexPostsBatch(posts) {
     await this._ready;
     if (!this._db.objectStoreNames.contains('search_index')) return;
+    if (!this._indexedHashes) {
+      this._indexedHashes = await new Promise(res => {
+        const out = new Set();
+        const req = this._db.transaction('search_index', 'readonly')
+          .objectStore('search_index').getAll();
+        req.onsuccess = () => { (req.result || []).forEach(r => out.add(r.txHash)); res(out); };
+        req.onerror   = () => res(out);
+      });
+    }
     const writes = [];
     posts.forEach(post => {
+      if (!post.txHash || this._indexedHashes.has(post.txHash)) return;
+      this._indexedHashes.add(post.txHash);
       const tris = this._trigrams((post.display || '') + ' ' + (post.reporter || ''));
       tris.forEach(tri => writes.push({ trigram: tri, txHash: post.txHash }));
     });
@@ -3254,14 +3289,17 @@ class Cache {
   async indexPost(post) {
     await this._ready;
     if (!this._db.objectStoreNames.contains('search_index')) return;
+    if (!post.txHash) return;
+    /* Share indexPostsBatch's already-indexed guard so the one-time backfill
+       and the per-fetch indexer never double-index the same post. (When the
+       set isn't seeded yet — e.g. backfill on an empty index — this is a
+       no-op and the eventual seed picks these rows up from the store.) */
+    if (this._indexedHashes?.has(post.txHash)) return;
     const tris = this._trigrams((post.display || '') + ' ' + (post.reporter || ''));
     if (!tris.length) return;
+    this._indexedHashes?.add(post.txHash);
     const tx = this._db.transaction('search_index', 'readwrite');
     const store = tx.objectStore('search_index');
-    /* Delete old entries for this post hash first */
-    const idx = store.index('trigram');
-    /* We store {trigram, txHash} — query by txHash requires a scan */
-    /* Simple approach: store entries as {id(auto), trigram, txHash} */
     tris.forEach(tri => store.add({ trigram: tri, txHash: post.txHash }));
     return new Promise(res => { tx.oncomplete = res; tx.onerror = res; });
   }
@@ -3327,9 +3365,9 @@ class Cache {
       tx.onerror    = () => rej(tx.error);
     });
   }
-  async pruneIfStale(maxAgeDays = 7) {
+  async pruneIfStale(maxAgeDays = 7, force = false) {
     const last = parseInt(utils.safeLS.get(PRUNE_KEY, '0'), 10);
-    if (Date.now() - last < 86_400_000) return;
+    if (!force && Date.now() - last < 86_400_000) return;
     await this._ready;
     const cutoff = new Date(Date.now() - maxAgeDays * 86_400_000).toISOString();
     await new Promise((res, rej) => {
@@ -3454,7 +3492,13 @@ class DeFiX {
        Refreshed from IDB on init and on channel switch; updated
        incrementally when new reactions arrive. */
     this._engagement   = { replyMap: new Map(), likeMap: new Map(),
-                           repostMap: new Map(), engagerMap: new Map() };
+                           repostMap: new Map(), engagerMap: new Map(),
+                           /* target → Map(engager → {liked, ts}). Tracks each
+                              engager's latest like-state by timestamp so an
+                              UNLIKE removes an earlier LIKE from the count,
+                              regardless of the order batches arrive in.
+                              likeMap is derived from this. */
+                           likeState: new Map() };
     this._engagementReady = false;
     /* Poll vote tallies: pollTxHash → { counts:[n], voters:Map(addr→optIdx),
        total, scannedAt }. Populated lazily by _tallyPoll on render. */
@@ -8168,6 +8212,7 @@ class DeFiX {
     if (reset) {
       eng.replyMap.clear(); eng.likeMap.clear();
       eng.repostMap.clear(); eng.engagerMap.clear();
+      eng.likeState.clear();
     }
     /* Track which (target, engager) pairs we've already counted so
        incremental updates don't double-count. The engagerMap value is a
@@ -8181,13 +8226,26 @@ class DeFiX {
           eng.replyMap.set(p.parentTx, (eng.replyMap.get(p.parentTx) || 0) + 1);
         }
       }
-      if (p.postType === 'like' && p.reactionTarget) {
-        if (!eng.engagerMap.has(p.reactionTarget)) eng.engagerMap.set(p.reactionTarget, new Set());
-        const set = eng.engagerMap.get(p.reactionTarget);
-        if (!set.has(p.reporter)) {
-          set.add(p.reporter);
-          eng.likeMap.set(p.reactionTarget, (eng.likeMap.get(p.reactionTarget) || 0) + 1);
+      if ((p.postType === 'like' || p.postType === 'unlike') && p.reactionTarget) {
+        const target = p.reactionTarget;
+        /* engagerMap is the "ever interacted" set behind the eye/interaction
+           count — a like OR an unlike both count as having interacted, so we
+           record presence either way (idempotent via the Set). */
+        if (!eng.engagerMap.has(target)) eng.engagerMap.set(target, new Set());
+        eng.engagerMap.get(target).add(p.reporter);
+        /* likeMap is the CURRENT like count. Keep the latest like-state per
+           engager (by timestamp) so an UNLIKE undoes an earlier LIKE no
+           matter what order batches are merged in, then recount. */
+        if (!eng.likeState.has(target)) eng.likeState.set(target, new Map());
+        const states = eng.likeState.get(target);
+        const ts     = Date.parse(p.timestamp) || 0;
+        const prev   = states.get(p.reporter);
+        if (!prev || ts >= prev.ts) {
+          states.set(p.reporter, { liked: p.postType === 'like', ts });
         }
+        let count = 0;
+        states.forEach(s => { if (s.liked) count++; });
+        eng.likeMap.set(target, count);
       }
       if (p.postType === 'repost' && p.repostOf) {
         if (!eng.engagerMap.has(p.repostOf)) eng.engagerMap.set(p.repostOf, new Set());
@@ -12133,6 +12191,11 @@ if ('serviceWorker' in navigator) {
             if (e.target.state === 'activated') sendVer();
           });
         });
+        /* Resend the version when a freshly-installed worker takes control.
+           Without this, a just-activated SW that wasn't yet controlling the
+           page at load never receives the new CACHE_VER, so the "new version
+           available" toast is intermittently missed and users lag a deploy. */
+        navigator.serviceWorker.addEventListener('controllerchange', sendVer);
         /* When the SW signals a new version is ready, show the user
            a refresh banner so they get the update without a hard reload. */
         navigator.serviceWorker.addEventListener('message', e => {
