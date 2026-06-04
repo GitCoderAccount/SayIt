@@ -341,7 +341,7 @@ nav { flex:1; padding:4px 0; }
 .compose-body { flex:1; min-width:0; }
 
 #compose-text {
-  width:100%; min-height:52px; max-height:400px;
+  width:100%; min-height:30px; max-height:400px;
   padding:4px 0; background:transparent; border:none;
   color:var(--text); font-size:20px; resize:none;
   overflow-y:auto; line-height:1.4;
@@ -2780,6 +2780,7 @@ const utils = {
         if (h === 'youtu.be')               id = u.pathname.slice(1).split('/')[0];
         else if (u.pathname.startsWith('/shorts/')) id = u.pathname.split('/')[2] || '';
         else if (u.pathname.startsWith('/embed/'))  id = u.pathname.split('/')[2] || '';
+        else if (u.pathname.startsWith('/live/'))   id = u.pathname.split('/')[2] || '';
         else                                id = u.searchParams.get('v') || '';
         return /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
       } catch { return null; }
@@ -3752,6 +3753,18 @@ class DeFiX {
          The sidebar/feed elements get this click event normally. */
     }, true /* capture phase: run before target handlers */);
 
+    /* Backstop: a capture-phase pointerdown also dismisses the popup on any
+       outside tap/click. Covers cases the click path can miss (e.g. the
+       trigger element was removed by a feed re-render, or a handler swallows
+       the click). Triggers themselves are excluded so they can re-open/toggle. */
+    document.addEventListener('pointerdown', e => {
+      const popup = this.g('profile-popup');
+      if (!popup?.classList.contains('open')) return;
+      if (popup.contains(e.target)) return;
+      if (e.target.closest?.('.post-name, .post-avatar')) return;
+      this.hideProfilePopup();
+    }, true);
+
     g('feed').addEventListener('mouseover', onFeedMouseover);
     g('feed').addEventListener('mouseout',  onFeedMouseout);
 
@@ -4123,7 +4136,14 @@ class DeFiX {
       this.state.expanded.has(post.txHash)
         ? this.state.expanded.delete(post.txHash)
         : this.state.expanded.add(post.txHash);
-      this.renderFeed();
+      /* Re-render ONLY this post in place. A full renderFeed() would
+         re-virtualize from the top and re-placeholder posts past the initial
+         mount window, so expanding a post far down the feed appeared to do
+         nothing (and jumped scroll). Swap this item's content and re-measure. */
+      const m = this._vfMaps || {};
+      item.innerHTML = this.postHTML(post, inModal, m.replyMap, m.likeMap, m.repostMap, m.engagerMap);
+      if (this._vfHeightMap) this._vfHeightMap.set(post.txHash, item.offsetHeight);
+      this._wireVideoObserver?.(item);
     } else if (action === 'reply') {
       e.stopPropagation();
       this.openReplyModal(post);
@@ -4312,6 +4332,9 @@ class DeFiX {
     this.setNav('nav-home','home');
     this.state.mode    = 'main';
     this.state.channel = MAIN_CHANNEL;
+    /* Clear any stale search from a prior view so the home feed isn't
+       filtered by it and the search box doesn't keep the old query. */
+    this._clearSearch();
     /* Home: tabs are the sticky top element, no title header */
     this.g('feed-tabs').style.display      = 'flex';
     this.g('feed-tabs').classList.add('tabs-sticky');
@@ -6478,6 +6501,7 @@ class DeFiX {
      For others: scan their sent txs for FOLLOW: prefixes. */
   async _showFollowingList(address, isOwn) {
     this.state.mode = 'followlist';
+    this._clearSearch();
     this.g('compose-area').style.display = 'none';
     this.g('channel-banner').style.display = 'none';
     this.g('new-banner')?.classList.remove('visible');
@@ -6550,6 +6574,7 @@ class DeFiX {
        page (which previously made the compose box reappear at the top and
        could wipe the freshly-scanned follower list). */
     this.state.mode = 'followlist';
+    this._clearSearch();
     const navToken = (this._navToken = (this._navToken || 0) + 1);
     this.g('compose-area').style.display = 'none';
     this.g('channel-banner').style.display = 'none';
@@ -10440,6 +10465,7 @@ class DeFiX {
 
     /* Position popup near anchor — clamped to viewport. */
     this._positionPopup(popup, anchorEl);
+    clearTimeout(popup._openRemoveTimer); /* cancel any pending hide */
     popup.classList.add('open');
     requestAnimationFrame(() => popup.classList.add('visible'));
 
@@ -10535,10 +10561,14 @@ class DeFiX {
 
   hideProfilePopup() {
     const popup = this.g('profile-popup');
-    if (!popup || !popup.classList.contains('open')) return;
+    if (!popup) return;
+    /* Always clear 'visible' (idempotent, no early-return) so the popup can
+       never get stuck on screen. The deferred 'open' removal is token-guarded
+       (cleared on re-open) so a stale timer can't desync the classes. */
+    clearTimeout(popup._pendingClose); popup._pendingClose = null;
+    clearTimeout(popup._openRemoveTimer);
     popup.classList.remove('visible');
-    /* Remove .open after transition so CSS opacity:0 plays */
-    setTimeout(() => popup.classList.remove('open'), 150);
+    popup._openRemoveTimer = setTimeout(() => popup.classList.remove('open'), 180);
     /* Clean up ESC/scroll listener (click is handled by permanent listener) */
     if (this._popupDismiss) {
       document.removeEventListener('keydown', this._popupDismiss);
@@ -10546,8 +10576,6 @@ class DeFiX {
       this._popupDismiss = null;
     }
     this._popupHandlersAttached = false;
-    clearTimeout(popup._pendingClose);
-    popup._pendingClose = null;
   }
 
   /* ── Share card ─────────────────────────────────────────────────── */
@@ -11440,6 +11468,17 @@ class DeFiX {
     const has = inp.value.length > 0;
     btn.classList.toggle('show', has);
     inp.classList.toggle('has-value', has);
+  }
+
+  /* Reset search state + the search box. Called when navigating to a view that
+     isn't a search result (e.g. the followers/following lists, Home) so a
+     stale query can't linger in the box or filter the next feed. */
+  _clearSearch() {
+    this.state.searchTerm = '';
+    this.state.activeTag  = null;
+    const si = this.g('search-input');
+    if (si) si.value = '';
+    this._updateSearchClearBtn();
   }
 
   trunc = a => (a && a.length > 10) ? `${a.slice(0,6)}...${a.slice(-4)}` : (a || '');
