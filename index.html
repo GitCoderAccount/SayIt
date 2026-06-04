@@ -2055,9 +2055,11 @@ nav { flex:1; padding:4px 0; }
   display:flex; border-bottom:1px solid var(--border);
   position:sticky; top:53px; z-index:10;
   background:rgba(0,0,0,0.85); backdrop-filter:blur(12px);
+  overflow-x:auto; scrollbar-width:none;
 }
+.prof-tabs::-webkit-scrollbar { display:none; }
 .prof-tab {
-  flex:1; padding:14px 0; text-align:center;
+  flex:1 0 auto; padding:14px 18px; text-align:center;
   font-size:14px; font-weight:500; color:var(--muted);
   background:transparent; border:none; cursor:pointer;
   position:relative; transition:background 0.18s, color 0.18s;
@@ -2703,6 +2705,7 @@ const VOTE_PREFIX       = 'VOTE:';   /* VOTE:0xpollhash:optionIndex */
 const NOTE_PREFIX       = 'NOTE:';     /* NOTE:0xposthash\n\nnote text (community note) */
 const NOTERATE_PREFIX   = 'NOTERATE:'; /* NOTERATE:0xnotehash:h|n (helpful/not, last-wins) */
 const NOTE_SHOW_THRESHOLD = 2;         /* net helpful (helpful − not) to graduate to "context" */
+const PROFILE_INIT_PAGES  = 4;         /* pages scanned for the FIRST profile paint; rest streams on scroll */
 const SETTINGS_KEY    = 'defixSettings';
 const MUTE_KEY        = 'defixMuted';   /* JSON array of muted addresses */
 const LISTS_KEY       = 'defixLists';       /* JSON array of {id,name,members[]} */
@@ -3695,7 +3698,12 @@ class DeFiX {
         e.stopPropagation();
         const item = e.target.closest('.post-item');
         const post = item ? this._postMap.get(item.dataset.txhash) : null;
-        if (post?.reporter) this.showProfilePopup(post.reporter, name || avatar);
+        if (post?.reporter) {
+          /* Click navigates straight to the profile (like X). The hovercard
+             still appears on hover via the separate mouseover handler. */
+          this.hideProfilePopup();
+          this.goProfilePage(post.reporter, post.reporter === this.state.signerAddr);
+        }
         return;
       }
       this.onFeedClick(e, inModal);
@@ -6536,6 +6544,8 @@ class DeFiX {
       <div class="prof-tabs">
         <button class="prof-tab active" data-ptab="posts">Posts</button>
         <button class="prof-tab" data-ptab="replies">Replies</button>
+        <button class="prof-tab" data-ptab="highlights">Highlights</button>
+        <button class="prof-tab" data-ptab="articles">Articles</button>
         <button class="prof-tab" data-ptab="media">Media</button>
         <button class="prof-tab" data-ptab="likes">Likes</button>
       </div>
@@ -7072,6 +7082,19 @@ class DeFiX {
       return;
     }
 
+    /* Highlights / Articles — placeholders for now. Articles will be a Premium
+       feature for long-form, on-chain posts (essays, guides, even books);
+       Highlights will let users pin standout posts. */
+    if (tab === 'highlights' || tab === 'articles') {
+      const isArt = tab === 'articles';
+      feedEl.innerHTML = `<div class="prof-empty"><span>${isArt ? '📰' : '✨'}</span>
+        <h3>${isArt ? 'Articles' : 'Highlights'}</h3>
+        <p>${isArt
+          ? 'Long-form articles are coming soon — a Premium feature for posting essays, guides, or even whole books on-chain.'
+          : 'Highlighted posts are coming soon.'}</p></div>`;
+      return;
+    }
+
     /* Match same media-detection logic as linkify */
     const imgRe     = /\.(jpg|jpeg|png|gif|webp|svg|avif|tiff|bmp)(\?[^\s]*)?$/i;
     const ipfsRe    = /\/(ipfs|ipns)\//i;
@@ -7089,6 +7112,7 @@ class DeFiX {
 
     try {
       let posts = [];
+      let scannedHasMore = false; /* set below: were there more pages past the initial scan? */
 
       if (tab === 'likes') {
         /* Likes: resolve txHashes from state.likes */
@@ -7111,11 +7135,15 @@ class DeFiX {
         const cacheKey = `${address}_${_limit}`;
         let raw = this._profileScanCache[cacheKey];
         if (!raw) {
-          raw = await this._scanProfilePages(address, null); /* uses _getMaxScanPages() */
+          /* Initial paint: scan only a few pages so posts appear immediately;
+             deeper history streams in via fetchProfileMore (scroll / fill). */
+          raw = await this._scanProfilePages(address, PROFILE_INIT_PAGES);
           /* Cache for 60s — covers all tab switching */
           this._profileScanCache[cacheKey] = raw;
           setTimeout(() => { delete this._profileScanCache[cacheKey]; }, 60_000);
         }
+        /* If the initial scan filled all its pages, there's likely more. */
+        scannedHasMore = raw.length >= PROFILE_INIT_PAGES * 50;
 
         raw.forEach(tx => {
           const from = tx.from?.toLowerCase();
@@ -7145,6 +7173,19 @@ class DeFiX {
       }
 
       if (!posts.length) {
+        /* No matching posts in the initial pages, but more history remains —
+           don't show the empty state yet; keep scanning deeper pages. */
+        if (scannedHasMore && tab !== 'likes') {
+          if (this._profilePageState) {
+            this._profilePageState.tab = tab;
+            this._profilePageState.pagesScanned = Math.max(this._profilePageState.pagesScanned, PROFILE_INIT_PAGES);
+            this._profilePageState.hasMore = true;
+            this._profilePageState.visibleTxHashes = new Set();
+          }
+          feedEl.innerHTML = `<div class="prof-empty" id="prof-loading-deep"><span>⏳</span><h3>Loading…</h3></div>`;
+          this._fillProfileViewport();
+          return;
+        }
         const empties = {
           posts:   ['📝','No posts yet',   'Posts will appear here.'],
           replies: ['💬','No replies yet', 'Replies to others appear here.'],
@@ -7201,9 +7242,13 @@ class DeFiX {
       /* Seed pagination state so infinite scroll won't re-show these posts. */
       if (this._profilePageState) {
         this._profilePageState.tab = tab;
-        this._profilePageState.pagesScanned = Math.max(this._profilePageState.pagesScanned, maxPages);
+        this._profilePageState.pagesScanned = Math.max(this._profilePageState.pagesScanned, PROFILE_INIT_PAGES);
+        this._profilePageState.hasMore = scannedHasMore;
         this._profilePageState.visibleTxHashes = new Set(posts.map(p => p.txHash));
       }
+      /* If the initial posts don't fill the screen, auto-load more so the user
+         sees a full feed without having to scroll a short page. */
+      if (tab !== 'likes' && scannedHasMore) this._fillProfileViewport();
 
     } catch (err) {
       feedEl.innerHTML = `<div class="prof-empty"><span>⚠️</span><h3>Error loading tab</h3><p>${utils.safe(err.message)}</p></div>`;
@@ -10791,6 +10836,9 @@ class DeFiX {
       });
       if (fresh.length && feedEl && feedEl.isConnected &&
           (!footer || footer.parentNode === feedEl)) {
+        /* Clear the deep-loading placeholder shown when the first pages had
+           no matching posts. */
+        document.getElementById('prof-loading-deep')?.remove();
         const frag = document.createDocumentFragment();
         const replyMap = new Map();
         fresh.forEach(p => { if (p.parentTx) replyMap.set(p.parentTx, (replyMap.get(p.parentTx)||0)+1); });
@@ -10842,6 +10890,22 @@ class DeFiX {
       }
     } finally {
       st.loading = false;
+    }
+  }
+
+  /* Auto-load more profile pages until the content is tall enough to scroll
+     (or history runs out). Without this, a short first paint — e.g. an active
+     account whose first pages are mostly replies/reactions on the Posts tab —
+     would strand the user with no way to trigger infinite scroll. Capped. */
+  async _fillProfileViewport() {
+    for (let guard = 0; guard < 12; guard++) {
+      const st = this._profilePageState;
+      if (!st || !st.hasMore || this.state.mode !== 'profile') break;
+      if (document.documentElement.scrollHeight > window.innerHeight + 400) break;
+      const before = st.pagesScanned;
+      await this.fetchProfileMore();
+      const st2 = this._profilePageState;
+      if (!st2 || st2.pagesScanned === before) break; /* no progress / navigated away */
     }
   }
 
