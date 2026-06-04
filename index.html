@@ -7,15 +7,16 @@
 <meta name="description" content="Uncensorable social media on PulseChain. Post on-chain, own your voice. No accounts, no servers, no middlemen — just your wallet and the chain.">
 <!-- Open Graph / Facebook / Discord / Telegram link previews -->
 <meta property="og:type" content="website">
+<meta property="og:url" content="https://sayitdefi.com/">
 <meta property="og:site_name" content="Say It DeFi">
 <meta property="og:title" content="Say It DeFi — uncensorable social on PulseChain">
 <meta property="og:description" content="Post on-chain, own your voice. No accounts, no servers, no middlemen.">
-<meta property="og:image" content="image1.jpeg">
+<meta property="og:image" content="https://sayitdefi.com/image1.jpeg">
 <!-- Twitter Card -->
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Say It DeFi — uncensorable social on PulseChain">
 <meta name="twitter:description" content="Post on-chain, own your voice. No accounts, no servers, no middlemen.">
-<meta name="twitter:image" content="image1.jpeg">
+<meta name="twitter:image" content="https://sayitdefi.com/image1.jpeg">
 <link rel="icon" type="image/jpeg" href="image1.jpeg">
 <link rel="manifest" href="./manifest.json">
 <link rel="apple-touch-icon" href="./image1.jpeg">
@@ -1146,32 +1147,6 @@ nav { flex:1; padding:4px 0; }
 .sb-footer a:hover { color:var(--text); }
 .sb-footer-row { display:flex; flex-wrap:wrap; margin-bottom:8px; }
 .sb-copyright { font-size:12px; color:var(--muted); opacity:0.55; margin-top:6px; line-height:1.4; }
-
-/* DeFiX channel card */
-.defix-inner {
-  background:linear-gradient(135deg,rgba(124,77,255,0.1),rgba(179,136,255,0.06));
-  padding:14px 16px; cursor:pointer; transition:background 0.2s;
-  border-radius:16px;
-}
-.defix-inner:hover {
-  background:linear-gradient(135deg,rgba(124,77,255,0.18),rgba(179,136,255,0.1));
-}
-.defix-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
-.defix-brand { display:flex; align-items:center; gap:10px; }
-.defix-icon {
-  width:36px; height:36px;
-  background:linear-gradient(135deg,var(--primary),var(--primary-lt));
-  border-radius:10px; display:flex; align-items:center;
-  justify-content:center; font-size:18px; flex-shrink:0;
-}
-.defix-name {
-  font-size:14px; font-weight:700;
-  background:linear-gradient(90deg,var(--primary),var(--primary-lt));
-  -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
-}
-.defix-sub  { font-size:11px; color:var(--muted); }
-.defix-tag  { font-size:11px; font-weight:700; color:var(--primary-lt); }
-.defix-desc { font-size:12px; color:var(--muted); line-height:1.5; }
 
 /* ── Mobile ─────────────────────────────────────────────────────────────── */
 #mobile-fab {
@@ -2416,11 +2391,11 @@ nav { flex:1; padding:4px 0; }
     <!-- Footer links -->
     <div class="sb-footer">
       <div class="sb-footer-row">
-        <a href="https://github.com/HyperLightCoder/Pulse-Underground/blob/main/README.md"
+        <a href="https://github.com/GitCoderAccount/SayIt/blob/main/README.md"
           target="_blank" rel="noopener noreferrer">About</a>
         <a href="https://pulsechain.com"
           target="_blank" rel="noopener noreferrer">PulseChain</a>
-        <a href="https://github.com/HyperLightCoder/Pulse-Underground"
+        <a href="https://github.com/GitCoderAccount/SayIt"
           target="_blank" rel="noopener noreferrer">GitHub</a>
         <a href="#" id="footer-disclaimer"
           onclick="event.preventDefault();pulse.showDisclaimer(true);">Disclaimer</a>
@@ -2703,7 +2678,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260604-54';
+const SW_CACHE_VER = '20260604-55';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -2718,11 +2693,11 @@ const POSTS_TARGET   = 20;
 const MAX_PAGES      = 40;
 const POLL_FIRST_MS  = 30_000;
 const POLL_MS        = 120_000;
-const DRAFT_KEY      = 'defixDraft';
-const PRUNE_KEY      = 'defixLastPrune';
-const LAST_CHECK_KEY = 'defixLastCheck';
-const DISCLAIMER_KEY = 'defixDisclaimerAck'; /* '1' once the user has acknowledged */
-const DEFIX_CHANNEL  = '0x0000000000000000000000000000000000000001'; /* placeholder — update with real address */
+const DRAFT_KEY      = 'sayitDraft';
+const PRUNE_KEY      = 'sayitLastPrune';
+const LAST_CHECK_KEY = 'sayitLastCheck';
+const DISCLAIMER_KEY = 'sayitDisclaimerAck'; /* '1' once the user has acknowledged */
+const OFFICIAL_CHANNEL  = '0x0000000000000000000000000000000000000001'; /* placeholder — update with real address */
 const LIKE_PREFIX       = 'LIKE:';
 const UNLIKE_PREFIX     = 'UNLIKE:';
 const BOOKMARK_PREFIX   = 'BOOKMARK:';
@@ -2735,16 +2710,16 @@ const NOTE_PREFIX       = 'NOTE:';     /* NOTE:0xposthash\n\nnote text (communit
 const NOTERATE_PREFIX   = 'NOTERATE:'; /* NOTERATE:0xnotehash:h|n (helpful/not, last-wins) */
 const NOTE_SHOW_THRESHOLD = 2;         /* net helpful (helpful − not) to graduate to "context" */
 const PROFILE_INIT_PAGES  = 4;         /* pages scanned for the FIRST profile paint; rest streams on scroll */
-const SETTINGS_KEY    = 'defixSettings';
-const MUTE_KEY        = 'defixMuted';   /* JSON array of muted addresses */
-const LISTS_KEY       = 'defixLists';       /* JSON array of {id,name,members[]} */
-const COMMUNITIES_KEY = 'defixCommunities'; /* JSON array of {address,name,desc,joined} */
+const SETTINGS_KEY    = 'sayitSettings';
+const MUTE_KEY        = 'sayitMuted';   /* JSON array of muted addresses */
+const LISTS_KEY       = 'sayitLists';       /* JSON array of {id,name,members[]} */
+const COMMUNITIES_KEY = 'sayitCommunities'; /* JSON array of {address,name,desc,joined} */
 /* On-chain sync: a single self-tx publishes a snapshot of all lists +
    joined communities as JSON. Scanning the user's own outbox for the latest
    LC_SYNC restores them on any device. One tx per publish (not per edit) —
    keeps gas reasonable while making the data portable + publicly visible. */
 const LC_SYNC_PREFIX  = 'LC_SYNC:';
-const CHANNELS_KEY    = 'defixChannelsScan';
+const CHANNELS_KEY    = 'sayitChannelsScan';
 
 const ERC721_ABI = [
   'function tokenURI(uint256 tokenId) view returns (string)',
@@ -3123,7 +3098,7 @@ class Cache {
   constructor() {
     this._db    = null;
     this._ready = new Promise((res, rej) => {
-      const req = indexedDB.open('DeFiX', 3);
+      const req = indexedDB.open('SayIt', 3);
       req.onupgradeneeded = e => {
         const db  = e.target.result;
         const old = e.oldVersion;
@@ -3429,7 +3404,7 @@ class Cache {
 }
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
-class DeFiX {
+class SayIt {
   constructor() {
     this.state = {
       posts: [], pending: [], searchTerm: '', activeTag: null,
@@ -4015,11 +3990,6 @@ class DeFiX {
     g('ch-self').onclick = () => this.goSelf();
     g('ch-go').onclick   = () => this.goCustom();
     g('custom-input').onkeydown = e => { if (e.key === 'Enter') this.goCustom(); };
-    const dcb = g('defix-card-btn');
-    if (dcb) {
-      dcb.onclick   = () => this.goDeFiX();
-      dcb.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') this.goDeFiX(); };
-    }
 
     window.addEventListener('scroll', utils.throttle(() => this.onScroll(), 100), { passive: true });
 
@@ -4625,7 +4595,7 @@ class DeFiX {
           ? '<button class="btn-pri" id="disclaimer-close">Close</button>'
           : '<button class="btn-pri" id="disclaimer-agree">I Understand &amp; Agree</button>'}
       </div>`;
-    this._showGenericModal('Welcome to the underground', body);
+    this._showGenericModal('Welcome to Say It DeFi', body);
     const agree = document.getElementById('disclaimer-agree');
     if (agree) agree.onclick = () => {
       utils.safeLS.set(DISCLAIMER_KEY, '1');
@@ -4953,11 +4923,11 @@ class DeFiX {
     await this.resetAndFetch();
   }
 
-  async goDeFiX() {
+  async goOfficialChannel() {
     this.setNav(null, null);
     this.state.mode    = 'custom';
-    this.state.channel = DEFIX_CHANNEL;
-    this.g('custom-input').value         = DEFIX_CHANNEL;
+    this.state.channel = OFFICIAL_CHANNEL;
+    this.g('custom-input').value         = OFFICIAL_CHANNEL;
     this.g('feed-tabs').classList.remove('tabs-sticky');
     this.g('feed-tabs').style.display = 'none';
     this._pendingPageHeader = this._makePageHeader({
@@ -4966,7 +4936,7 @@ class DeFiX {
     this.g('feed-tabs').style.display    = 'none';
     this.setChActive(null);
     this.updateChLabel();
-    this.showChannelBanner(DEFIX_CHANNEL);
+    this.showChannelBanner(OFFICIAL_CHANNEL);
     await this.resetAndFetch();
   }
 
@@ -5408,7 +5378,7 @@ class DeFiX {
         onclick: 'pulse.goHome()',
       },
       {
-        id: 'defix',
+        id: 'official',
         name: 'Say It DeFi Channel',
         sub: 'Official updates & tech',
         desc: 'Technical updates, announcements and discussions about Say It DeFi.',
@@ -5416,7 +5386,7 @@ class DeFiX {
         gradient: 'linear-gradient(135deg,rgba(124,77,255,0.18),rgba(179,136,255,0.10))',
         accent: 'var(--primary-lt)',
         link: null,
-        onclick: 'pulse.goDeFiX()',
+        onclick: 'pulse.goOfficialChannel()',
       },
     ];
     return `
@@ -5663,7 +5633,7 @@ class DeFiX {
           No server, no backend, no ads.
         </div>
         <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
-          <a href="https://github.com/HyperLightCoder/Pulse-Underground" target="_blank" rel="noopener noreferrer"
+          <a href="https://github.com/GitCoderAccount/SayIt" target="_blank" rel="noopener noreferrer"
             class="settings-btn" style="text-decoration:none;display:inline-block">GitHub ↗</a>
           <a href="https://pulsechain.com" target="_blank" rel="noopener noreferrer"
             class="settings-btn" style="text-decoration:none;display:inline-block">PulseChain ↗</a>
@@ -5991,7 +5961,7 @@ class DeFiX {
     try {
       const prov = new ethers.providers.Web3Provider(eth);
       const accs = await prov.listAccounts();
-      if (accs.length && utils.safeLS.get('defixConnected') === '1') {
+      if (accs.length && utils.safeLS.get('sayitConnected') === '1') {
         this.signer = prov.getSigner();
         this.state.signerAddr = (await this.signer.getAddress()).toLowerCase();
         this._registerWalletListeners();
@@ -6065,7 +6035,7 @@ class DeFiX {
       await prov.send('eth_requestAccounts', []);
       this.signer = prov.getSigner();
       this.state.signerAddr = (await this.signer.getAddress()).toLowerCase();
-      utils.safeLS.set('defixConnected', '1');
+      utils.safeLS.set('sayitConnected', '1');
       this._registerWalletListeners();
       await this.afterConnect();
       utils.toast('Wallet connected ✓');
@@ -6208,7 +6178,7 @@ class DeFiX {
     this.g('ap-name').textContent    = 'My Wallet';
     this.g('ap-addr').textContent    = '';
     this.clearNotifBadge();
-    utils.safeLS.remove('defixConnected');
+    utils.safeLS.remove('sayitConnected');
     this.renderFeed();
     utils.toast('Wallet disconnected');
   }
@@ -10899,7 +10869,7 @@ class DeFiX {
       "What's on your mind?",
       "Drop something uncensorable…",
       "Speak freely — the chain remembers.",
-      "Post to the underground.",
+      "Say it on-chain.",
     ];
     const targets = ['compose-text', 'modal-compose-text'].map(id => this.g(id)).filter(Boolean);
     if (targets.length === 0) return;
@@ -12189,7 +12159,7 @@ class DeFiX {
   };
 }
 
-const pulse = new DeFiX();
+const pulse = new SayIt();
 /* Capture the URL hash at load time so a deep link (#/post/…, #/profile/…)
    isn't clobbered by the default Home bootstrap before we can route to it. */
 const INITIAL_HASH = location.hash;
