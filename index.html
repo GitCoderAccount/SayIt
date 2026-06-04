@@ -1949,6 +1949,31 @@ nav { flex:1; padding:4px 0; }
 .x-embed-handle { display:block; font-size:14px; color:var(--primary-lt); margin-top:6px; }
 .x-embed-cta { display:block; font-size:13px; color:var(--muted); margin-top:2px; }
 
+/* Community notes */
+.note-slot:empty { display:none; }
+.note-pending-toggle {
+  display:block; width:100%; text-align:left; margin:8px 0 4px;
+  background:rgba(255,196,0,0.07); border:1px solid var(--border);
+  border-radius:12px; padding:10px 12px; color:var(--text);
+  font-size:13px; cursor:pointer; transition:background 0.15s;
+}
+.note-pending-toggle:hover { background:rgba(255,196,0,0.12); }
+.note-card {
+  margin:8px 0 4px; border:1px solid var(--border); border-radius:12px;
+  padding:12px 14px; background:var(--bg-dark);
+}
+.note-card-pending { border-style:dashed; }
+.note-card-hdr { font-size:13px; font-weight:700; color:var(--text); margin-bottom:6px; }
+.note-card-body { font-size:14px; color:var(--text); line-height:1.5; word-break:break-word; }
+.note-rate-row { display:flex; align-items:center; gap:10px; margin-top:8px; flex-wrap:wrap; }
+.note-score { font-size:12px; color:var(--muted); margin-right:auto; }
+.note-rate-btn {
+  background:transparent; border:1px solid var(--border); color:var(--text);
+  border-radius:9999px; padding:4px 12px; font-size:12px; font-weight:600; cursor:pointer;
+}
+.note-rate-btn:hover { background:rgba(255,255,255,0.06); }
+.note-rate-btn.on { background:var(--primary); border-color:var(--primary); color:#fff; }
+
 /* Profile page (full in-column view) ─────────────────────────────────── */
 .prof-page { flex:1; overflow-y:auto; }
 
@@ -2675,6 +2700,9 @@ const FOLLOW_PREFIX     = 'FOLLOW:';
 const UNFOLLOW_PREFIX   = 'UNFOLLOW:';
 const POLL_PREFIX       = 'POLL:';   /* POLL:{json}\n\nQuestion text */
 const VOTE_PREFIX       = 'VOTE:';   /* VOTE:0xpollhash:optionIndex */
+const NOTE_PREFIX       = 'NOTE:';     /* NOTE:0xposthash\n\nnote text (community note) */
+const NOTERATE_PREFIX   = 'NOTERATE:'; /* NOTERATE:0xnotehash:h|n (helpful/not, last-wins) */
+const NOTE_SHOW_THRESHOLD = 2;         /* net helpful (helpful − not) to graduate to "context" */
 const SETTINGS_KEY    = 'defixSettings';
 const MUTE_KEY        = 'defixMuted';   /* JSON array of muted addresses */
 const LISTS_KEY       = 'defixLists';       /* JSON array of {id,name,members[]} */
@@ -3401,6 +3429,13 @@ class DeFiX {
     this._pollTallies  = new Map();
     this._pollScanning = new Set(); /* poll hashes with an in-flight tally */
     this._myVotes      = new Map(); /* pollHash → optIdx the user has voted (session) */
+    /* Community Notes: per-post note data, scan throttle, session ratings,
+       and which posts have their pending-note panel expanded. */
+    this._noteData      = new Map(); /* postHash → { notes:[…], scannedAt } */
+    this._noteScanning  = new Set(); /* channels with an in-flight note scan */
+    this._noteScanAt    = new Map(); /* channel → last scan timestamp */
+    this._myNoteRatings = new Map(); /* noteHash → 'h'|'n' (session, optimistic) */
+    this._expandedNotes = new Set(); /* postHashes whose pending notes are shown */
     this._navToken     = 0;         /* bumped on every navigation; async view
                                        renders check it before painting #feed */
     /* Tab title + favicon badge state. _titleSuffix is the per-view label
@@ -4124,6 +4159,22 @@ class DeFiX {
     if (voteBtn) {
       e.stopPropagation();
       this.votePoll(voteBtn.dataset.pollHash, Number(voteBtn.dataset.pollVote));
+      return;
+    }
+    /* Community-note controls: expand/collapse the proposed-note panel, or rate. */
+    const noteExpand = e.target.closest('[data-note-expand]');
+    if (noteExpand) {
+      e.stopPropagation();
+      const ph = noteExpand.dataset.noteExpand;
+      this._expandedNotes.has(ph) ? this._expandedNotes.delete(ph) : this._expandedNotes.add(ph);
+      this._refreshNoteSlot(ph);
+      return;
+    }
+    const noteRate = e.target.closest('[data-note-rate]');
+    if (noteRate) {
+      e.stopPropagation();
+      const host = e.target.closest('.post-item');
+      this.rateNote(noteRate.dataset.noteRate, noteRate.dataset.noteVal, host?.dataset.txhash);
       return;
     }
     const action = e.target.closest('[data-action]')?.dataset.action;
@@ -7448,6 +7499,8 @@ class DeFiX {
     /* Non-post payloads that never render as feed items. */
     if (text.startsWith(PROFILE_PREFIX)) return null;
     if (text.startsWith(VOTE_PREFIX)) return null;
+    /* Community notes + ratings are not feed posts — gathered via _scanChannelNotes. */
+    if (text.startsWith(NOTE_PREFIX) || text.startsWith(NOTERATE_PREFIX)) return null;
     if (text.startsWith(LIKE_PREFIX) || text.startsWith(UNLIKE_PREFIX)
       || text.startsWith(BOOKMARK_PREFIX) || text.startsWith(UNBOOKMARK_PREFIX)
       || text.startsWith(FOLLOW_PREFIX) || text.startsWith(UNFOLLOW_PREFIX)) return null;
@@ -7515,6 +7568,8 @@ class DeFiX {
       /* VOTE txs are not feed posts — they're tallied separately. Drop
          them from the post list entirely. */
       if (raw.startsWith(VOTE_PREFIX)) return acc;
+      /* Community notes + ratings — not feed posts (handled by _scanChannelNotes) */
+      if (raw.startsWith(NOTE_PREFIX) || raw.startsWith(NOTERATE_PREFIX)) return acc;
       if (raw.startsWith(UNLIKE_PREFIX)) {
         postType = 'unlike';
         reactionTarget = raw.slice(UNLIKE_PREFIX.length).trim().toLowerCase();
@@ -7938,6 +7993,9 @@ class DeFiX {
     this._vfInitObserver(feed);
     /* Measure the mounted posts so future swaps use real heights. */
     this._vfMeasureMounted(feed);
+    /* Gather community notes for this channel (throttled 60s) and fill in the
+       note slots when done. Fire-and-forget — doesn't block the render. */
+    this._scanChannelNotes();
   }
 
   /* Build engagement maps from the full IDB cache. Counts every reply,
@@ -8285,6 +8343,7 @@ class DeFiX {
           ${post.poll ? this._pollHTML(post) : ''}
           ${repostCard}
           ${embedHtml || ''}
+          <div class="note-slot" data-note-host="${utils.safe(post.txHash)}">${this._noteHTML(post)}</div>
           ${needsMore ? `<button class="read-more-btn" data-action="expand">Show more ↓</button>` : ''}
           ${canCollapse ? `<button class="read-more-btn" data-action="expand">Show less ↑</button>` : ''}
           ${imgHtml ? `<div class="post-images">${imgHtml}</div>` : ''}
@@ -8543,6 +8602,201 @@ class DeFiX {
   }
 
   /* Open the poll composer modal. */
+  /* ── Community Notes ──────────────────────────────────────────────────
+     A note is an on-chain tx `NOTE:<postHash>\n\n<text>`; ratings are
+     `NOTERATE:<noteHash>:h|n` (last-rating-wins per address). Notes stay
+     "proposed" (rate-able behind a marker) until net helpful reaches
+     NOTE_SHOW_THRESHOLD, then graduate to a public "Readers added context"
+     card — the X model. Notes are gathered with ONE channel scan per render
+     (throttled 60s), not per-post, so the cost matches a single poll tally. */
+  async _sendTagged(channel, body) {
+    const data = ethers.utils.hexlify(ethers.utils.toUtf8Bytes(body));
+    let gas = await this.signer.estimateGas({ to: channel, value: '0', data });
+    gas = gas.mul(130).div(100);
+    return this.signer.sendTransaction({ to: channel, value: '0', data, gasLimit: gas });
+  }
+
+  async _scanChannelNotes() {
+    const channel = this.state.channel || MAIN_CHANNEL;
+    if (this._noteScanning.has(channel)) return;
+    if (Date.now() - (this._noteScanAt.get(channel) || 0) < 60000) return;
+    this._noteScanning.add(channel);
+    const notesByPost = new Map(); /* postHash → Map(noteHash → note) */
+    const ratings = new Map();     /* noteHash → Map(rater → 'h'|'n') */
+    try {
+      const scanLimit = Math.min(this._getMaxScanPages(), 20);
+      for (let page = 1; page <= scanLimit; page++) {
+        let raw;
+        try { raw = await this.apiFetch(channel, page); } catch { break; }
+        for (const tx of raw) {
+          if (!tx.input || tx.input === '0x') continue;
+          let text;
+          try { text = ethers.utils.toUtf8String(tx.input).trim(); } catch { continue; }
+          if (text.startsWith(NOTE_PREFIX)) {
+            const m = text.match(/^NOTE:(0x[a-f0-9]{64})\n\n([\s\S]+)$/i);
+            if (!m) continue;
+            const ph = m[1].toLowerCase(), nh = tx.hash?.toLowerCase();
+            if (!nh) continue;
+            if (!notesByPost.has(ph)) notesByPost.set(ph, new Map());
+            const nm = notesByPost.get(ph);
+            if (!nm.has(nh)) nm.set(nh, { hash: nh, author: tx.from?.toLowerCase(),
+              text: m[2].trim(), ts: tx.timeStamp ? Number(tx.timeStamp) * 1000 : Date.now() });
+          } else if (text.startsWith(NOTERATE_PREFIX)) {
+            const m = text.match(/^NOTERATE:(0x[a-f0-9]{64}):(h|n)/i);
+            if (!m) continue;
+            const nh = m[1].toLowerCase(), rater = tx.from?.toLowerCase();
+            if (!rater) continue;
+            if (!ratings.has(nh)) ratings.set(nh, new Map());
+            const rm = ratings.get(nh);
+            if (!rm.has(rater)) rm.set(rater, m[2].toLowerCase()); /* newest-first: first seen = latest */
+          }
+        }
+        if (raw.length < 50) break;
+      }
+      for (const [ph, nm] of notesByPost) {
+        const list = [...nm.values()].map(n => {
+          const rm = ratings.get(n.hash) || new Map();
+          let helpful = 0, notHelpful = 0;
+          for (const v of rm.values()) { if (v === 'h') helpful++; else notHelpful++; }
+          const my = rm.get(this.state.signerAddr) || this._myNoteRatings.get(n.hash) || null;
+          return { ...n, helpful, notHelpful, score: helpful - notHelpful, myRating: my };
+        }).sort((a, b) => b.score - a.score || b.ts - a.ts);
+        this._noteData.set(ph, { notes: list, scannedAt: Date.now() });
+      }
+      if (this._noteData.size > 500) {
+        const ks = [...this._noteData.keys()];
+        for (let i = 0; i < ks.length - 500; i++) this._noteData.delete(ks[i]);
+      }
+      this._noteScanAt.set(channel, Date.now());
+      this._refreshVisibleNotes();
+    } finally { this._noteScanning.delete(channel); }
+  }
+
+  _refreshNoteSlot(postHash) {
+    const slot = this.g('feed')?.querySelector(`.note-slot[data-note-host="${postHash}"]`);
+    const post = this._postMap.get(postHash);
+    if (slot && post) slot.innerHTML = this._noteHTML(post);
+  }
+
+  _refreshVisibleNotes() {
+    this.g('feed')?.querySelectorAll('.note-slot[data-note-host]').forEach(slot => {
+      const post = this._postMap.get(slot.dataset.noteHost);
+      if (post) slot.innerHTML = this._noteHTML(post);
+    });
+  }
+
+  _noteHTML(post) {
+    const data = this._noteData.get(post.txHash);
+    if (!data || !data.notes.length) return '';
+    const top = data.notes[0];
+    const bodyHtml = utils.safe(top.text).replace(/\n/g, '<br>');
+    if (top.score >= NOTE_SHOW_THRESHOLD) {
+      return `<div class="note-card">
+        <div class="note-card-hdr">🛈 Readers added context</div>
+        <div class="note-card-body">${bodyHtml}</div>
+        ${this._noteRateRow(top)}
+      </div>`;
+    }
+    if (!this._expandedNotes.has(post.txHash)) {
+      const n = data.notes.length;
+      return `<button class="note-pending-toggle" data-note-expand="${utils.safe(post.txHash)}">🛈 ${n} community note${n > 1 ? 's' : ''} proposed — review &amp; rate</button>`;
+    }
+    return `<div class="note-card note-card-pending">
+      <div class="note-card-hdr">🛈 Proposed note${data.notes.length > 1 ? ` · top of ${data.notes.length}` : ''}</div>
+      <div class="note-card-body">${bodyHtml}</div>
+      ${this._noteRateRow(top)}
+      <button class="note-pending-toggle" data-note-expand="${utils.safe(post.txHash)}" style="margin-top:6px">Hide</button>
+    </div>`;
+  }
+
+  _noteRateRow(note) {
+    const mine = note.myRating;
+    return `<div class="note-rate-row">
+      <span class="note-score">${note.helpful} found helpful</span>
+      <button class="note-rate-btn${mine === 'h' ? ' on' : ''}" data-note-rate="${utils.safe(note.hash)}" data-note-val="h">Helpful</button>
+      <button class="note-rate-btn${mine === 'n' ? ' on' : ''}" data-note-rate="${utils.safe(note.hash)}" data-note-val="n">Not helpful</button>
+    </div>`;
+  }
+
+  openNoteComposer(post) {
+    if (!this.signer) { utils.toast('Connect wallet to write a note'); return; }
+    this._showGenericModal('Write a community note', `
+      <p style="font-size:13px;color:var(--muted);margin-bottom:10px">Add context to this post. Notes are public and permanent on-chain. A note becomes publicly visible once enough readers rate it Helpful.</p>
+      <textarea class="form-textarea" id="note-text" placeholder="Add context — cite a source if you can…" maxlength="280" rows="4" style="width:100%"></textarea>
+      <div class="btn-row" style="margin-top:10px">
+        <button class="btn-pri" id="note-submit-btn">Publish note</button>
+        <button class="btn-ghost" id="note-cancel-btn">Cancel</button>
+      </div>
+    `);
+    document.getElementById('note-cancel-btn').onclick = () => this._closeGenericModal();
+    document.getElementById('note-submit-btn').onclick = () => this._submitNote(post);
+  }
+
+  async _submitNote(post) {
+    const txt = document.getElementById('note-text')?.value.trim();
+    if (!txt) { utils.toast('Write something first'); return; }
+    const channel = post.to || post.channel || this.state.channel;
+    const body = `${NOTE_PREFIX}${post.txHash}\n\n${txt}`;
+    this._closeGenericModal();
+    try {
+      utils.toast('Publishing note…');
+      const tx = await this._sendTagged(channel, body);
+      /* Optimistic: show our note as pending immediately. */
+      const data = this._noteData.get(post.txHash) || { notes: [], scannedAt: 0 };
+      data.notes.unshift({ hash: (tx.hash || '').toLowerCase(), author: this.state.signerAddr,
+        text: txt, ts: Date.now(), helpful: 0, notHelpful: 0, score: 0, myRating: null });
+      this._noteData.set(post.txHash, data);
+      this._expandedNotes.add(post.txHash);
+      this._refreshNoteSlot(post.txHash);
+      await tx.wait();
+      utils.toast('Note published ✓');
+      this._noteScanAt.delete(channel); /* allow a fresh scan to pick it up */
+    } catch (err) {
+      const msg = err.reason || err.message || 'Error';
+      const rej = err.code === 4001 || err.code === 'ACTION_REJECTED' || /reject|denied/i.test(msg);
+      utils.toast(rej ? 'Note cancelled' : 'Note failed: ' + msg);
+    }
+  }
+
+  _applyLocalRating(postHash, noteHash, oldVal, newVal) {
+    const data = this._noteData.get(postHash); if (!data) return;
+    const note = data.notes.find(n => n.hash === noteHash); if (!note) return;
+    if (oldVal === 'h') note.helpful = Math.max(0, note.helpful - 1);
+    else if (oldVal === 'n') note.notHelpful = Math.max(0, note.notHelpful - 1);
+    if (newVal === 'h') note.helpful++;
+    else if (newVal === 'n') note.notHelpful++;
+    note.score = note.helpful - note.notHelpful;
+    note.myRating = newVal || null;
+    data.notes.sort((a, b) => b.score - a.score || b.ts - a.ts);
+  }
+
+  async rateNote(noteHash, val, postHash) {
+    if (!this.signer) { utils.toast('Connect wallet to rate notes'); return; }
+    if (!noteHash || !postHash) return;
+    const post = this._postMap.get(postHash);
+    const channel = post ? (post.to || post.channel || this.state.channel) : this.state.channel;
+    const prev = this._myNoteRatings.get(noteHash);
+    if (prev === val) { utils.toast('Already rated'); return; }
+    /* Optimistic apply + refresh. */
+    this._myNoteRatings.set(noteHash, val);
+    this._applyLocalRating(postHash, noteHash, prev, val);
+    this._refreshNoteSlot(postHash);
+    try {
+      const tx = await this._sendTagged(channel, `${NOTERATE_PREFIX}${noteHash}:${val}`);
+      utils.toast('Rating submitted ✓');
+      await tx.wait();
+      this._noteScanAt.delete(channel);
+    } catch (err) {
+      const msg = err.reason || err.message || 'Error';
+      const rej = err.code === 4001 || err.code === 'ACTION_REJECTED' || /reject|denied/i.test(msg);
+      utils.toast(rej ? 'Rating cancelled' : 'Rating failed: ' + msg);
+      /* Roll back the optimistic rating. */
+      if (prev !== undefined) this._myNoteRatings.set(noteHash, prev); else this._myNoteRatings.delete(noteHash);
+      this._applyLocalRating(postHash, noteHash, val, prev);
+      this._refreshNoteSlot(postHash);
+    }
+  }
+
   openPollComposer() {
     if (!this.signer) { utils.toast('Connect wallet to create a poll'); return; }
     this._showGenericModal('Create a poll', `
@@ -9702,6 +9956,9 @@ class DeFiX {
       /* Add / remove from a List */
       { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M3 5h18v2H3V5zm0 6h12v2H3v-2zm0 6h12v2H3v-2zm15-3v3h-3v2h3v3h2v-3h3v-2h-3v-3h-2z"/></svg>',
         label: 'Add / remove from List', action: () => this._openListPicker(post.reporter?.toLowerCase(), anchorEl), danger: false },
+      /* Write a community note */
+      { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>',
+        label: 'Write a community note', action: () => this.openNoteComposer(post), danger: false },
       /* Copy link */
       { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.48-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>',
         label: 'Copy post link', action: () => utils.copyToClipboard(`https://otter.pulsechain.com/tx/${post.txHash}`, 'Link copied!'), danger: false },
