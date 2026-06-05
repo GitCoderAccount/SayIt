@@ -320,7 +320,7 @@ nav { flex:1; padding:4px 0; }
 .cb-info { flex:1; min-width:0; padding-top:44px; }
 #cb-name {
   font-size:20px; font-weight:700; line-height:1.2;
-  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
 }
 #cb-bio { font-size:14px; color:var(--muted); margin-top:2px; line-height:1.4; }
 #cb-address {
@@ -328,6 +328,21 @@ nav { flex:1; padding:4px 0; }
   font-family:monospace; cursor:pointer; display:inline-block;
 }
 #cb-address:hover { color:var(--primary-lt); text-decoration:underline; }
+#cb-token-meta { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:6px; }
+#cb-token-meta:empty { display:none; }
+#cb-token-meta a { font-size:13px; color:var(--primary-lt); text-decoration:none; }
+#cb-token-meta a:hover { text-decoration:underline; }
+.cb-token-badge {
+  font-size:11px; font-weight:700; color:var(--primary-lt);
+  background:var(--primary-dim); border:1px solid var(--border);
+  border-radius:9999px; padding:2px 9px;
+}
+.cb-verified-badge { color:var(--green); border-color:var(--green); background:rgba(0,186,124,0.12); }
+.tp-form { display:flex; flex-direction:column; gap:12px; padding:4px 2px; }
+.tp-l { display:flex; flex-direction:column; gap:5px; font-size:13px; font-weight:600; color:var(--muted); }
+.tp-in { background:var(--bg-mid); border:1px solid var(--border); border-radius:10px; color:var(--text); font-size:14px; padding:9px 11px; font-family:inherit; resize:vertical; }
+.tp-in:focus { border-color:var(--primary); outline:none; }
+.tp-note { font-size:13px; color:var(--muted); line-height:1.4; }
 /* ── Compose ─────────────────────────────────────────────────────────────── */
 #compose-area {
   display:flex; gap:12px; padding:12px 16px 8px;
@@ -2266,6 +2281,8 @@ nav { flex:1; padding:4px 0; }
           <div id="cb-name">—</div>
           <div id="cb-bio"></div>
           <div id="cb-address" title="Click to copy"></div>
+          <div id="cb-token-meta"></div>
+          <button id="cb-token-edit-btn" class="prof-edit-btn" style="display:none;margin-top:10px">Set token profile</button>
         </div>
         <div class="cb-actions" style="margin-left:auto;align-self:flex-start;display:flex;gap:8px">
           <button id="cb-profile-btn" class="prof-edit-btn" style="display:none">View profile</button>
@@ -2707,7 +2724,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260604-57';
+const SW_CACHE_VER = '20260605-59';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -2737,6 +2754,7 @@ const POLL_PREFIX       = 'POLL:';   /* POLL:{json}\n\nQuestion text */
 const VOTE_PREFIX       = 'VOTE:';   /* VOTE:0xpollhash:optionIndex */
 const NOTE_PREFIX       = 'NOTE:';     /* NOTE:0xposthash\n\nnote text (community note) */
 const NOTERATE_PREFIX   = 'NOTERATE:'; /* NOTERATE:0xnotehash:h|n (helpful/not, last-wins) */
+const TOKEN_PROFILE_PREFIX = 'PROFILE_FOR:'; /* PROFILE_FOR:0xtoken\n\n{json} — set a token channel's profile; only honored from the token's deployer or current owner() */
 const NOTE_SHOW_THRESHOLD = 2;         /* net helpful (helpful − not) to graduate to "context" */
 const PROFILE_INIT_PAGES  = 4;         /* pages scanned for the FIRST profile paint; rest streams on scroll */
 const SETTINGS_KEY    = 'sayitSettings';
@@ -5906,19 +5924,57 @@ class SayIt {
       this.renderBanner(this.state.profile, address); return;
     }
     const cached = this.state.profCache[address];
-    if (cached) { this.renderBanner(cached, address); return; }
-    this.renderBanner({ username:'', picUrl:'image1.jpeg', bio:'Loading profile…' }, address);
-    this.fetchOtherProfile(address).then(() => {
-      const loaded = this.state.profCache[address];
-      if (loaded && banner.style.display !== 'none') this.renderBanner(loaded, address);
+    if (cached) { this.renderBanner(cached, address); }
+    else {
+      this.renderBanner({ username:'', picUrl:'image1.jpeg', bio:'Loading profile…' }, address);
+      this.fetchOtherProfile(address).then(() => {
+        const loaded = this.state.profCache[address];
+        if (loaded && banner.style.display !== 'none') this.renderBanner(loaded, address);
+      });
+    }
+    /* Token channel: fetch DexScreener identity (Layer 1), the deployer/owner
+       editor set + any deployer/owner-signed profile (Layer 2), then re-render.
+       renderBanner reads these caches, so a profile re-render won't clobber
+       them and precedence is: human self-profile > verified > token > address. */
+    Promise.all([
+      this._fetchTokenInfo(address),
+      this._fetchVerifiedTokenProfile(address), /* also populates _tokenAuthCache */
+    ]).then(() => {
+      if (this.state.channel === address && banner.style.display !== 'none') {
+        this.renderBanner(this.state.profCache[address] || {}, address);
+      }
     });
   }
 
   renderBanner(profile, address) {
-    this.g('cb-avatar').src          = profile?.picUrl || 'image1.jpeg';
-    this.g('cb-name').textContent    = profile?.username || this.trunc(address);
-    this.g('cb-bio').textContent     = profile?.bio  || '';
+    /* Identity precedence: a human self-profile wins; else a deployer/owner-
+       VERIFIED token profile; else DexScreener token identity; else the raw
+       address. A token contract can't self-publish, so the human case never
+       collides with the token cases. */
+    const lc       = (address || '').toLowerCase();
+    const token    = this._tokenInfoCache?.[lc];
+    const verified = this._verifiedTokenCache?.[lc];
+    const auth     = this._tokenAuthCache?.[lc];
+    const hasHuman = !!(profile && profile.username);
+    const vPic     = verified && utils.safeUrl(verified.picUrl || '');
+    this.g('cb-avatar').src = hasHuman ? (profile.picUrl || 'image1.jpeg')
+      : (vPic || (token && token.logo) || profile?.picUrl || 'image1.jpeg');
+    this.g('cb-name').textContent = hasHuman ? profile.username
+      : (verified && verified.username) ? verified.username
+      : token ? (token.symbol ? `${token.name} (${token.symbol})` : token.name)
+      : this.trunc(address);
+    this.g('cb-bio').textContent = profile?.bio || (verified && verified.bio) || (token ? 'Token on PulseChain' : '');
     this.g('cb-address').textContent = address || '';
+    const meta = this.g('cb-token-meta');
+    if (meta) meta.innerHTML = (verified || token) ? this._tokenMetaHTML(token, !!verified, verified) : '';
+    /* "Set token profile" — shown only when the connected wallet is the
+       token's deployer or current owner(). */
+    const editBtn = this.g('cb-token-edit-btn');
+    if (editBtn) {
+      const canEdit = !!(auth && this.state.signerAddr && auth.editors && auth.editors.has(this.state.signerAddr));
+      editBtn.style.display = canEdit ? '' : 'none';
+      if (canEdit) editBtn.onclick = e => { e.stopPropagation(); this._openTokenProfileEditor(address); };
+    }
     /* Follow button for contract/token channel pages (hidden on your own). */
     const followBtn = this.g('cb-follow-btn');
     if (followBtn) {
@@ -5961,6 +6017,187 @@ class SayIt {
         coverEl.style.background = '';
         coverEl.classList.remove('has-custom-cover');
       }
+    }
+  }
+
+  /* Look up token identity for a channel address via DexScreener (name,
+     symbol, logo, website, socials). Cached per address (null = not a
+     DEX-listed token). Best-effort: any failure resolves to null so the
+     banner just falls back to the plain address. */
+  async _fetchTokenInfo(address) {
+    const key = (address || '').toLowerCase();
+    if (!key) return null;
+    this._tokenInfoCache = this._tokenInfoCache || {};
+    if (key in this._tokenInfoCache) return this._tokenInfoCache[key];
+    let result = null;
+    try {
+      const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${key}`);
+      if (r.ok) {
+        const d = await r.json();
+        /* Only treat it as "this token" when it's the BASE token of a pair
+           (otherwise we'd mislabel e.g. DAI when it's just the quote side). */
+        const pair = (d.pairs || []).find(p => p.baseToken?.address?.toLowerCase() === key);
+        if (pair) {
+          const bt = pair.baseToken || {}, info = pair.info || {};
+          result = {
+            name:   bt.name || 'Token',
+            symbol: bt.symbol || '',
+            logo:   utils.safeUrl(info.imageUrl || '') || '',
+            website:(info.websites || [])[0]?.url || '',
+            socials: Array.isArray(info.socials) ? info.socials : [],
+            dexUrl: pair.url || '',
+          };
+        }
+      }
+    } catch { /* offline or not a token — leave null */ }
+    this._tokenInfoCache[key] = result;
+    return result;
+  }
+
+  /* Badge + website/socials/DexScreener links for a token channel banner.
+     `token` (DexScreener) may be null when only a verified profile exists.
+     All URLs are scheme-validated + escaped (this data is third-party). */
+  _tokenMetaHTML(token, isVerified, verified) {
+    const link = (url, label) => {
+      const u = utils.safeUrl(url || '');
+      return u ? `<a href="${utils.safe(u)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${utils.safe(label)}</a>` : '';
+    };
+    const parts = [ isVerified
+      ? '<span class="cb-token-badge cb-verified-badge">✓ Verified</span>'
+      : '<span class="cb-token-badge">⬡ Token</span>' ];
+    const website = (verified && verified.website) || (token && token.website);
+    if (website) parts.push(link(website, '🌐 Website'));
+    if (token) (token.socials || []).forEach(s => parts.push(link(s.url, (s.type || 'link'))));
+    if (token && token.dexUrl) parts.push(link(token.dexUrl, 'DexScreener ↗'));
+    return parts.filter(Boolean).join('');
+  }
+
+  /* Read-only provider for view calls (owner()) without a connected wallet. */
+  _getReadProvider() {
+    if (!this._readProvider) {
+      const s = this._getSettings();
+      this._readProvider = new ethers.providers.JsonRpcProvider(
+        s.rpcUrl || 'https://rpc.pulsechain.com', PULSE_CHAIN_ID);
+    }
+    return this._readProvider;
+  }
+
+  /* Resolve a token channel's authorized editors: the contract deployer
+     (Blockscout v2 `creator_address_hash`) plus the current `owner()` if the
+     contract is Ownable. Cached. { isContract, deployer, owner, editors:Set }. */
+  async _fetchTokenAuth(address) {
+    const key = (address || '').toLowerCase();
+    if (!key) return null;
+    this._tokenAuthCache = this._tokenAuthCache || {};
+    if (key in this._tokenAuthCache) return this._tokenAuthCache[key];
+    const auth = { isContract:false, deployer:null, owner:null, editors:new Set() };
+    try {
+      const s = this._getSettings();
+      const base = (s.apiUrl || 'https://api.scan.pulsechain.com/api').replace(/\/api\/?$/, '');
+      const r = await fetch(`${base}/api/v2/addresses/${key}`);
+      if (r.ok) {
+        const d = await r.json();
+        auth.isContract = !!d.is_contract;
+        const dep = (d.creator_address_hash || '').toLowerCase();
+        if (dep) { auth.deployer = dep; auth.editors.add(dep); }
+      }
+    } catch { /* not reachable — leave defaults */ }
+    if (auth.isContract) {
+      try {
+        const c = new ethers.Contract(key, ['function owner() view returns (address)'], this._getReadProvider());
+        const o = (await c.owner()).toLowerCase();
+        if (o && !/^0x0{40}$/.test(o)) { auth.owner = o; auth.editors.add(o); }
+      } catch { /* not Ownable / reverted — fine */ }
+    }
+    this._tokenAuthCache[key] = auth;
+    return auth;
+  }
+
+  /* Latest token profile (PROFILE_FOR:<token>) published by an authorized
+     editor (deployer/owner). The publish sends the tx TO the token, so it
+     lives in the token's channel; scan a few pages for it. Cached per token. */
+  async _fetchVerifiedTokenProfile(address) {
+    const key = (address || '').toLowerCase();
+    if (!key) return null;
+    this._verifiedTokenCache = this._verifiedTokenCache || {};
+    if (key in this._verifiedTokenCache) return this._verifiedTokenCache[key];
+    let result = null;
+    const auth = await this._fetchTokenAuth(key);
+    if (auth && auth.editors.size) {
+      try {
+        for (let page = 1; page <= 3; page++) {
+          let raw;
+          try { raw = await this.apiFetch(key, page); } catch { break; }
+          for (const tx of raw) {
+            const from = tx.from?.toLowerCase();
+            if (!from || !auth.editors.has(from) || !tx.input || tx.input === '0x') continue;
+            let text;
+            try { text = ethers.utils.toUtf8String(tx.input).trim(); } catch { continue; }
+            if (!text.startsWith(TOKEN_PROFILE_PREFIX)) continue;
+            const m = text.match(/^PROFILE_FOR:(0x[a-f0-9]{40})\n\n([\s\S]+)$/i);
+            if (!m || m[1].toLowerCase() !== key) continue;
+            let json; try { json = JSON.parse(m[2]); } catch { continue; }
+            const ts = Number(tx.timeStamp) || 0;
+            if (!result || ts > result._ts) result = { ...json, _ts: ts, by: from };
+          }
+          if (raw.length < 50) break;
+        }
+      } catch { /* ignore */ }
+    }
+    this._verifiedTokenCache[key] = result;
+    return result;
+  }
+
+  /* Form for a token's deployer/owner to set its channel profile. */
+  _openTokenProfileEditor(address) {
+    if (!this.signer) { utils.toast('Connect wallet'); return; }
+    const lc = (address || '').toLowerCase();
+    const v  = this._verifiedTokenCache?.[lc] || {};
+    const t  = this._tokenInfoCache?.[lc] || {};
+    const val = s => utils.safe(s || '');
+    const body = `
+      <div class="tp-form">
+        <label class="tp-l">Name<input id="tp-name" class="tp-in" maxlength="60" value="${val(v.username || t.name)}"></label>
+        <label class="tp-l">Bio<textarea id="tp-bio" class="tp-in" rows="3" maxlength="300">${val(v.bio)}</textarea></label>
+        <label class="tp-l">Logo image URL<input id="tp-pic" class="tp-in" value="${val(v.picUrl || t.logo)}"></label>
+        <label class="tp-l">Website<input id="tp-web" class="tp-in" value="${val(v.website)}"></label>
+        <div class="tp-note">Published on-chain from your wallet (the token's deployer/owner) — anyone can verify it. Gas only; no value sent.</div>
+        <button class="btn-pri" id="tp-save">Publish token profile</button>
+      </div>`;
+    this._showGenericModal('Set token profile', body);
+    const save = document.getElementById('tp-save');
+    if (save) save.onclick = () => {
+      const data = {
+        username: document.getElementById('tp-name').value.trim(),
+        bio:      document.getElementById('tp-bio').value.trim(),
+        picUrl:   document.getElementById('tp-pic').value.trim(),
+        website:  document.getElementById('tp-web').value.trim(),
+      };
+      this._closeGenericModal();
+      this._publishTokenProfile(lc, data);
+    };
+  }
+
+  /* Publish a PROFILE_FOR:<token> tx (to the token address). */
+  async _publishTokenProfile(address, data) {
+    if (!this.signer) { utils.toast('Connect wallet'); return; }
+    const token = (address || '').toLowerCase();
+    const body  = `${TOKEN_PROFILE_PREFIX}${token}\n\n${JSON.stringify(data)}`;
+    try {
+      const d   = ethers.utils.hexlify(ethers.utils.toUtf8Bytes(body));
+      let   gas = await this.signer.estimateGas({ to: token, value: '0', data: d });
+      gas       = gas.mul(130).div(100);
+      const tx  = await this.signer.sendTransaction({ to: token, value: '0', data: d, gasLimit: gas });
+      utils.toast('Publishing token profile… confirming on-chain');
+      await tx.wait();
+      if (this._verifiedTokenCache) delete this._verifiedTokenCache[token];
+      await this._fetchVerifiedTokenProfile(token);
+      if (this.state.channel === token) this.renderBanner(this.state.profCache[token] || {}, token);
+      utils.toast('Token profile published ✓');
+    } catch (err) {
+      const msg = err.reason || err.message || 'Unknown error';
+      const rejected = err.code === 4001 || err.code === 'ACTION_REJECTED' || /user (denied|rejected)/i.test(msg);
+      utils.toast(rejected ? 'Cancelled' : 'Failed: ' + msg);
     }
   }
 
@@ -7748,6 +7985,7 @@ class SayIt {
     /* Non-post payloads that never render as feed items. */
     if (text.startsWith(PROFILE_PREFIX)) return null;
     if (text.startsWith(VOTE_PREFIX)) { this._captureVote(text, tx); return null; }
+    if (text.startsWith(TOKEN_PROFILE_PREFIX)) return null; /* token-profile metadata, not a feed post */
     /* Community notes + ratings are not feed posts — gathered via _scanChannelNotes. */
     if (text.startsWith(NOTE_PREFIX) || text.startsWith(NOTERATE_PREFIX)) return null;
     if (text.startsWith(LIKE_PREFIX) || text.startsWith(UNLIKE_PREFIX)
@@ -7818,6 +8056,7 @@ class SayIt {
          channel where votes live — capture them into the tally accumulator
          here instead of re-scanning the channel per poll later. */
       if (raw.startsWith(VOTE_PREFIX)) { this._captureVote(raw, tx); return acc; }
+      if (raw.startsWith(TOKEN_PROFILE_PREFIX)) return acc; /* token-profile metadata, not a feed post */
       /* Community notes + ratings — not feed posts (handled by _scanChannelNotes) */
       if (raw.startsWith(NOTE_PREFIX) || raw.startsWith(NOTERATE_PREFIX)) return acc;
       if (raw.startsWith(UNLIKE_PREFIX)) {
