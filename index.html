@@ -1525,6 +1525,32 @@ nav { flex:1; padding:4px 0; }
   flex-shrink:0;
 }
 
+/* Channels page — tab bar, pinned quick-access rows, unread indicators */
+.ch-tabs {
+  display:flex; align-items:center; gap:6px;
+  padding:8px 12px; border-bottom:1px solid var(--border);
+}
+.ch-tab {
+  background:transparent; border:none; border-radius:9999px;
+  color:var(--muted); font-size:14px; font-weight:700; padding:7px 14px;
+  cursor:pointer; transition:background 0.15s, color 0.15s; white-space:nowrap;
+}
+.ch-tab:hover { background:var(--primary-hov); color:var(--text); }
+.ch-tab.active { background:var(--primary); color:#fff; }
+.ch-tab-spacer { flex:1; }
+.ch-tab-action { font-size:13px; font-weight:600; color:var(--muted); border:1px solid var(--border); padding:5px 11px; }
+.ch-tab-action:hover { border-color:var(--primary); color:var(--primary-lt); background:transparent; }
+.ch-pin-icon {
+  width:44px; height:44px; border-radius:50%; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center; font-size:20px;
+  background:linear-gradient(135deg,rgba(124,77,255,0.18),rgba(179,136,255,0.10));
+  border:1px solid var(--border);
+}
+.ch-history-item.ch-item-unread .ch-hist-name { color:var(--text); }
+.ch-history-item.ch-item-unread .ch-hist-preview { color:var(--text); }
+.ch-unread-dot { width:10px; height:10px; border-radius:50%; background:var(--primary); flex-shrink:0; align-self:center; }
+.ch-empty-tab { text-align:center; color:var(--muted); padding:48px 16px; font-size:15px; }
+
 /* Featured channels — large promo cards inside the Channels tab.
    Replaced the right-sidebar Wave + Say It DeFi cards in round 38. */
 .featured-channels-section {
@@ -2681,7 +2707,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260604-56';
+const SW_CACHE_VER = '20260604-57';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -4931,8 +4957,9 @@ class SayIt {
     this.setChActive(null);
     this.updateChLabel();
     this.showChannelBanner(raw);
-    /* track this channel in history */
+    /* track this channel in history + mark it read (opening it = seen) */
     this._touchChannelHistory(raw);
+    this._markChannelSeen(raw);
     await this.resetAndFetch();
   }
 
@@ -5365,125 +5392,126 @@ class SayIt {
     this.state.channelHistory = await this.cache.getChannels();
     utils.safeLS.set(CHANNELS_KEY, Date.now().toString());
     if (this.state.mode === 'channels') {
-      /* Preserve existing header if already in DOM; don't inject a new one */
-      const existingHeader = this.g('feed')?.querySelector('.page-header');
-      this.renderChannelHistory(existingHeader ? '' : this._applyPageHeader());
+      /* Refresh just the list body so the page header stays in place; if the
+         page body isn't mounted yet, do a full render with a header. */
+      if (this.g('ch-page')) this._renderChannelPage();
+      else this.renderChannelHistory(this._applyPageHeader());
     }
     utils.toast('Channel history updated ✓');
   }
 
-  /* Featured channels — promoted partner channels surfaced in the
-     Channels tab. Replaces the old right-sidebar promo cards. Each entry
-     is { name, sub, desc, icon, onclick } and renders as a clean card. */
-  _featuredChannelsHTML() {
-    /* Each featured channel is a row with an icon, name, sub-label, and
-       a description on hover/touch. Click opens the channel. */
-    const featured = [
-      {
-        id: 'main',
-        name: 'Main Feed',
-        sub: 'The public timeline',
-        desc: 'The main public feed — everything posted to the shared timeline.',
-        icon: '🏠',
-        gradient: 'linear-gradient(135deg,rgba(124,77,255,0.16),rgba(94,45,219,0.10))',
-        accent: 'var(--primary-lt)',
-        link: null,
-        onclick: 'pulse.goHome()',
-      },
-      {
-        id: 'official',
-        name: 'Say It DeFi Channel',
-        sub: 'Official updates & tech',
-        desc: 'Technical updates, announcements and discussions about Say It DeFi.',
-        icon: '⚡',
-        gradient: 'linear-gradient(135deg,rgba(124,77,255,0.18),rgba(179,136,255,0.10))',
-        accent: 'var(--primary-lt)',
-        link: null,
-        onclick: 'pulse.goOfficialChannel()',
-      },
-    ];
-    return `
-      <div class="featured-channels-section">
-        <div class="featured-channels-title">⭐ Featured Channels</div>
-        ${featured.map(f => `
-          <div class="featured-channel-card" style="background:${f.gradient}"
-               role="button" tabindex="0" onclick="${f.onclick}"
-               onkeydown="if(event.key==='Enter'||event.key===' '){${f.onclick}}">
-            <div class="fc-row">
-              <div class="fc-icon" style="background:${f.gradient}">${f.icon}</div>
-              <div class="fc-body">
-                <div class="fc-name" style="color:${f.accent}">${utils.safe(f.name)}</div>
-                <div class="fc-sub">${utils.safe(f.sub)}</div>
-              </div>
-              <div class="fc-cta" style="color:${f.accent}">Open →</div>
-            </div>
-            <div class="fc-desc">${utils.safe(f.desc)}</div>
-            ${f.link ? `<a href="${utils.safe(f.link)}" target="_blank" rel="noopener noreferrer"
-              onclick="event.stopPropagation()" class="fc-link" style="color:${f.accent}">
-              🌐 ${utils.safe(f.link.replace(/^https?:\/\//, ''))} ↗</a>` : ''}
-          </div>`).join('')}
-      </div>`;
+  renderChannelHistory(headerHTML = '') {
+    /* Seed the "seen" baseline on first ever visit so the Unread tab starts
+       quiet (everything read as of now); new activity surfaces after that. */
+    if (utils.safeLS.get('sayitChannelSeen') === null) this._markAllChannelsSeen();
+    this.g('feed').innerHTML = headerHTML + `<div id="ch-page"></div>`;
+    this._renderChannelPage();
   }
 
-  renderChannelHistory(headerHTML = '') {
-    const feed = this.g('feed');
-    const history = this.state.channelHistory;
+  /* Render (and re-render on tab switch / mark-read) the Channels page body:
+     a new-channel input, the All/Unread/Following tab bar, pinned quick-access
+     rows (Main, your inbox, official), then the channel list for the tab. */
+  _renderChannelPage() {
+    const host = this.g('ch-page');
+    if (!host) return;
+    const tab     = this._channelTab || 'all';
+    const seen    = this._getChannelSeen();
+    const follow  = this.state.following;
+    const history = this.state.channelHistory || [];
+
+    /* Pinned quick-access destinations (not part of scanned history). */
+    const inboxUnread = this._unreadCount || 0;
+    const pinned = [{ special:'main', icon:'🏠', name:'Main Feed', sub:'The public timeline', unread:false }];
+    if (this.state.signerAddr) {
+      pinned.push({ special:'inbox', icon:'📥', name:'Your inbox', sub:'Posts sent to you', unread: inboxUnread > 0, count: inboxUnread });
+    }
+    pinned.push({ special:'official', icon:'⚡', name:'Say It DeFi Channel', sub:'Official updates & tech', unread:false });
+
+    /* Visited/scanned channels, plus synthesized rows for follows not yet visited. */
+    const entries = history.map(ch => ({
+      addr: ch.address,
+      name: ch.label || this.trunc(ch.address),
+      pic:  ch.picUrl || 'image1.jpeg',
+      preview: ch.preview || '',
+      time: ch.lastActivity ? this.relTime(ch.lastActivity) : '',
+      unread: this._channelIsUnread(ch, seen),
+      following: follow.has((ch.address || '').toLowerCase()),
+    }));
+    const have = new Set(history.map(c => (c.address || '').toLowerCase()));
+    for (const addr of follow) {
+      if (have.has(addr)) continue;
+      const prof = this.state.profCache[addr];
+      entries.push({ addr, name: prof?.username || this.trunc(addr),
+        pic: prof?.picUrl || 'image1.jpeg', preview:'', time:'', unread:false, following:true });
+    }
+
+    /* Filter by active tab. */
+    let pins = pinned, list = entries;
+    if (tab === 'unread')        { pins = pinned.filter(p => p.unread); list = entries.filter(e => e.unread); }
+    else if (tab === 'following'){ pins = []; list = entries.filter(e => e.following); }
+
+    const TABS = { all:'All', unread:'Unread', following:'Following' };
+    const row = e => {
+      const left = e.special
+        ? `<div class="ch-pin-icon">${e.icon}</div>`
+        : `<img src="${utils.safe(e.pic)}" class="ch-hist-avatar" alt="" onerror="this.src='image1.jpeg'">`;
+      const right = e.unread
+        ? (e.count ? `<span class="ch-hist-count">${e.count > 99 ? '99+' : e.count}</span>` : `<span class="ch-unread-dot"></span>`)
+        : '';
+      const time = e.time ? `<span class="ch-hist-time">${utils.safe(e.time)}</span>` : '';
+      const open = e.special ? `data-ch-special="${e.special}"` : `data-ch-open="${utils.safe(e.addr)}"`;
+      return `<div class="ch-history-item${e.unread ? ' ch-item-unread' : ''}" role="button" tabindex="0" ${open}>
+        ${left}
+        <div class="ch-hist-body">
+          <div class="ch-hist-top"><span class="ch-hist-name">${utils.safe(e.name)}</span>${time}</div>
+          <div class="ch-hist-preview">${utils.safe(e.special ? e.sub : e.preview)}</div>
+        </div>
+        ${right}
+      </div>`;
+    };
 
     let html = `
       <div class="ch-new-row">
         <input type="text" id="ch-new-input" placeholder="Enter 0x address to open a channel…">
         <button class="go-btn" id="ch-new-go">Go</button>
-      </div>` + this._featuredChannelsHTML();
+      </div>
+      <div class="ch-tabs">
+        ${Object.keys(TABS).map(t => `<button class="ch-tab${tab === t ? ' active' : ''}" data-ch-tab="${t}">${TABS[t]}</button>`).join('')}
+        <span class="ch-tab-spacer"></span>
+        <button class="ch-tab ch-tab-action" id="ch-mark-read" title="Mark all as read">✓ Read</button>
+        <button class="ch-tab ch-tab-action" id="ch-rescan" title="Rescan the chain for channels">↺</button>
+      </div>`;
 
-    if (!history.length) {
-      html += `
-        <div class="placeholder-view">
-          <span class="ph-icon">💬</span>
-          <h2>No channels yet</h2>
-          <p>Every wallet address is a channel. Post to any address and it appears here. Your history builds automatically.</p>
-          ${this.state.signerAddr
-            ? `<button class="settings-btn primary" style="margin-top:20px" onclick="pulse.rebuildChannelHistory()">🔍 Scan chain history</button>`
-            : `<p style="margin-top:16px;color:var(--primary-lt)">Connect your wallet to see your channel history.</p>`}
-        </div>`;
+    if (!pins.length && !list.length) {
+      const msg = tab === 'unread'    ? 'Nothing unread 🎉'
+        : tab === 'following' ? (this.state.signerAddr ? "You're not following anyone yet" : 'Connect your wallet to see who you follow')
+        : 'No channels yet — post to any address and it shows up here.';
+      html += `<div class="ch-empty-tab">${msg}</div>`;
     } else {
-      html += `<div class="ch-list">
-        <div class="ch-list-header">
-          <span class="ch-list-title">${history.length} Channel${history.length !== 1 ? 's' : ''}</span>
-          <button class="ch-rescan-btn" onclick="pulse.rebuildChannelHistory()">↺ Rescan</button>
-        </div>`;
-      history.forEach(ch => {
-        const pic  = utils.safe(ch.picUrl || 'image1.jpeg');
-        const name = utils.safe(ch.label || this.trunc(ch.address));
-        const addr = utils.safe(ch.address);
-        const prev = utils.safe(ch.preview || '');
-        const time = ch.lastActivity ? this.relTime(ch.lastActivity) : '';
-        html += `
-          <div class="ch-history-item" role="button" tabindex="0" data-addr="${addr}" onclick="pulse._openChannelFromHistory('${addr}')">
-            <img src="${pic}" class="ch-hist-avatar" alt="" onerror="this.src='image1.jpeg'">
-            <div class="ch-hist-body">
-              <div class="ch-hist-top">
-                <span class="ch-hist-name">${name}</span>
-                <span class="ch-hist-time">${time}</span>
-              </div>
-              <div class="ch-hist-preview">${prev}</div>
-            </div>
-            ${ch.postCount > 0 ? `<span class="ch-hist-count">${ch.postCount > 99 ? '99+' : ch.postCount}</span>` : ''}
-          </div>`;
-      });
-      html += `</div>`;
+      html += pins.map(row).join('') + list.map(row).join('');
     }
 
-    feed.innerHTML = headerHTML + html;
+    host.innerHTML = html;
 
-    /* Wire the new channel input */
-    const inp = this.g('ch-new-input');
-    const go  = this.g('ch-new-go');
+    /* Wiring */
+    const inp = this.g('ch-new-input'), go = this.g('ch-new-go');
     if (inp && go) {
       go.onclick = () => this._openChannelFromInput();
       inp.onkeydown = e => { if (e.key === 'Enter') this._openChannelFromInput(); };
     }
+    host.querySelectorAll('[data-ch-tab]').forEach(el => {
+      el.onclick = () => { this._channelTab = el.dataset.chTab; this._renderChannelPage(); };
+    });
+    host.querySelectorAll('[data-ch-open]').forEach(el => {
+      el.onclick = () => this._openChannelFromHistory(el.dataset.chOpen);
+    });
+    host.querySelectorAll('[data-ch-special]').forEach(el => {
+      el.onclick = () => this._openChannelSpecial(el.dataset.chSpecial);
+    });
+    const mr = this.g('ch-mark-read'); if (mr) mr.onclick = () => { this._markAllChannelsSeen(); this._renderChannelPage(); };
+    const rs = this.g('ch-rescan');    if (rs) rs.onclick = () => this.rebuildChannelHistory();
 
-    /* Lazy-load profile pics for channel list */
+    /* Lazy-load missing profile pics/names for channel rows. */
     history.forEach(ch => {
       if (!ch.label || ch.picUrl === 'image1.jpeg') {
         this.fetchOtherProfile(ch.address).then(() => {
@@ -5494,6 +5522,38 @@ class SayIt {
         });
       }
     });
+  }
+
+  _openChannelSpecial(kind) {
+    if (kind === 'main')          this.goHome();
+    else if (kind === 'inbox')    this.goSelf();
+    else if (kind === 'official') this.goOfficialChannel();
+  }
+
+  /* ── Per-channel "seen" tracking for the Unread tab ──────────────────────
+     A channel is unread when its recorded lastActivity is newer than the last
+     time we marked it seen. Approximate by design: lastActivity only advances
+     when you open the channel or run a rescan (there's no live backend). */
+  _getChannelSeen() {
+    try { return JSON.parse(utils.safeLS.get('sayitChannelSeen', '{}')) || {}; }
+    catch { return {}; }
+  }
+  _markChannelSeen(address) {
+    if (!address) return;
+    const m = this._getChannelSeen();
+    m[address.toLowerCase()] = new Date().toISOString();
+    utils.safeLS.set('sayitChannelSeen', JSON.stringify(m));
+  }
+  _markAllChannelsSeen() {
+    const m = this._getChannelSeen();
+    const now = new Date().toISOString();
+    (this.state.channelHistory || []).forEach(c => { if (c.address) m[c.address.toLowerCase()] = now; });
+    utils.safeLS.set('sayitChannelSeen', JSON.stringify(m));
+  }
+  _channelIsUnread(ch, seen) {
+    if (!ch || !ch.lastActivity) return false;
+    const s = (seen || this._getChannelSeen())[(ch.address || '').toLowerCase()];
+    return !s || ch.lastActivity > s;
   }
 
   async _openChannelFromHistory(address) {
