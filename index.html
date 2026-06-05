@@ -1525,6 +1525,32 @@ nav { flex:1; padding:4px 0; }
   flex-shrink:0;
 }
 
+/* Channels page — tab bar, pinned quick-access rows, unread indicators */
+.ch-tabs {
+  display:flex; align-items:center; gap:6px;
+  padding:8px 12px; border-bottom:1px solid var(--border);
+}
+.ch-tab {
+  background:transparent; border:none; border-radius:9999px;
+  color:var(--muted); font-size:14px; font-weight:700; padding:7px 14px;
+  cursor:pointer; transition:background 0.15s, color 0.15s; white-space:nowrap;
+}
+.ch-tab:hover { background:var(--primary-hov); color:var(--text); }
+.ch-tab.active { background:var(--primary); color:#fff; }
+.ch-tab-spacer { flex:1; }
+.ch-tab-action { font-size:13px; font-weight:600; color:var(--muted); border:1px solid var(--border); padding:5px 11px; }
+.ch-tab-action:hover { border-color:var(--primary); color:var(--primary-lt); background:transparent; }
+.ch-pin-icon {
+  width:44px; height:44px; border-radius:50%; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center; font-size:20px;
+  background:linear-gradient(135deg,rgba(124,77,255,0.18),rgba(179,136,255,0.10));
+  border:1px solid var(--border);
+}
+.ch-history-item.ch-item-unread .ch-hist-name { color:var(--text); }
+.ch-history-item.ch-item-unread .ch-hist-preview { color:var(--text); }
+.ch-unread-dot { width:10px; height:10px; border-radius:50%; background:var(--primary); flex-shrink:0; align-self:center; }
+.ch-empty-tab { text-align:center; color:var(--muted); padding:48px 16px; font-size:15px; }
+
 /* Featured channels — large promo cards inside the Channels tab.
    Replaced the right-sidebar Wave + Say It DeFi cards in round 38. */
 .featured-channels-section {
@@ -2241,7 +2267,10 @@ nav { flex:1; padding:4px 0; }
           <div id="cb-bio"></div>
           <div id="cb-address" title="Click to copy"></div>
         </div>
-        <button id="cb-follow-btn" class="prof-follow-btn" style="display:none;margin-left:auto;align-self:flex-start">Follow</button>
+        <div class="cb-actions" style="margin-left:auto;align-self:flex-start;display:flex;gap:8px">
+          <button id="cb-profile-btn" class="prof-edit-btn" style="display:none">View profile</button>
+          <button id="cb-follow-btn" class="prof-follow-btn" style="display:none">Follow</button>
+        </div>
       </div>
     </div>
 
@@ -2678,7 +2707,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260604-55';
+const SW_CACHE_VER = '20260604-57';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -3338,6 +3367,16 @@ class Cache {
       tx.objectStore('profiles').put(data);
       tx.oncomplete = res;
       tx.onerror    = () => rej(tx.error);
+    });
+  }
+  /* All persisted profiles — used to broaden handle search beyond the
+     current session's in-memory cache. Resolves to [] on any error. */
+  async getAllProfiles() {
+    await this._ready;
+    return new Promise((res) => {
+      const req = this._db.transaction('profiles','readonly').objectStore('profiles').getAll();
+      req.onsuccess = () => res(req.result || []);
+      req.onerror   = () => res([]);
     });
   }
   async pruneIfStale(maxAgeDays = 7, force = false) {
@@ -4918,8 +4957,9 @@ class SayIt {
     this.setChActive(null);
     this.updateChLabel();
     this.showChannelBanner(raw);
-    /* track this channel in history */
+    /* track this channel in history + mark it read (opening it = seen) */
     this._touchChannelHistory(raw);
+    this._markChannelSeen(raw);
     await this.resetAndFetch();
   }
 
@@ -5352,125 +5392,126 @@ class SayIt {
     this.state.channelHistory = await this.cache.getChannels();
     utils.safeLS.set(CHANNELS_KEY, Date.now().toString());
     if (this.state.mode === 'channels') {
-      /* Preserve existing header if already in DOM; don't inject a new one */
-      const existingHeader = this.g('feed')?.querySelector('.page-header');
-      this.renderChannelHistory(existingHeader ? '' : this._applyPageHeader());
+      /* Refresh just the list body so the page header stays in place; if the
+         page body isn't mounted yet, do a full render with a header. */
+      if (this.g('ch-page')) this._renderChannelPage();
+      else this.renderChannelHistory(this._applyPageHeader());
     }
     utils.toast('Channel history updated ✓');
   }
 
-  /* Featured channels — promoted partner channels surfaced in the
-     Channels tab. Replaces the old right-sidebar promo cards. Each entry
-     is { name, sub, desc, icon, onclick } and renders as a clean card. */
-  _featuredChannelsHTML() {
-    /* Each featured channel is a row with an icon, name, sub-label, and
-       a description on hover/touch. Click opens the channel. */
-    const featured = [
-      {
-        id: 'main',
-        name: 'Main Feed',
-        sub: 'The public timeline',
-        desc: 'The main public feed — everything posted to the shared timeline.',
-        icon: '🏠',
-        gradient: 'linear-gradient(135deg,rgba(124,77,255,0.16),rgba(94,45,219,0.10))',
-        accent: 'var(--primary-lt)',
-        link: null,
-        onclick: 'pulse.goHome()',
-      },
-      {
-        id: 'official',
-        name: 'Say It DeFi Channel',
-        sub: 'Official updates & tech',
-        desc: 'Technical updates, announcements and discussions about Say It DeFi.',
-        icon: '⚡',
-        gradient: 'linear-gradient(135deg,rgba(124,77,255,0.18),rgba(179,136,255,0.10))',
-        accent: 'var(--primary-lt)',
-        link: null,
-        onclick: 'pulse.goOfficialChannel()',
-      },
-    ];
-    return `
-      <div class="featured-channels-section">
-        <div class="featured-channels-title">⭐ Featured Channels</div>
-        ${featured.map(f => `
-          <div class="featured-channel-card" style="background:${f.gradient}"
-               role="button" tabindex="0" onclick="${f.onclick}"
-               onkeydown="if(event.key==='Enter'||event.key===' '){${f.onclick}}">
-            <div class="fc-row">
-              <div class="fc-icon" style="background:${f.gradient}">${f.icon}</div>
-              <div class="fc-body">
-                <div class="fc-name" style="color:${f.accent}">${utils.safe(f.name)}</div>
-                <div class="fc-sub">${utils.safe(f.sub)}</div>
-              </div>
-              <div class="fc-cta" style="color:${f.accent}">Open →</div>
-            </div>
-            <div class="fc-desc">${utils.safe(f.desc)}</div>
-            ${f.link ? `<a href="${utils.safe(f.link)}" target="_blank" rel="noopener noreferrer"
-              onclick="event.stopPropagation()" class="fc-link" style="color:${f.accent}">
-              🌐 ${utils.safe(f.link.replace(/^https?:\/\//, ''))} ↗</a>` : ''}
-          </div>`).join('')}
-      </div>`;
+  renderChannelHistory(headerHTML = '') {
+    /* Seed the "seen" baseline on first ever visit so the Unread tab starts
+       quiet (everything read as of now); new activity surfaces after that. */
+    if (utils.safeLS.get('sayitChannelSeen') === null) this._markAllChannelsSeen();
+    this.g('feed').innerHTML = headerHTML + `<div id="ch-page"></div>`;
+    this._renderChannelPage();
   }
 
-  renderChannelHistory(headerHTML = '') {
-    const feed = this.g('feed');
-    const history = this.state.channelHistory;
+  /* Render (and re-render on tab switch / mark-read) the Channels page body:
+     a new-channel input, the All/Unread/Following tab bar, pinned quick-access
+     rows (Main, your inbox, official), then the channel list for the tab. */
+  _renderChannelPage() {
+    const host = this.g('ch-page');
+    if (!host) return;
+    const tab     = this._channelTab || 'all';
+    const seen    = this._getChannelSeen();
+    const follow  = this.state.following;
+    const history = this.state.channelHistory || [];
+
+    /* Pinned quick-access destinations (not part of scanned history). */
+    const inboxUnread = this._unreadCount || 0;
+    const pinned = [{ special:'main', icon:'🏠', name:'Main Feed', sub:'The public timeline', unread:false }];
+    if (this.state.signerAddr) {
+      pinned.push({ special:'inbox', icon:'📥', name:'Your inbox', sub:'Posts sent to you', unread: inboxUnread > 0, count: inboxUnread });
+    }
+    pinned.push({ special:'official', icon:'⚡', name:'Say It DeFi Channel', sub:'Official updates & tech', unread:false });
+
+    /* Visited/scanned channels, plus synthesized rows for follows not yet visited. */
+    const entries = history.map(ch => ({
+      addr: ch.address,
+      name: ch.label || this.trunc(ch.address),
+      pic:  ch.picUrl || 'image1.jpeg',
+      preview: ch.preview || '',
+      time: ch.lastActivity ? this.relTime(ch.lastActivity) : '',
+      unread: this._channelIsUnread(ch, seen),
+      following: follow.has((ch.address || '').toLowerCase()),
+    }));
+    const have = new Set(history.map(c => (c.address || '').toLowerCase()));
+    for (const addr of follow) {
+      if (have.has(addr)) continue;
+      const prof = this.state.profCache[addr];
+      entries.push({ addr, name: prof?.username || this.trunc(addr),
+        pic: prof?.picUrl || 'image1.jpeg', preview:'', time:'', unread:false, following:true });
+    }
+
+    /* Filter by active tab. */
+    let pins = pinned, list = entries;
+    if (tab === 'unread')        { pins = pinned.filter(p => p.unread); list = entries.filter(e => e.unread); }
+    else if (tab === 'following'){ pins = []; list = entries.filter(e => e.following); }
+
+    const TABS = { all:'All', unread:'Unread', following:'Following' };
+    const row = e => {
+      const left = e.special
+        ? `<div class="ch-pin-icon">${e.icon}</div>`
+        : `<img src="${utils.safe(e.pic)}" class="ch-hist-avatar" alt="" onerror="this.src='image1.jpeg'">`;
+      const right = e.unread
+        ? (e.count ? `<span class="ch-hist-count">${e.count > 99 ? '99+' : e.count}</span>` : `<span class="ch-unread-dot"></span>`)
+        : '';
+      const time = e.time ? `<span class="ch-hist-time">${utils.safe(e.time)}</span>` : '';
+      const open = e.special ? `data-ch-special="${e.special}"` : `data-ch-open="${utils.safe(e.addr)}"`;
+      return `<div class="ch-history-item${e.unread ? ' ch-item-unread' : ''}" role="button" tabindex="0" ${open}>
+        ${left}
+        <div class="ch-hist-body">
+          <div class="ch-hist-top"><span class="ch-hist-name">${utils.safe(e.name)}</span>${time}</div>
+          <div class="ch-hist-preview">${utils.safe(e.special ? e.sub : e.preview)}</div>
+        </div>
+        ${right}
+      </div>`;
+    };
 
     let html = `
       <div class="ch-new-row">
         <input type="text" id="ch-new-input" placeholder="Enter 0x address to open a channel…">
         <button class="go-btn" id="ch-new-go">Go</button>
-      </div>` + this._featuredChannelsHTML();
+      </div>
+      <div class="ch-tabs">
+        ${Object.keys(TABS).map(t => `<button class="ch-tab${tab === t ? ' active' : ''}" data-ch-tab="${t}">${TABS[t]}</button>`).join('')}
+        <span class="ch-tab-spacer"></span>
+        <button class="ch-tab ch-tab-action" id="ch-mark-read" title="Mark all as read">✓ Read</button>
+        <button class="ch-tab ch-tab-action" id="ch-rescan" title="Rescan the chain for channels">↺</button>
+      </div>`;
 
-    if (!history.length) {
-      html += `
-        <div class="placeholder-view">
-          <span class="ph-icon">💬</span>
-          <h2>No channels yet</h2>
-          <p>Every wallet address is a channel. Post to any address and it appears here. Your history builds automatically.</p>
-          ${this.state.signerAddr
-            ? `<button class="settings-btn primary" style="margin-top:20px" onclick="pulse.rebuildChannelHistory()">🔍 Scan chain history</button>`
-            : `<p style="margin-top:16px;color:var(--primary-lt)">Connect your wallet to see your channel history.</p>`}
-        </div>`;
+    if (!pins.length && !list.length) {
+      const msg = tab === 'unread'    ? 'Nothing unread 🎉'
+        : tab === 'following' ? (this.state.signerAddr ? "You're not following anyone yet" : 'Connect your wallet to see who you follow')
+        : 'No channels yet — post to any address and it shows up here.';
+      html += `<div class="ch-empty-tab">${msg}</div>`;
     } else {
-      html += `<div class="ch-list">
-        <div class="ch-list-header">
-          <span class="ch-list-title">${history.length} Channel${history.length !== 1 ? 's' : ''}</span>
-          <button class="ch-rescan-btn" onclick="pulse.rebuildChannelHistory()">↺ Rescan</button>
-        </div>`;
-      history.forEach(ch => {
-        const pic  = utils.safe(ch.picUrl || 'image1.jpeg');
-        const name = utils.safe(ch.label || this.trunc(ch.address));
-        const addr = utils.safe(ch.address);
-        const prev = utils.safe(ch.preview || '');
-        const time = ch.lastActivity ? this.relTime(ch.lastActivity) : '';
-        html += `
-          <div class="ch-history-item" role="button" tabindex="0" data-addr="${addr}" onclick="pulse._openChannelFromHistory('${addr}')">
-            <img src="${pic}" class="ch-hist-avatar" alt="" onerror="this.src='image1.jpeg'">
-            <div class="ch-hist-body">
-              <div class="ch-hist-top">
-                <span class="ch-hist-name">${name}</span>
-                <span class="ch-hist-time">${time}</span>
-              </div>
-              <div class="ch-hist-preview">${prev}</div>
-            </div>
-            ${ch.postCount > 0 ? `<span class="ch-hist-count">${ch.postCount > 99 ? '99+' : ch.postCount}</span>` : ''}
-          </div>`;
-      });
-      html += `</div>`;
+      html += pins.map(row).join('') + list.map(row).join('');
     }
 
-    feed.innerHTML = headerHTML + html;
+    host.innerHTML = html;
 
-    /* Wire the new channel input */
-    const inp = this.g('ch-new-input');
-    const go  = this.g('ch-new-go');
+    /* Wiring */
+    const inp = this.g('ch-new-input'), go = this.g('ch-new-go');
     if (inp && go) {
       go.onclick = () => this._openChannelFromInput();
       inp.onkeydown = e => { if (e.key === 'Enter') this._openChannelFromInput(); };
     }
+    host.querySelectorAll('[data-ch-tab]').forEach(el => {
+      el.onclick = () => { this._channelTab = el.dataset.chTab; this._renderChannelPage(); };
+    });
+    host.querySelectorAll('[data-ch-open]').forEach(el => {
+      el.onclick = () => this._openChannelFromHistory(el.dataset.chOpen);
+    });
+    host.querySelectorAll('[data-ch-special]').forEach(el => {
+      el.onclick = () => this._openChannelSpecial(el.dataset.chSpecial);
+    });
+    const mr = this.g('ch-mark-read'); if (mr) mr.onclick = () => { this._markAllChannelsSeen(); this._renderChannelPage(); };
+    const rs = this.g('ch-rescan');    if (rs) rs.onclick = () => this.rebuildChannelHistory();
 
-    /* Lazy-load profile pics for channel list */
+    /* Lazy-load missing profile pics/names for channel rows. */
     history.forEach(ch => {
       if (!ch.label || ch.picUrl === 'image1.jpeg') {
         this.fetchOtherProfile(ch.address).then(() => {
@@ -5481,6 +5522,38 @@ class SayIt {
         });
       }
     });
+  }
+
+  _openChannelSpecial(kind) {
+    if (kind === 'main')          this.goHome();
+    else if (kind === 'inbox')    this.goSelf();
+    else if (kind === 'official') this.goOfficialChannel();
+  }
+
+  /* ── Per-channel "seen" tracking for the Unread tab ──────────────────────
+     A channel is unread when its recorded lastActivity is newer than the last
+     time we marked it seen. Approximate by design: lastActivity only advances
+     when you open the channel or run a rescan (there's no live backend). */
+  _getChannelSeen() {
+    try { return JSON.parse(utils.safeLS.get('sayitChannelSeen', '{}')) || {}; }
+    catch { return {}; }
+  }
+  _markChannelSeen(address) {
+    if (!address) return;
+    const m = this._getChannelSeen();
+    m[address.toLowerCase()] = new Date().toISOString();
+    utils.safeLS.set('sayitChannelSeen', JSON.stringify(m));
+  }
+  _markAllChannelsSeen() {
+    const m = this._getChannelSeen();
+    const now = new Date().toISOString();
+    (this.state.channelHistory || []).forEach(c => { if (c.address) m[c.address.toLowerCase()] = now; });
+    utils.safeLS.set('sayitChannelSeen', JSON.stringify(m));
+  }
+  _channelIsUnread(ch, seen) {
+    if (!ch || !ch.lastActivity) return false;
+    const s = (seen || this._getChannelSeen())[(ch.address || '').toLowerCase()];
+    return !s || ch.lastActivity > s;
   }
 
   async _openChannelFromHistory(address) {
@@ -5858,6 +5931,21 @@ class SayIt {
         followBtn.textContent = isF ? 'Following' : 'Follow';
         followBtn.classList.toggle('following', isF);
         followBtn.onclick = e => { e.stopPropagation(); this.toggleFollowAddr(addr, followBtn); };
+      }
+    }
+    /* "View profile" jumps to the full profile page for this channel's address.
+       (Channel = posts TO an address; profile = that address's identity + posts
+       BY them.) Shown for any address, including your own. */
+    const profileBtn = this.g('cb-profile-btn');
+    if (profileBtn) {
+      if (address) {
+        profileBtn.style.display = '';
+        profileBtn.onclick = e => {
+          e.stopPropagation();
+          this.goProfilePage(address, address.toLowerCase() === this.state.signerAddr);
+        };
+      } else {
+        profileBtn.style.display = 'none';
       }
     }
     /* Show profile cover image in the banner if available. Use
@@ -9919,6 +10007,53 @@ class SayIt {
     if (m) { this._releaseFocus(m); m.remove(); }
   }
 
+  /* "About this post" — surfaces metadata that's otherwise only visible on a
+     block explorer: which channel/address it was posted to, the author, the
+     content type, block number, and the tx. All of this already lives on the
+     post object, so there's no fetching. */
+  _showAboutPost(post) {
+    const esc = s => utils.safe(s);
+    const row = (label, value) => `<div style="display:flex;justify-content:space-between;gap:16px;padding:9px 0;border-bottom:1px solid var(--border)">
+      <span style="color:var(--muted);flex-shrink:0">${label}</span>
+      <span style="text-align:right;word-break:break-word">${value}</span></div>`;
+    const chan   = (post.to || post.channel || '').toLowerCase();
+    const isMain = chan && chan === MAIN_CHANNEL.toLowerCase();
+    const chanName = chan && this.state.profCache[chan]?.username;
+    let chanVal;
+    if (!chan)        chanVal = '—';
+    else if (isMain)  chanVal = 'Main feed';
+    else {
+      const label = (chanName ? esc(chanName) + ' · ' : '') + esc(this.trunc(chan));
+      chanVal = `<a href="#" style="color:var(--primary-lt)" onclick="event.preventDefault();pulse._closeGenericModal();pulse.g('custom-input').value='${esc(chan)}';pulse.goCustom()">${label} ↗</a>`;
+    }
+    const typeMap = { post:'Post', reply:'Reply', poll:'Poll', repost:'Repost' };
+    const authorName = this.state.profCache[post.reporter]?.username;
+    const author = (authorName ? esc(authorName) + ' · ' : '') + '@' + esc(this.trunc(post.reporter));
+    let body = `<div style="font-size:14px;line-height:1.45;padding:4px 2px">`;
+    body += row('Type',      esc(typeMap[post.postType] || 'Post'));
+    body += row('Posted to', chanVal);
+    body += row('Author',    author);
+    body += row('Posted',    esc(new Date(post.timestamp).toLocaleString()));
+    if (post.blockNumber) body += row('Block',     '#' + esc(String(post.blockNumber)));
+    if (post.parentTx)    body += row('Reply to',  esc(this.trunc(post.parentTx)));
+    if (post.repostOf)    body += row('Repost of', esc(this.trunc(post.repostOf)));
+    body += row('Transaction', `<a href="https://otter.pulsechain.com/tx/${esc(post.txHash)}" target="_blank" rel="noopener noreferrer" style="color:var(--primary-lt)">${esc(this.trunc(post.txHash))} ↗</a>`);
+    body += `</div>`;
+    this._showGenericModal('About this post', body);
+  }
+
+  /* Lazily snapshot the persisted profiles store into memory so handle search
+     covers profiles cached in past sessions, not just this one. Loaded once;
+     profiles discovered this session are already in profCache (also searched). */
+  _ensureProfileSnapshot() {
+    if (this._profileSnapshot !== undefined) return;
+    this._profileSnapshot = null; /* loading */
+    this.cache.getAllProfiles()
+      .then(list => { this._profileSnapshot = (list || []).map(p => ({
+        addr: (p.address || '').toLowerCase(), username: p.username || '', picUrl: p.picUrl || 'image1.jpeg' })); })
+      .catch(() => { this._profileSnapshot = []; });
+  }
+
   /* Open the emoji picker targeting a specific textarea (e.g. the thread
      reply box). Lightweight wrapper that temporarily points insertion at
      the given element. */
@@ -10265,6 +10400,9 @@ class SayIt {
       /* Copy link */
       { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.48-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>',
         label: 'Copy post link', action: () => utils.copyToClipboard(this._postUrl(post.txHash), 'Link copied!'), danger: false },
+      /* About this post — metadata (channel, author, type, block, tx) */
+      { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M11 7h2v2h-2V7zm0 4h2v6h-2v-6zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>',
+        label: 'About this post', action: () => this._showAboutPost(post), danger: false },
       /* View on OtterScan */
       { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18.36 5.64c-1.95-1.96-5.11-1.96-7.07 0L9.88 7.05 8.46 5.64l1.42-1.42c2.73-2.73 7.16-2.73 9.9 0 2.73 2.74 2.73 7.17 0 9.9l-1.42 1.42-1.41-1.42 1.41-1.41c1.96-1.96 1.96-5.12 0-7.07zm-2.12 3.53l-7.07 7.07-1.41-1.41 7.07-7.07 1.41 1.41zm-12.02.71l1.42-1.42 1.41 1.42-1.41 1.41c-1.96 1.96-1.96 5.12 0 7.07 1.95 1.96 5.11 1.96 7.07 0l1.41-1.41 1.42 1.41-1.42 1.42c-2.73 2.73-7.16 2.73-9.9 0-2.73-2.74-2.73-7.17 0-9.9z"/></svg>',
         label: 'View on OtterScan', action: () => window.open(`https://otter.pulsechain.com/tx/${post.txHash}`, '_blank', 'noopener,noreferrer'), danger: false },
@@ -12006,19 +12144,30 @@ class SayIt {
     const q = (term || '').trim().toLowerCase();
     if (q.length < 1) { this._hideSearchDropdown(); return; }
 
-    /* People: scan profCache for username/address matches. */
+    /* Full address typed/pasted → offer a direct jump even if we've never seen
+       this address. It needn't be indexed; addresses are shareable, so this
+       lets someone paste an address from anywhere and land on its profile. */
+    const isFullAddr = /^0x[0-9a-f]{40}$/.test(q);
+
+    /* People: match known profiles by username or address. Searches BOTH the
+       live session cache and a lazy snapshot of the persisted profiles store,
+       so handle search covers anyone we've ever cached (not just this session). */
+    this._ensureProfileSnapshot();
     const people = [];
     const seen = new Set();
-    for (const [addr, prof] of Object.entries(this.state.profCache)) {
-      if (!prof || prof === null) continue;
+    const consider = (addr, prof) => {
+      if (people.length >= 5) return;
+      const addrL = (addr || '').toLowerCase();
+      if (!addrL || !prof || seen.has(addrL)) return;
       const uname = (prof.username || '').toLowerCase();
-      const addrL = addr.toLowerCase();
       if (uname.includes(q) || addrL.includes(q)) {
-        if (seen.has(addrL)) continue;
         seen.add(addrL);
         people.push({ addr: addrL, username: prof.username || '', picUrl: prof.picUrl || 'image1.jpeg' });
-        if (people.length >= 5) break;
       }
+    };
+    for (const [addr, prof] of Object.entries(this.state.profCache)) consider(addr, prof);
+    if (Array.isArray(this._profileSnapshot)) {
+      for (const p of this._profileSnapshot) consider(p.addr, p);
     }
 
     /* Hashtags: collect from loaded posts, count frequency, match the term. */
@@ -12039,7 +12188,7 @@ class SayIt {
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5);
 
-    if (people.length === 0 && tags.length === 0) {
+    if (people.length === 0 && tags.length === 0 && !isFullAddr) {
       dd.innerHTML = `<div class="search-dd-empty">No people or tags match “${utils.safe(term)}”<br><span style="font-size:13px">Press Enter to search post text</span></div>`;
       dd.classList.add('open');
       if (inp) inp.setAttribute('aria-expanded', 'true');
@@ -12047,6 +12196,16 @@ class SayIt {
     }
 
     let html = '';
+    if (isFullAddr) {
+      html += `<div class="search-dd-section-title">Address</div>`;
+      html += `<div class="search-dd-item" role="option" data-search-addr="${utils.safe(q)}">
+        <div class="search-dd-tag-icon">@</div>
+        <div class="search-dd-body">
+          <div class="search-dd-name">Go to ${utils.safe(this.trunc(q))}</div>
+          <div class="search-dd-sub">Open this address's profile</div>
+        </div>
+      </div>`;
+    }
     if (people.length) {
       html += `<div class="search-dd-section-title">People</div>`;
       html += people.map(pp => {
@@ -12080,6 +12239,13 @@ class SayIt {
     dd.querySelectorAll('[data-search-person]').forEach(el => {
       el.onclick = () => {
         const addr = el.dataset.searchPerson;
+        this._hideSearchDropdown();
+        this.goProfilePage(addr, addr === this.state.signerAddr);
+      };
+    });
+    dd.querySelectorAll('[data-search-addr]').forEach(el => {
+      el.onclick = () => {
+        const addr = el.dataset.searchAddr;
         this._hideSearchDropdown();
         this.goProfilePage(addr, addr === this.state.signerAddr);
       };
