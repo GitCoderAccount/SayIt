@@ -2724,7 +2724,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260605-60';
+const SW_CACHE_VER = '20260605-61';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -5941,10 +5941,12 @@ class SayIt {
         this.renderBanner(this.state.profCache[address] || {}, address);
       }
     };
-    /* Layer 1 (DexScreener) is fast — render it as soon as it lands. Layer 2
-       (deployer/owner verified + auth) may scan the channel; re-render when it
-       resolves to upgrade the badge and reveal the edit button if applicable. */
+    /* Render each piece as soon as it lands so a slow scan never blocks the
+       rest: DexScreener identity (fast), the deployer/owner editor set (fast —
+       this is what reveals the "Set token profile" button), and finally any
+       existing deployer/owner-verified profile (slower — scans tx history). */
     this._fetchTokenInfo(address).then(reRender);
+    this._fetchTokenAuth(address).then(reRender);
     this._fetchVerifiedTokenProfile(address).then(reRender);
   }
 
@@ -6129,25 +6131,30 @@ class SayIt {
     let result = null;
     const auth = await this._fetchTokenAuth(key);
     if (auth && auth.editors.size) {
-      try {
-        for (let page = 1; page <= 3; page++) {
-          let raw;
-          try { raw = await this.apiFetch(key, page); } catch { break; }
-          for (const tx of raw) {
-            const from = tx.from?.toLowerCase();
-            if (!from || !auth.editors.has(from) || !tx.input || tx.input === '0x') continue;
-            let text;
-            try { text = ethers.utils.toUtf8String(tx.input).trim(); } catch { continue; }
-            if (!text.startsWith(TOKEN_PROFILE_PREFIX)) continue;
-            const m = text.match(/^PROFILE_FOR:(0x[a-f0-9]{40})\n\n([\s\S]+)$/i);
-            if (!m || m[1].toLowerCase() !== key) continue;
-            let json; try { json = JSON.parse(m[2]); } catch { continue; }
-            const ts = Number(tx.timeStamp) || 0;
-            if (!result || ts > result._ts) result = { ...json, _ts: ts, by: from };
+      /* Scan each editor's OWN tx history for the latest PROFILE_FOR:<token>
+         they published. Targeted + reliable: it's their own outgoing tx, so
+         it's near the top of their list — far better than scanning a hot
+         token's channel where it could be buried under thousands of txs. */
+      for (const editor of auth.editors) {
+        try {
+          for (let page = 1; page <= 3; page++) {
+            let raw;
+            try { raw = await this.apiFetch(editor, page); } catch { break; }
+            for (const tx of raw) {
+              if (tx.from?.toLowerCase() !== editor || !tx.input || tx.input === '0x') continue;
+              let text;
+              try { text = ethers.utils.toUtf8String(tx.input).trim(); } catch { continue; }
+              if (!text.startsWith(TOKEN_PROFILE_PREFIX)) continue;
+              const m = text.match(/^PROFILE_FOR:(0x[a-f0-9]{40})\n\n([\s\S]+)$/i);
+              if (!m || m[1].toLowerCase() !== key) continue;
+              let json; try { json = JSON.parse(m[2]); } catch { continue; }
+              const ts = Number(tx.timeStamp) || 0;
+              if (!result || ts > result._ts) result = { ...json, _ts: ts, by: editor };
+            }
+            if (raw.length < 50) break;
           }
-          if (raw.length < 50) break;
-        }
-      } catch { /* ignore */ }
+        } catch { /* ignore this editor */ }
+      }
     }
     this._verifiedTokenCache[key] = result;
     return result;
@@ -6935,6 +6942,7 @@ class SayIt {
             onclick="event.stopPropagation();pulse.g('custom-input').value='${utils.safe(address)}';pulse.goCustom()">
             <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M1.998 5.5c0-1.381 1.119-2.5 2.5-2.5h15c1.381 0 2.5 1.119 2.5 2.5v13c0 1.381-1.119 2.5-2.5 2.5h-15c-1.381 0-2.5-1.119-2.5-2.5v-13zm2.5-.5a.5.5 0 00-.5.5v2.764l8 3.638 8-3.638V5.5a.5.5 0 00-.5-.5h-15zM19.998 10.236l-8 3.636-8-3.636V18.5a.5.5 0 00.5.5h15a.5.5 0 00.5-.5v-8.264z"/></svg>
           </button>
+          <button id="prof-token-edit-btn" class="prof-edit-btn" style="display:none">Set token profile</button>
           ${followBtn}
         </div>
       </div>
@@ -6981,8 +6989,22 @@ class SayIt {
     const lc = (address || '').toLowerCase();
     const token = await this._fetchTokenInfo(lc);
     if (token) this._patchProfileIdentity(lc, token, null);
+    /* Fast path: reveal the "Set token profile" button for the deployer/owner
+       without waiting on the (slower) verified-profile scan. */
+    this._fetchTokenAuth(lc).then(auth => this._patchProfileTokenEdit(lc, auth));
     const verified = await this._fetchVerifiedTokenProfile(lc);
     if (token || verified) this._patchProfileIdentity(lc, token, verified);
+  }
+
+  /* Toggle the profile page's "Set token profile" button for the deployer/owner. */
+  _patchProfileTokenEdit(lc, auth) {
+    if (this.state.mode !== 'profile') return;
+    if (this._profilePageState && this._profilePageState.address !== lc) return;
+    const btn = document.getElementById('prof-token-edit-btn');
+    if (!btn) return;
+    const canEdit = !!(auth && this.state.signerAddr && auth.editors && auth.editors.has(this.state.signerAddr));
+    btn.style.display = canEdit ? '' : 'none';
+    if (canEdit) btn.onclick = e => { e.stopPropagation(); this._openTokenProfileEditor(lc); };
   }
 
   _patchProfileIdentity(lc, token, verified) {
@@ -12498,12 +12520,20 @@ class SayIt {
 
     let html = '';
     if (isFullAddr) {
+      const sa = utils.safe(q), ta = utils.safe(this.trunc(q));
       html += `<div class="search-dd-section-title">Address</div>`;
-      html += `<div class="search-dd-item" role="option" data-search-addr="${utils.safe(q)}">
-        <div class="search-dd-tag-icon">@</div>
+      html += `<div class="search-dd-item" role="option" data-search-addr="${sa}" data-go="profile">
+        <div class="search-dd-tag-icon">👤</div>
         <div class="search-dd-body">
-          <div class="search-dd-name">Go to ${utils.safe(this.trunc(q))}</div>
-          <div class="search-dd-sub">Open this address's profile</div>
+          <div class="search-dd-name">View profile</div>
+          <div class="search-dd-sub">${ta} · identity & posts by this address</div>
+        </div>
+      </div>`;
+      html += `<div class="search-dd-item" role="option" data-search-addr="${sa}" data-go="channel">
+        <div class="search-dd-tag-icon">#</div>
+        <div class="search-dd-body">
+          <div class="search-dd-name">Open channel</div>
+          <div class="search-dd-sub">${ta} · posts sent to this address</div>
         </div>
       </div>`;
     }
@@ -12548,7 +12578,12 @@ class SayIt {
       el.onclick = () => {
         const addr = el.dataset.searchAddr;
         this._hideSearchDropdown();
-        this.goProfilePage(addr, addr === this.state.signerAddr);
+        if (el.dataset.go === 'channel') {
+          this.g('custom-input').value = addr;
+          this.goCustom();
+        } else {
+          this.goProfilePage(addr, addr === this.state.signerAddr);
+        }
       };
     });
     dd.querySelectorAll('[data-search-tag]').forEach(el => {
