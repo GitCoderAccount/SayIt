@@ -1878,12 +1878,14 @@ nav { flex:1; padding:4px 0; }
 .settings-input:focus { border-color:var(--primary); }
 .settings-input::placeholder { color:var(--muted); }
 .settings-btn {
-  padding:9px 18px; background:transparent; border:1px solid var(--border);
-  border-radius:9999px; color:var(--text); font-size:14px; font-weight:600;
+  padding:9px 18px; background:var(--primary); border:none;
+  border-radius:9999px; color:#fff; font-size:14px; font-weight:600;
   cursor:pointer; transition:all 0.18s; white-space:nowrap; flex-shrink:0;
 }
-.settings-btn:hover { border-color:var(--primary); color:var(--primary-lt); }
-.settings-btn.danger:hover { border-color:#f4212e; color:#f4212e; }
+.settings-btn:hover { background:var(--primary-lt); }
+/* Destructive actions stay outline + red on hover (never purple-filled). */
+.settings-btn.danger { background:transparent; border:1px solid var(--border); color:var(--text); }
+.settings-btn.danger:hover { background:rgba(244,33,46,0.1); border-color:#f4212e; color:#f4212e; }
 .settings-btn.primary {
   background:var(--primary); border-color:var(--primary); color:#fff;
 }
@@ -2048,15 +2050,12 @@ nav { flex:1; padding:4px 0; }
 }
 .prof-actions { display:flex; gap:8px; align-items:center; padding-bottom:4px; }
 .prof-edit-btn {
-  padding:8px 18px; background:transparent;
-  border:1px solid var(--border); border-radius:9999px;
-  color:var(--text); font-size:14px; font-weight:700;
+  padding:8px 18px; background:var(--primary);
+  border:none; border-radius:9999px;
+  color:#fff; font-size:14px; font-weight:700;
   cursor:pointer; transition:background 0.18s;
 }
-.prof-edit-btn:hover { background:rgba(255,255,255,0.06); }
-/* "View profile" on the channel banner uses the purple primary style. */
-#cb-profile-btn { background:var(--primary); border:none; color:#fff; }
-#cb-profile-btn:hover { background:var(--primary-lt); }
+.prof-edit-btn:hover { background:var(--primary-lt); }
 .prof-follow-btn {
   padding:8px 18px; background:var(--primary); border:none;
   border-radius:9999px; color:#fff;
@@ -2745,7 +2744,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260605-65';
+const SW_CACHE_VER = '20260605-66';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
