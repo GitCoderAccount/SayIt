@@ -454,7 +454,7 @@ nav { flex:1; padding:4px 0; }
   display:flex; align-items:baseline; flex-wrap:nowrap;
   gap:0; line-height:1.4; margin-bottom:0; overflow:hidden;
 }
-.post-name   { font-weight:700; font-size:15px; color:#f3f4f5; flex-shrink:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; max-width:200px; letter-spacing:-0.1px; }
+.post-name   { font-weight:700; font-size:15px; color:#f3f4f5; flex-shrink:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; max-width:200px; letter-spacing:-0.1px; text-decoration:none; }
 .post-name:hover { text-decoration:underline; cursor:pointer; }
 .post-dot    { color:var(--muted); font-size:14px; margin:0 4px; flex-shrink:0; }
 .post-handle {
@@ -2241,11 +2241,11 @@ nav { flex:1; padding:4px 0; }
         <span class="notif-badge" id="notif-badge"></span>
       </a>
       <!-- My Channel nav button — hidden until wallet connected -->
-      <button class="nav-btn" id="nav-mychannel" style="display:none">
+      <a class="nav-btn" id="nav-mychannel" style="display:none">
         <span class="nav-icon">
           <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M17.863 13.44c1.477 1.58 2.366 3.8 2.632 6.46l.11 1.1H3.395l.11-1.1c.266-2.66 1.155-4.88 2.632-6.46C7.627 11.85 9.648 11 12 11s4.373.85 5.863 2.44zM12 2C9.791 2 8 3.79 8 6s1.791 4 4 4 4-1.79 4-4-1.791-4-4-4z"/></svg>
         </span><span class="nav-label">My Channel</span>
-      </button>
+      </a>
       <a class="nav-btn" id="nav-channels" href="#/channels">
         <span class="nav-icon">
           <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M1.998 5.5c0-1.381 1.119-2.5 2.5-2.5h15c1.381 0 2.5 1.119 2.5 2.5v13c0 1.381-1.119 2.5-2.5 2.5h-15c-1.381 0-2.5-1.119-2.5-2.5v-13zm2.5-.5a.5.5 0 00-.5.5v2.764l8 3.638 8-3.638V5.5a.5.5 0 00-.5-.5h-15zM19.998 10.236l-8 3.636-8-3.636V18.5a.5.5 0 00.5.5h15a.5.5 0 00.5-.5v-8.264z"/></svg>
@@ -2256,11 +2256,11 @@ nav { flex:1; padding:4px 0; }
           <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 1.5l2.917 6.064 6.583.79-4.86 4.494 1.27 6.652L12 16.98l-5.91 3.52 1.27-6.652L2.5 8.354l6.583-.79L12 1.5z"/></svg>
         </span><span class="nav-label">Premium</span>
       </button>
-      <button class="nav-btn" id="nav-profile">
+      <a class="nav-btn" id="nav-profile">
         <span class="nav-icon">
           <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M5.651 19h12.698c-.337-1.8-1.023-2.891-1.929-3.4-1.285-.736-3.574-1.1-4.42-1.1-.845 0-3.135.364-4.42 1.1-.906.509-1.592 1.6-1.929 3.4zM12 11c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zm0 2c-2.5 0-4.418.733-5.649 1.896C5.23 16.02 4.617 17.467 4.39 19.5c-.046.441.233.9.683.9h13.854c.45 0 .729-.459.683-.9-.226-2.033-.84-3.48-1.961-4.604C16.418 13.733 14.5 13 12 13zm0-8C9.239 5 7 7.239 7 10s2.239 5 5 5 5-2.239 5-5-2.239-5-5-5z"/></svg>
         </span><span class="nav-label">Profile</span>
-      </button>
+      </a>
       <!-- More button + popup -->
       <div class="nav-more-wrap" id="nav-more-wrap">
         <button class="nav-btn" id="nav-more">
@@ -2744,7 +2744,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260605-66';
+const SW_CACHE_VER = '20260605-67';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -3775,12 +3775,12 @@ class SayIt {
     g('nav-explore').onclick   = navClick(() => this.goExplore());
     g('nav-notifs').onclick    = navClick(() => this.goNotifications());
     g('nav-channels').onclick  = navClick(() => this.goChannels());
-    w('nav-mychannel', 'onclick', () => this.goSelf());
+    w('nav-mychannel', 'onclick', navClick(() => this.goSelf()));
     /* Bookmarks lives only in the More menu now (removed from the main nav).
        Lists/Communities also live in More, keeping the left rail compact. */
     w('nav-premium', 'onclick', () => this.goPremium());
     w('sb-premium-btn', 'onclick', () => this.goPremium());
-    g('nav-profile').onclick   = () => this.openProfileModal();
+    g('nav-profile').onclick   = navClick(() => this.openProfileModal());
     g('nav-more').onclick      = e => { e.stopPropagation(); this.toggleMoreMenu(); };
     /* The mobile #mn-more button is wired via the [data-mn="more"]
        delegation handler below. */
@@ -3839,6 +3839,10 @@ class SayIt {
       const name   = e.target.closest('.post-name');
       const avatar = e.target.closest('.post-avatar');
       if (name || avatar) {
+        /* The name is a real <a href="#/profile/…"> link: on a modified click
+           let the browser open it in a new tab; on a plain click route in-app. */
+        if (name && name.tagName === 'A' && (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button === 1)) return;
+        e.preventDefault();
         e.stopPropagation();
         const item = e.target.closest('.post-item');
         const post = item ? this._postMap.get(item.dataset.txhash) : null;
@@ -3968,6 +3972,12 @@ class SayIt {
 
     g('feed').addEventListener('mouseover', onFeedMouseover);
     g('feed').addEventListener('mouseout',  onFeedMouseout);
+    /* Same hovercard for [data-pop-addr] rows in the right column (who-to-follow). */
+    const sbr = g('sidebar-right');
+    if (sbr) {
+      sbr.addEventListener('mouseover', onFeedMouseover);
+      sbr.addEventListener('mouseout',  onFeedMouseout);
+    }
 
     g('cb-address').onclick = () => {
       const addr = g('cb-address').textContent;
@@ -6453,6 +6463,7 @@ class SayIt {
     this.g('ap-addr').textContent        = this.trunc(addr);
     this.g('ch-self').style.display      = 'block';
     this.g('nav-mychannel').style.display = '';
+    this._syncNavLinks();
     const mnMy = document.getElementById('mn-mychannel');
     if (mnMy) mnMy.style.display = '';
     /* Retry any posts that failed while offline */
@@ -6981,10 +6992,11 @@ class SayIt {
             onclick="event.stopPropagation();pulse._shareUrl(pulse._profileUrl('${utils.safe(address)}'),'')">
             <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.48-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>
           </button>
-          <button class="prof-edit-btn" title="Open channel / message" aria-label="Open this address's channel" style="padding:6px 10px"
-            onclick="event.stopPropagation();pulse.g('custom-input').value='${utils.safe(address)}';pulse.goCustom()">
+          <a class="prof-edit-btn" title="Open channel / message" aria-label="Open this address's channel" style="padding:6px 10px;display:inline-flex;align-items:center"
+            href="#/channel/${utils.safe(address)}"
+            onclick="if(event.metaKey||event.ctrlKey||event.shiftKey||event.altKey||event.button===1)return;event.preventDefault();event.stopPropagation();pulse.g('custom-input').value='${utils.safe(address)}';pulse.goCustom()">
             <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M1.998 5.5c0-1.381 1.119-2.5 2.5-2.5h15c1.381 0 2.5 1.119 2.5 2.5v13c0 1.381-1.119 2.5-2.5 2.5h-15c-1.381 0-2.5-1.119-2.5-2.5v-13zm2.5-.5a.5.5 0 00-.5.5v2.764l8 3.638 8-3.638V5.5a.5.5 0 00-.5-.5h-15zM19.998 10.236l-8 3.636-8-3.636V18.5a.5.5 0 00.5.5h15a.5.5 0 00.5-.5v-8.264z"/></svg>
-          </button>
+          </a>
           <button id="prof-token-edit-btn" class="prof-edit-btn" style="display:none">Set token profile</button>
           ${followBtn}
         </div>
@@ -8974,7 +8986,7 @@ class SayIt {
           aria-label="More options">${this.icon('ic-menu')}</button>
         <div class="post-col">
           <div class="post-meta-row">
-            <span class="post-name">${displayName}</span>${verifiedBadge}
+            <a class="post-name" href="#/profile/${utils.safe(post.reporter)}">${displayName}</a>${verifiedBadge}
             ${hasProfile ? `<span class="post-dot">·</span>
             <span class="post-handle" data-addr="${utils.safe(post.reporter)}"
               title="Click to copy address">@${this.trunc(post.reporter)}</span>` : ''}
@@ -9653,6 +9665,15 @@ class SayIt {
     if (pb) pb.disabled = !this.g('compose-text')?.value.trim();
     const mpb = this.g('modal-post-btn');
     if (mpb) mpb.disabled = !this.g('modal-compose-text')?.value.trim();
+  }
+
+  /* Point the My Channel / Profile nav links at the connected wallet's pages so
+     right-click / middle-click / ⌘-click can open them in a new tab. */
+  _syncNavLinks() {
+    const a = this.state.signerAddr;
+    const mc = this.g('nav-mychannel'), pr = this.g('nav-profile');
+    if (mc) { if (a) mc.href = '#/channel/' + a; else mc.removeAttribute('href'); }
+    if (pr) { if (a) pr.href = '#/profile/' + a; else pr.removeAttribute('href'); }
   }
 
   openReplyModal(post) {
@@ -11370,10 +11391,10 @@ class SayIt {
       const name = c?.username ? utils.safe(c.username) : this.trunc(addr);
       const pic  = c?.picUrl || 'image1.jpeg';
       return `<div class="sb-card-row" role="button" tabindex="0" style="cursor:pointer" onclick="pulse.goProfilePage('${utils.safe(addr)}', false)">
-        <img src="${utils.safe(pic)}" class="w2f-avatar" onerror="this.src='image1.jpeg'"
+        <img src="${utils.safe(pic)}" class="w2f-avatar" data-pop-addr="${utils.safe(addr)}" onerror="this.src='image1.jpeg'"
           alt="" style="width:40px;height:40px;border-radius:50%;margin-right:10px;flex-shrink:0">
         <div style="flex:1;min-width:0">
-          <span class="trend-name" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</span>
+          <span class="trend-name" data-pop-addr="${utils.safe(addr)}" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</span>
           <span class="trend-count">${this.trunc(addr)}</span>
         </div>
         <button class="w2f-follow-btn" onclick="event.stopPropagation();pulse.toggleFollowAddr('${utils.safe(addr)}',this)"
