@@ -647,12 +647,12 @@ nav { flex:1; padding:4px 0; }
 .pp-header { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:10px; }
 .pp-avatar { width:60px; height:60px; border-radius:50%; object-fit:cover; flex-shrink:0; background:#222; }
 .pp-follow-btn {
-  background:var(--text); color:var(--bg-dark);
+  background:var(--primary); color:#fff;
   border:0; border-radius:9999px;
   padding:7px 18px; font-weight:700; font-size:13px;
   cursor:pointer; flex-shrink:0;
 }
-.pp-follow-btn:hover { background:rgba(231,233,234,0.85); }
+.pp-follow-btn:hover { background:var(--primary-lt); }
 .pp-follow-btn.following {
   background:transparent; color:var(--text);
   border:1px solid var(--border);
@@ -674,7 +674,7 @@ nav { flex:1; padding:4px 0; }
 .profile-popup:hover .pp-view-hint { opacity:1; }
 /* Who-to-follow row hover */
 #sb-w2f-list .sb-card-row { display:flex; align-items:center; gap:8px; padding:10px 14px; }
-#sb-w2f-list .w2f-follow-btn:hover { background:rgba(231,233,234,0.85); }
+#sb-w2f-list .w2f-follow-btn:hover { background:var(--primary-lt); }
 .act-bookmark.bookmarked        { color:#1d9bf0; }
 .post-menu-btn {
   position:absolute; top:12px; right:12px;
@@ -1365,6 +1365,10 @@ nav { flex:1; padding:4px 0; }
    - At ≤1100px: also begin reducing right sidebar width gracefully.
    - Below 900px and 768px we hit the existing mobile breakpoints. */
 @media (max-width:1300px) {
+  /* Re-center: once the nav collapses to 88px, shrink #app's max-width to the
+     new column total (88 + 600 + 360) so margin:auto keeps the content
+     centered instead of letting the freed width pool on the right. */
+  #app { max-width:1048px; }
   /* Collapsed rail: re-center content and drop the right-align padding so
      the icon-only buttons sit centered in the 88px column. */
   #sidebar-left { align-items:center; padding:0; }
@@ -1439,10 +1443,12 @@ nav { flex:1; padding:4px 0; }
   }
 }
 @media (max-width:1100px) {
+  #app { max-width:998px; }   /* 88 + 600 + 310 — keep centered */
   #sidebar-right { flex:0 0 310px; width:310px; }
   .sb-card-title { font-size:18px; }
 }
 @media (max-width:980px) {
+  #app { max-width:968px; }   /* 88 + 600 + 280 — keep centered */
   #sidebar-right { flex:0 0 280px; width:280px; padding:12px 12px 24px; }
 }
 @media (max-width:900px)  {
@@ -1792,7 +1798,7 @@ nav { flex:1; padding:4px 0; }
 .lc-action:hover { background:rgba(255,255,255,0.08); color:var(--text); }
 .lc-join {
   flex-shrink:0; padding:6px 16px; border-radius:9999px;
-  background:var(--text); color:var(--bg-dark);
+  background:var(--primary); color:#fff;
   border:none; font-weight:700; font-size:14px; cursor:pointer;
   transition:opacity 0.12s;
 }
@@ -2039,11 +2045,11 @@ nav { flex:1; padding:4px 0; }
 }
 .prof-edit-btn:hover { background:rgba(255,255,255,0.06); }
 .prof-follow-btn {
-  padding:8px 18px; background:var(--text); border:none;
-  border-radius:9999px; color:var(--bg-dark);
+  padding:8px 18px; background:var(--primary); border:none;
+  border-radius:9999px; color:#fff;
   font-size:14px; font-weight:700; cursor:pointer; transition:all 0.18s;
 }
-.prof-follow-btn:hover { background:rgba(231,233,234,0.85); }
+.prof-follow-btn:hover { background:var(--primary-lt); }
 .prof-following-btn {
   padding:8px 18px; background:transparent;
   border:1px solid var(--border); border-radius:9999px;
@@ -2724,7 +2730,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260605-61';
+const SW_CACHE_VER = '20260605-62';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -11301,7 +11307,7 @@ class SayIt {
           <span class="trend-count">${this.trunc(addr)}</span>
         </div>
         <button class="w2f-follow-btn" onclick="event.stopPropagation();pulse.toggleFollowAddr('${utils.safe(addr)}',this)"
-          style="padding:6px 14px;border-radius:9999px;background:var(--text);color:var(--bg-dark);
+          style="padding:6px 14px;border-radius:9999px;background:var(--primary);color:#fff;
                  font-weight:700;font-size:13px;border:0;cursor:pointer;flex-shrink:0">Follow</button>
       </div>`;
     }).join('');
