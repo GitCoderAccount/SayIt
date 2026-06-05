@@ -328,6 +328,15 @@ nav { flex:1; padding:4px 0; }
   font-family:monospace; cursor:pointer; display:inline-block;
 }
 #cb-address:hover { color:var(--primary-lt); text-decoration:underline; }
+#cb-token-meta { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:6px; }
+#cb-token-meta:empty { display:none; }
+#cb-token-meta a { font-size:13px; color:var(--primary-lt); text-decoration:none; }
+#cb-token-meta a:hover { text-decoration:underline; }
+.cb-token-badge {
+  font-size:11px; font-weight:700; color:var(--primary-lt);
+  background:var(--primary-dim); border:1px solid var(--border);
+  border-radius:9999px; padding:2px 9px;
+}
 /* ── Compose ─────────────────────────────────────────────────────────────── */
 #compose-area {
   display:flex; gap:12px; padding:12px 16px 8px;
@@ -2266,6 +2275,7 @@ nav { flex:1; padding:4px 0; }
           <div id="cb-name">—</div>
           <div id="cb-bio"></div>
           <div id="cb-address" title="Click to copy"></div>
+          <div id="cb-token-meta"></div>
         </div>
         <div class="cb-actions" style="margin-left:auto;align-self:flex-start;display:flex;gap:8px">
           <button id="cb-profile-btn" class="prof-edit-btn" style="display:none">View profile</button>
@@ -2707,7 +2717,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260604-57';
+const SW_CACHE_VER = '20260605-58';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -5906,19 +5916,39 @@ class SayIt {
       this.renderBanner(this.state.profile, address); return;
     }
     const cached = this.state.profCache[address];
-    if (cached) { this.renderBanner(cached, address); return; }
-    this.renderBanner({ username:'', picUrl:'image1.jpeg', bio:'Loading profile…' }, address);
-    this.fetchOtherProfile(address).then(() => {
-      const loaded = this.state.profCache[address];
-      if (loaded && banner.style.display !== 'none') this.renderBanner(loaded, address);
+    if (cached) { this.renderBanner(cached, address); }
+    else {
+      this.renderBanner({ username:'', picUrl:'image1.jpeg', bio:'Loading profile…' }, address);
+      this.fetchOtherProfile(address).then(() => {
+        const loaded = this.state.profCache[address];
+        if (loaded && banner.style.display !== 'none') this.renderBanner(loaded, address);
+      });
+    }
+    /* If this channel is a token, fetch its identity (logo/name/links) and
+       re-render the banner with it once available. renderBanner reads the
+       cached token info, so a profile re-render won't clobber it. */
+    this._fetchTokenInfo(address).then(info => {
+      if (info && this.state.channel === address && banner.style.display !== 'none') {
+        this.renderBanner(this.state.profCache[address] || {}, address);
+      }
     });
   }
 
   renderBanner(profile, address) {
-    this.g('cb-avatar').src          = profile?.picUrl || 'image1.jpeg';
-    this.g('cb-name').textContent    = profile?.username || this.trunc(address);
-    this.g('cb-bio').textContent     = profile?.bio  || '';
+    /* Token identity (DexScreener) is used only when the address has no
+       human self-profile — a token contract can't self-publish, so this is
+       what gives token channels a real name/logo/links. */
+    const token    = this._tokenInfoCache?.[(address || '').toLowerCase()];
+    const hasHuman = !!(profile && profile.username);
+    const useToken = !!(token && !hasHuman);
+    this.g('cb-avatar').src       = (useToken && token.logo) ? token.logo : (profile?.picUrl || 'image1.jpeg');
+    this.g('cb-name').textContent = hasHuman ? profile.username
+      : useToken ? (token.symbol ? `${token.name} (${token.symbol})` : token.name)
+      : this.trunc(address);
+    this.g('cb-bio').textContent  = profile?.bio || (useToken ? 'Token on PulseChain' : '');
     this.g('cb-address').textContent = address || '';
+    const meta = this.g('cb-token-meta');
+    if (meta) meta.innerHTML = token ? this._tokenMetaHTML(token) : '';
     /* Follow button for contract/token channel pages (hidden on your own). */
     const followBtn = this.g('cb-follow-btn');
     if (followBtn) {
@@ -5962,6 +5992,54 @@ class SayIt {
         coverEl.classList.remove('has-custom-cover');
       }
     }
+  }
+
+  /* Look up token identity for a channel address via DexScreener (name,
+     symbol, logo, website, socials). Cached per address (null = not a
+     DEX-listed token). Best-effort: any failure resolves to null so the
+     banner just falls back to the plain address. */
+  async _fetchTokenInfo(address) {
+    const key = (address || '').toLowerCase();
+    if (!key) return null;
+    this._tokenInfoCache = this._tokenInfoCache || {};
+    if (key in this._tokenInfoCache) return this._tokenInfoCache[key];
+    let result = null;
+    try {
+      const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${key}`);
+      if (r.ok) {
+        const d = await r.json();
+        /* Only treat it as "this token" when it's the BASE token of a pair
+           (otherwise we'd mislabel e.g. DAI when it's just the quote side). */
+        const pair = (d.pairs || []).find(p => p.baseToken?.address?.toLowerCase() === key);
+        if (pair) {
+          const bt = pair.baseToken || {}, info = pair.info || {};
+          result = {
+            name:   bt.name || 'Token',
+            symbol: bt.symbol || '',
+            logo:   utils.safeUrl(info.imageUrl || '') || '',
+            website:(info.websites || [])[0]?.url || '',
+            socials: Array.isArray(info.socials) ? info.socials : [],
+            dexUrl: pair.url || '',
+          };
+        }
+      }
+    } catch { /* offline or not a token — leave null */ }
+    this._tokenInfoCache[key] = result;
+    return result;
+  }
+
+  /* Badge + website/socials/DexScreener links for a token channel banner.
+     All URLs are scheme-validated + escaped (DexScreener data is external). */
+  _tokenMetaHTML(token) {
+    const link = (url, label) => {
+      const u = utils.safeUrl(url || '');
+      return u ? `<a href="${utils.safe(u)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${utils.safe(label)}</a>` : '';
+    };
+    const parts = ['<span class="cb-token-badge">⬡ Token</span>'];
+    if (token.website) parts.push(link(token.website, '🌐 Website'));
+    (token.socials || []).forEach(s => parts.push(link(s.url, (s.type || 'link'))));
+    if (token.dexUrl) parts.push(link(token.dexUrl, 'DexScreener ↗'));
+    return parts.filter(Boolean).join('');
   }
 
   /* (poll notifs are included in the badge via _scanPollNotifications
