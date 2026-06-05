@@ -357,11 +357,14 @@ nav { flex:1; padding:4px 0; }
 .compose-body { flex:1; min-width:0; }
 
 #compose-text {
-  width:100%; min-height:30px; max-height:400px;
+  width:100%; min-height:28px; max-height:400px;
   padding:4px 0; background:transparent; border:none;
   color:var(--text); font-size:20px; resize:none;
   overflow-y:auto; line-height:1.4;
+  transition:min-height 0.15s ease;
 }
+/* X-style: one line at rest, expands a bit on focus, grows with content. */
+#compose-text:focus { min-height:52px; }
 #compose-text:focus { outline:none; }
 #compose-text::placeholder { color:var(--muted); }
 
@@ -2300,7 +2303,7 @@ nav { flex:1; padding:4px 0; }
     <div id="compose-area">
       <img src="image1.jpeg" class="compose-avatar" id="compose-avatar" alt="">
       <div class="compose-body">
-        <textarea id="compose-text" placeholder="What's happening on Pulse?"></textarea>
+        <textarea id="compose-text" rows="1" placeholder="What's happening on Pulse?"></textarea>
         <div id="compose-toolbar">
           <div class="compose-icons">
             <button class="cmp-icon" id="cmp-image-btn" title="Add photos or video" aria-label="Add photos or video">
@@ -2730,7 +2733,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260605-62';
+const SW_CACHE_VER = '20260605-63';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
