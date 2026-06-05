@@ -387,7 +387,7 @@ nav { flex:1; padding:4px 0; }
 
 .char-ring {
   position:relative; width:26px; height:26px;
-  display:flex; align-items:center; justify-content:center;
+  display:none; align-items:center; justify-content:center;  /* shown by updateCharCount once typing starts */
 }
 .char-ring svg { position:absolute; top:0; left:0; transform:rotate(-90deg); }
 .cr-bg { fill:none; stroke:var(--bg-mid); stroke-width:2.5; }
@@ -661,8 +661,8 @@ nav { flex:1; padding:4px 0; }
   border:1px solid var(--border);
 }
 .pp-follow-btn.following:hover {
-  background:rgba(244,33,46,0.1); color:#f4212e;
-  border-color:#f4212e;
+  background:rgba(255,255,255,0.06); color:var(--text);
+  border-color:var(--border);
 }
 .pp-follow-btn.following:hover::before {
   content:"Unfollow";
@@ -1296,6 +1296,13 @@ nav { flex:1; padding:4px 0; }
   font-weight:700; font-size:15px; cursor:pointer; transition:background 0.2s;
 }
 .btn-pri:hover { background:var(--primary-lt); }
+/* Disabled primary buttons (e.g. Post when the box is empty) — dim, X-style. */
+#post-btn:disabled, #modal-post-btn:disabled, .btn-pri:disabled { opacity:0.45; cursor:default; }
+#post-btn:disabled:hover, #modal-post-btn:disabled:hover, .btn-pri:disabled:hover { background:var(--primary); }
+/* Posts whose tx input is binary/non-text — flagged + de-emphasized but still
+   readable (expand to see the raw). */
+.post-nontext { font-size:12px; font-weight:600; color:var(--muted); margin-bottom:4px; }
+.post-body.is-nontext { font-family:monospace; font-size:12.5px; color:var(--muted); word-break:break-all; }
 .btn-sm {
   padding:9px 16px; background:var(--primary-dim);
   border:1px solid var(--primary); border-radius:9999px;
@@ -1316,7 +1323,7 @@ nav { flex:1; padding:4px 0; }
   font-size:14px; color:var(--muted); margin-bottom:14px; line-height:1.5;
 }
 .auto-textarea {
-  width:100%; min-height:80px; max-height:400px;
+  width:100%; min-height:56px; max-height:400px;
   padding:12px; background:var(--bg-dark);
   border:1px solid var(--border); border-radius:12px;
   color:var(--text); font-size:15px; resize:none;
@@ -1368,17 +1375,17 @@ nav { flex:1; padding:4px 0; }
    - At ≤1100px: also begin reducing right sidebar width gracefully.
    - Below 900px and 768px we hit the existing mobile breakpoints. */
 @media (max-width:1300px) {
-  /* Re-center: once the nav collapses to 88px, shrink #app's max-width to the
-     new column total (88 + 600 + 360) so margin:auto keeps the content
+  /* Re-center: once the nav collapses to the icon rail, shrink #app's max-width
+     to the new column total (72 + 600 + 360) so margin:auto keeps the content
      centered instead of letting the freed width pool on the right. */
-  #app { max-width:1048px; }
+  #app { max-width:1032px; }
   /* Collapsed rail: re-center content and drop the right-align padding so
      the icon-only buttons sit centered in the 88px column. */
   #sidebar-left { align-items:center; padding:0; }
   #sidebar-left > *, #sidebar-left nav { max-width:none; }
   /* Icon-only nav: hide labels, shrink container width, round the buttons.
      Logo SVG also shrinks to just the bubble+bolt mark. */
-  #sidebar-left { width:88px; flex:0 0 88px; }
+  #sidebar-left { width:72px; flex:0 0 72px; }
   .nav-label { display:none; }
   .site-name { display:none; }
   /* The More popup must stay full-width with readable labels even though the
@@ -1446,12 +1453,12 @@ nav { flex:1; padding:4px 0; }
   }
 }
 @media (max-width:1100px) {
-  #app { max-width:998px; }   /* 88 + 600 + 310 — keep centered */
+  #app { max-width:982px; }   /* 72 + 600 + 310 — keep centered */
   #sidebar-right { flex:0 0 310px; width:310px; }
   .sb-card-title { font-size:18px; }
 }
 @media (max-width:980px) {
-  #app { max-width:968px; }   /* 88 + 600 + 280 — keep centered */
+  #app { max-width:952px; }   /* 72 + 600 + 280 — keep centered */
   #sidebar-right { flex:0 0 280px; width:280px; padding:12px 12px 24px; }
 }
 @media (max-width:900px)  {
@@ -2059,7 +2066,11 @@ nav { flex:1; padding:4px 0; }
   color:var(--text); font-size:14px; font-weight:700;
   cursor:pointer; transition:all 0.18s;
 }
-.prof-following-btn:hover { border-color:#f4212e; color:#f4212e; }
+.prof-following-btn:hover { background:rgba(255,255,255,0.06); }
+/* Following state on the channel banner (prof-follow-btn keeps its class +
+   a .following modifier) — render it as the secondary outline style too. */
+.prof-follow-btn.following { background:transparent; border:1px solid var(--border); color:var(--text); }
+.prof-follow-btn.following:hover { background:rgba(255,255,255,0.06); }
 
 /* Info block */
 .prof-info { padding:0 16px 12px; }
@@ -2733,7 +2744,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260605-63';
+const SW_CACHE_VER = '20260605-64';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -3137,6 +3148,7 @@ const utils = {
     const fg   = document.getElementById('cr-fg');
     const num  = document.getElementById('char-count-num');
     if (ring && fg) {
+      ring.style.display = n > 0 ? 'flex' : 'none';   /* hide the counter until typing (X-style) */
       const pct = Math.min(n / 1000, 1);
       fg.setAttribute('stroke-dasharray', `${pct * max} ${max}`);
       const cls = n > 1000 ? 'over' : n > 500 ? 'warn' : n > 280 ? 'note' : 'ok';
@@ -3687,6 +3699,7 @@ class SayIt {
     this.g('compose-text').value = draft;
     utils.autoGrow(this.g('compose-text'));
     utils.updateCharCount(this.g('compose-text'), null);
+    this._syncPostBtn();
   }
   _clearDraft() {
     utils.safeLS.remove(this._draftKey());
@@ -3788,15 +3801,18 @@ class SayIt {
     g('compose-text').oninput = () => {
       utils.autoGrow(g('compose-text'));
       utils.updateCharCount(g('compose-text'), null);
+      this._syncPostBtn();
       this._draftSave();
     };
     g('post-btn').onclick           = () => this.publishPost();
     g('expand-compose-btn').onclick = () => this.openComposeModal();
+    this._syncPostBtn(); /* initial: disabled while the box is empty */
 
     g('close-compose-modal').onclick = () => this.closeModal('compose-modal');
     g('modal-compose-text').oninput  = () => {
       utils.autoGrow(g('modal-compose-text'));
       utils.updateCharCount(g('modal-compose-text'), g('modal-char-count'));
+      this._syncPostBtn();
     };
     g('modal-post-btn').onclick = () => this.publishFromModal();
 
@@ -4485,6 +4501,7 @@ class SayIt {
     this.g('modal-compose-text').value = existing;
     utils.autoGrow(this.g('modal-compose-text'));
     utils.updateCharCount(this.g('modal-compose-text'), this.g('modal-char-count'));
+    this._syncPostBtn();
     this.g('modal-compose-avatar').src = this.state.profile.picUrl || 'image1.jpeg';
     this.g('compose-modal').classList.add('open');
     this._trapFocus(this.g('compose-modal'));
@@ -4499,6 +4516,7 @@ class SayIt {
     if (ok === true) {
       this.closeModal('compose-modal');
       this.g('modal-compose-text').value = '';
+      this._syncPostBtn();
     }
   }
 
@@ -8815,7 +8833,26 @@ class SayIt {
     const verifiedBadge = hasProfile
       ? '<span class="verified-icon" title="On-chain profile verified"><svg viewBox="0 0 22 22" width="14" height="14" style="vertical-align:-2px"><path fill="#1d9bf0" d="M20.396 11c-.018-.646-.215-1.275-.57-1.816-.354-.54-.852-.972-1.438-1.246.223-.607.27-1.264.14-1.897-.131-.634-.437-1.218-.882-1.687-.47-.445-1.053-.75-1.687-.882-.633-.13-1.29-.083-1.897.14-.273-.587-.704-1.086-1.245-1.44S11.647 1.62 11 1.604c-.646.017-1.273.213-1.813.568s-.969.854-1.24 1.44c-.608-.223-1.267-.272-1.902-.14-.635.13-1.22.436-1.69.882-.445.47-.749 1.055-.878 1.688-.13.633-.08 1.29.144 1.896-.587.274-1.087.705-1.443 1.245-.356.54-.555 1.17-.574 1.817.02.647.218 1.276.574 1.817.356.54.856.972 1.443 1.245-.224.606-.274 1.263-.144 1.896.13.634.433 1.218.877 1.688.47.443 1.054.747 1.687.878.633.132 1.29.084 1.897-.136.274.586.705 1.084 1.246 1.439.54.354 1.17.551 1.816.569.647-.016 1.276-.213 1.817-.567s.972-.854 1.245-1.44c.604.239 1.266.296 1.903.164.636-.132 1.22-.447 1.68-.907.46-.46.776-1.044.908-1.681s.075-1.299-.165-1.903c.586-.274 1.084-.705 1.439-1.246.354-.54.551-1.17.569-1.816zM9.662 14.85l-3.429-3.428 1.293-1.302 2.072 2.072 4.4-4.794 1.347 1.246z"/></svg></span>'
       : '';
-    return { isOwn, picUrl, displayName, verifiedBadge };
+    return { isOwn, picUrl, displayName, verifiedBadge, hasProfile };
+  }
+
+  /* Heuristic: is this post's text actually binary/non-text data (a tx whose
+     input bytes happen to decode without throwing but aren't a real message)?
+     Used to flag + de-emphasize such posts rather than show a wall of gibberish.
+     Conservative — only LABELS them, so an occasional false positive is harmless. */
+  _isLikelyBinary(s) {
+    if (!s || s.length < 16) return false;
+    let ctrl = 0, nonAscii = 0, space = 0;
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      if (c === 32) space++;
+      else if (c === 0xFFFD || (c < 0x20 && c !== 9 && c !== 10 && c !== 13)) ctrl++;
+      else if (c > 0x7E) nonAscii++;
+    }
+    const len = s.length;
+    if (ctrl / len > 0.05) return true;                              /* control/replacement chars — strong signal */
+    if (nonAscii / len > 0.4 && space / len < 0.03) return true;     /* dense symbols, ~no spaces — not prose */
+    return false;
   }
 
   /* Build the embedded repost/quote card showing the original post.
@@ -8883,14 +8920,18 @@ class SayIt {
   postHTML(post, inModal, replyMap, likeMap, repostMap, engagerMap = null) {
     const expanded = this.state.expanded.has(post.txHash);
     /* Profile + verified badge (own profile vs. cached other-user profile) */
-    const { picUrl, displayName, verifiedBadge } = this._postProfileFields(post);
+    const { picUrl, displayName, verifiedBadge, hasProfile } = this._postProfileFields(post);
+    /* Posts whose tx input is binary/non-text: flag + de-emphasize, and use a
+       much shorter preview so they don't dominate the feed (still expandable). */
+    const nonText = this._isLikelyBinary(post.display);
+    const previewLimit = nonText ? 140 : MAX_PREVIEW;
     /* Body text + image extraction. Always run linkify on full text so
-       media below the 500-char preview still renders in the feed. */
-    const textToRender = (!inModal && !expanded && post.display.length > MAX_PREVIEW)
-      ? post.display.slice(0, MAX_PREVIEW) + '…'
+       media below the preview cap still renders in the feed. */
+    const textToRender = (!inModal && !expanded && post.display.length > previewLimit)
+      ? post.display.slice(0, previewLimit) + '…'
       : post.display;
     const { text: bodyHtml, images: imgHtml, embeds: embedHtml } = utils.linkify(textToRender, post.display);
-    const isLong     = !inModal && post.display.length > MAX_PREVIEW;
+    const isLong     = !inModal && post.display.length > previewLimit;
     const needsMore  = isLong && !expanded;
     const canCollapse = isLong && expanded;
     /* Repost / quote card + badges */
@@ -8918,9 +8959,9 @@ class SayIt {
         <div class="post-col">
           <div class="post-meta-row">
             <span class="post-name">${displayName}</span>${verifiedBadge}
-            <span class="post-dot">·</span>
+            ${hasProfile ? `<span class="post-dot">·</span>
             <span class="post-handle" data-addr="${utils.safe(post.reporter)}"
-              title="Click to copy address">@${this.trunc(post.reporter)}</span>
+              title="Click to copy address">@${this.trunc(post.reporter)}</span>` : ''}
             <span class="post-time-dot">·</span>
             <a href="https://otter.pulsechain.com/tx/${utils.safe(post.txHash)}"
               target="_blank" rel="noopener noreferrer" class="post-time" title="${utils.safe(fullDate)}"
@@ -8932,7 +8973,7 @@ class SayIt {
           ${post.repostOf ? `<div class="repost-label">
             <svg width="14" height="14" style="vertical-align:middle;margin-right:4px" aria-hidden="true"><use href="#ic-repost"/></svg>
             <span class="post-name">${displayName}</span> reposted</div>` : ''}
-          <div class="post-body">${bodyHtml}</div>
+          <div class="post-body${nonText ? ' is-nontext' : ''}">${nonText ? '<div class="post-nontext">⚠ Non-text content (binary data)</div>' : ''}${bodyHtml}</div>
           ${post.poll ? this._pollHTML(post) : ''}
           ${repostCard}
           ${embedHtml || ''}
@@ -9584,8 +9625,18 @@ class SayIt {
       }
       return ok;
     } finally {
-      if (btn) btn.disabled = false;
+      /* Re-derive from content: empty after a successful post → stays disabled;
+         still has text after a failure → re-enabled so the user can retry. */
+      this._syncPostBtn();
     }
+  }
+
+  /* Enable the Post buttons only when their compose box has content. */
+  _syncPostBtn() {
+    const pb = this.g('post-btn');
+    if (pb) pb.disabled = !this.g('compose-text')?.value.trim();
+    const mpb = this.g('modal-post-btn');
+    if (mpb) mpb.disabled = !this.g('modal-compose-text')?.value.trim();
   }
 
   openReplyModal(post) {
@@ -12656,6 +12707,7 @@ class SayIt {
       if (s < 60)      return 'just now';
       if (s < 3600)    return `${Math.floor(s / 60)}m`;
       if (s < 86400)   return `${Math.floor(s / 3600)}h`;
+      if (s < 86400 * 7) return `${Math.floor(s / 86400)}d`;   /* 1d–6d like X, then a date */
       if (s < 86400 * 365) {
         /* Same year: "Jan 5". Different year within last year: "Jan 5, 2024" */
         const now = new Date();
