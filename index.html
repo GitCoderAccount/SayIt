@@ -448,6 +448,11 @@ nav { flex:1; padding:4px 0; }
   object-fit:cover; flex-shrink:0; background:var(--bg-mid);
   cursor:pointer;
 }
+/* Avatar is wrapped in a profile <a> so modified-clicks open in a new tab.
+   align-self:flex-start stops the flex parent (align-items:stretch) from
+   stretching the link to full post height — without it the avatar becomes a
+   tall invisible click strip. line-height:0 drops the inline descender gap. */
+.post-avatar-link { flex-shrink:0; align-self:flex-start; line-height:0; border-radius:50%; }
 .post-col { flex:1; min-width:0; }
 
 .post-meta-row {
@@ -3787,9 +3792,11 @@ class SayIt {
       const name   = e.target.closest('.post-name');
       const avatar = e.target.closest('.post-avatar');
       if (name || avatar) {
-        /* The name is a real <a href="#/profile/…"> link: on a modified click
-           let the browser open it in a new tab; on a plain click route in-app. */
-        if (name && name.tagName === 'A' && (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button === 1)) return;
+        /* Name and avatar are both real <a href="#/profile/…"> links: on a
+           modified click let the browser open it in a new tab; on a plain
+           click route in-app. */
+        const link = e.target.closest('a');
+        if (link && (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button === 1)) return;
         e.preventDefault();
         e.stopPropagation();
         const item = e.target.closest('.post-item');
@@ -8971,8 +8978,9 @@ class SayIt {
 
     return `
       <div class="post-hdr">
-        <img src="${utils.safe(picUrl)}" class="post-avatar" alt=""
-          loading="lazy" onerror="this.src='image1.jpeg'">
+        <a class="post-avatar-link" href="#/profile/${utils.safe(post.reporter)}"
+          aria-label="View profile" tabindex="-1"><img src="${utils.safe(picUrl)}" class="post-avatar" alt=""
+          loading="lazy" onerror="this.src='image1.jpeg'"></a>
         <button class="post-menu-btn" data-action="menu" title="More options"
           aria-label="More options">${this.icon('ic-menu')}</button>
         <div class="post-col">
