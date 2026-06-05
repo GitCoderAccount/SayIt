@@ -448,6 +448,11 @@ nav { flex:1; padding:4px 0; }
   object-fit:cover; flex-shrink:0; background:var(--bg-mid);
   cursor:pointer;
 }
+/* Avatar is wrapped in a profile <a> so modified-clicks open in a new tab.
+   align-self:flex-start stops the flex parent (align-items:stretch) from
+   stretching the link to full post height — without it the avatar becomes a
+   tall invisible click strip. line-height:0 drops the inline descender gap. */
+.post-avatar-link { flex-shrink:0; align-self:flex-start; line-height:0; border-radius:50%; }
 .post-col { flex:1; min-width:0; }
 
 .post-meta-row {
@@ -3787,9 +3792,11 @@ class SayIt {
       const name   = e.target.closest('.post-name');
       const avatar = e.target.closest('.post-avatar');
       if (name || avatar) {
-        /* The name is a real <a href="#/profile/…"> link: on a modified click
-           let the browser open it in a new tab; on a plain click route in-app. */
-        if (name && name.tagName === 'A' && (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button === 1)) return;
+        /* Name and avatar are both real <a href="#/profile/…"> links: on a
+           modified click let the browser open it in a new tab; on a plain
+           click route in-app. */
+        const link = e.target.closest('a');
+        if (link && (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button === 1)) return;
         e.preventDefault();
         e.stopPropagation();
         const item = e.target.closest('.post-item');
@@ -5261,17 +5268,61 @@ class SayIt {
     });
     this.g('feed').innerHTML = bkHeader;
     this.g('feed').appendChild(frag);
-    /* If some bookmarks are not in cache, surface that to the user */
+    /* Any bookmark not in local cache: fetch it directly by tx hash from
+       chain instead of the old "go visit the channel" dead end. Split into
+       not-yet-tried (fetch now) and already-tried-and-failed (genuine dead
+       ends) so a permanently-unreachable tx can't loop. */
     if (stillMissing.length) {
-      const note = document.createElement('div');
-      note.className = 'placeholder-view';
-      note.style.cssText = 'padding:24px 16px';
-      note.innerHTML = `<p style="font-size:13px;color:var(--muted)">
-        ${stillMissing.length} bookmark${stillMissing.length > 1 ? 's are' : ' is'} not in your local cache.
-        Visit the channel where they were posted to load them.
-      </p>`;
-      this.g('feed').appendChild(note);
+      this._bkFetchAttempted ??= new Set();
+      const toFetch     = stillMissing.filter(h => !this._bkFetchAttempted.has(h));
+      const unfetchable = stillMissing.filter(h =>  this._bkFetchAttempted.has(h));
+      if (unfetchable.length) {
+        const note = document.createElement('div');
+        note.className = 'placeholder-view';
+        note.style.cssText = 'padding:24px 16px';
+        note.innerHTML = `<p style="font-size:13px;color:var(--muted)">
+          ${unfetchable.length} bookmark${unfetchable.length > 1 ? 's' : ''} couldn't be loaded from chain (the transaction may no longer be retrievable).
+        </p>`;
+        this.g('feed').appendChild(note);
+      }
+      if (toFetch.length) {
+        const loading = document.createElement('div');
+        loading.className = 'placeholder-view';
+        loading.style.cssText = 'padding:24px 16px';
+        loading.innerHTML = `<p style="font-size:13px;color:var(--muted)">
+          Loading ${toFetch.length} more bookmark${toFetch.length > 1 ? 's' : ''} from chain…
+        </p>`;
+        this.g('feed').appendChild(loading);
+        this._fetchMissingBookmarks(toFetch, bkHeader, myToken);
+      }
     }
+  }
+
+  /* Fetch bookmarked posts that aren't cached locally directly by tx hash,
+     persist them to IDB (so they resolve instantly next time), then re-render
+     the Bookmarks list. Bounded concurrency keeps API load modest. Hashes are
+     marked attempted up front so a second pass won't re-fetch failures. */
+  async _fetchMissingBookmarks(hashes, bkHeader, myToken) {
+    this._bkFetchAttempted ??= new Set();
+    const queue   = [...hashes];
+    const fetched = [];
+    const worker  = async () => {
+      while (queue.length) {
+        const h = queue.shift();
+        this._bkFetchAttempted.add(h);
+        const post = await this._fetchTxByHash(h);
+        if (post && this.state.bookmarks.has(post.txHash)) fetched.push(post);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, hashes.length) }, worker));
+    /* Bail if the user navigated away or a newer Bookmarks load superseded us. */
+    if (this.state.mode !== 'bookmarks' || myToken !== this._bkLoadToken) return;
+    if (fetched.length) {
+      try { await this.cache.savePosts(fetched); } catch { /* IDB full/unavailable */ }
+    }
+    /* Re-resolve from memory + IDB: successes now come from cache; failures
+       are in _bkFetchAttempted so they render as dead ends without looping. */
+    this._loadBookmarksFromCache(bkHeader, myToken);
   }
 
   async goChannels() {
@@ -8936,8 +8987,9 @@ class SayIt {
 
     return `
       <div class="post-hdr">
-        <img src="${utils.safe(picUrl)}" class="post-avatar" alt=""
-          loading="lazy" onerror="this.src='image1.jpeg'">
+        <a class="post-avatar-link" href="#/profile/${utils.safe(post.reporter)}"
+          aria-label="View profile" tabindex="-1"><img src="${utils.safe(picUrl)}" class="post-avatar" alt=""
+          loading="lazy" onerror="this.src='image1.jpeg'"></a>
         <button class="post-menu-btn" data-action="menu" title="More options"
           aria-label="More options">${this.icon('ic-menu')}</button>
         <div class="post-col">
@@ -9959,24 +10011,58 @@ class SayIt {
     this._shareUrl(this._postUrl(post.txHash), (post.display || '').slice(0, 80));
   }
 
-  /* Fetch a single tx by hash (for deep-linking a post that isn't loaded).
-     Uses the explorer's eth_getTransactionByHash proxy so no channel is
-     needed. Timestamp isn't returned by the proxy, so it falls back to now. */
+  /* Fetch a single tx by hash (for deep-linking a post, or loading a
+     bookmark that isn't cached). Primary path is the Blockscout v2 single-tx
+     endpoint, which returns the input, from/to AND a real timestamp in one
+     call. (The old module=proxy&action=eth_getTransactionByHash action was
+     dropped by PulseScan — it now answers "Unknown action", which is why cold
+     deep-links had stopped resolving.) Falls back to the JSON-RPC node,
+     enriched with the block timestamp, if v2 is unreachable. */
   async _fetchTxByHash(hash) {
     const s = this._getSettings();
-    const base = s.apiUrl || 'https://api.scan.pulsechain.com/api';
+    const base = (s.apiUrl || 'https://api.scan.pulsechain.com/api').replace(/\/api\/?$/, '');
+    let txLike = null;
+    /* Primary: Blockscout v2. */
     try {
-      const res = await fetch(`${base}?module=proxy&action=eth_getTransactionByHash&txhash=${hash}`);
-      const data = await res.json();
-      const tx = data?.result;
-      if (!tx || !tx.input || tx.input === '0x') return null;
-      const parsed = this._parsePostTx({
-        hash: tx.hash, from: tx.from, to: tx.to, input: tx.input,
-        blockNumber: tx.blockNumber ? parseInt(tx.blockNumber, 16) : null,
-      }, { mode: 'main' });
-      if (parsed) this._postMap.set(hash, parsed);
-      return parsed;
-    } catch { return null; }
+      const res = await fetch(`${base}/api/v2/transactions/${hash}`);
+      if (res.ok) {
+        const d = await res.json();
+        if (d && d.raw_input && d.raw_input !== '0x') {
+          txLike = {
+            hash:  d.hash || hash,
+            from:  d.from?.hash,
+            to:    d.to?.hash,
+            input: d.raw_input,
+            blockNumber: d.block ?? null,
+            timeStamp: d.timestamp ? Math.floor(new Date(d.timestamp).getTime() / 1000) : null,
+          };
+        }
+      }
+    } catch { /* fall through to RPC */ }
+    /* Fallback: JSON-RPC node, with a best-effort block-timestamp lookup. */
+    if (!txLike) {
+      try {
+        const prov = this._getReadProvider();
+        const tx = await prov.getTransaction(hash);
+        if (tx && tx.data && tx.data !== '0x') {
+          let timeStamp = null;
+          try {
+            if (tx.blockNumber != null) {
+              const blk = await prov.getBlock(tx.blockNumber);
+              if (blk?.timestamp) timeStamp = blk.timestamp;
+            }
+          } catch { /* leave null → _parsePostTx falls back to now */ }
+          txLike = {
+            hash: tx.hash || hash, from: tx.from, to: tx.to,
+            input: tx.data, blockNumber: tx.blockNumber ?? null, timeStamp,
+          };
+        }
+      } catch { /* give up below */ }
+    }
+    if (!txLike) return null;
+    const parsed = this._parsePostTx(txLike, { mode: 'main' });
+    if (parsed) this._postMap.set(hash, parsed);
+    return parsed;
   }
 
   openThread(post) {
