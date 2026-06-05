@@ -2697,7 +2697,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260605-70';
+const SW_CACHE_VER = '20260605-71';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -6353,6 +6353,15 @@ class SayIt {
       const prov = new ethers.providers.Web3Provider(eth);
       const accs = await prov.listAccounts();
       if (accs.length && utils.safeLS.get('sayitConnected') === '1') {
+        /* Don't auto-reconnect on the wrong network. connect() switches the
+           wallet to PulseChain and verifies it, but auto-reconnect runs
+           silently at load and must not assume the wallet is still on 369.
+           The chainChanged handler only fires on a CHANGE, so a wallet left on
+           (say) Ethereum mainnet emits no event — reconnecting here would
+           leave an active signer on the wrong chain, and the next post/like
+           would fire a tx there (wasted gas; never appears in-app). Stay
+           disconnected; the user can click Connect, which runs the switch. */
+        if ((await prov.getNetwork()).chainId !== PULSE_CHAIN_ID) return;
         this.signer = prov.getSigner();
         this.state.signerAddr = (await this.signer.getAddress()).toLowerCase();
         this._registerWalletListeners();
