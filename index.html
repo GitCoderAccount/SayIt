@@ -328,10 +328,10 @@ nav { flex:1; padding:4px 0; }
   font-family:monospace; cursor:pointer; display:inline-block;
 }
 #cb-address:hover { color:var(--primary-lt); text-decoration:underline; }
-#cb-token-meta { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:6px; }
-#cb-token-meta:empty { display:none; }
-#cb-token-meta a { font-size:13px; color:var(--primary-lt); text-decoration:none; }
-#cb-token-meta a:hover { text-decoration:underline; }
+#cb-token-meta, #prof-token-meta { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:8px; }
+#cb-token-meta:empty, #prof-token-meta:empty { display:none; }
+#cb-token-meta a, #prof-token-meta a { font-size:13px; color:var(--primary-lt); text-decoration:none; }
+#cb-token-meta a:hover, #prof-token-meta a:hover { text-decoration:underline; }
 .cb-token-badge {
   font-size:11px; font-weight:700; color:var(--primary-lt);
   background:var(--primary-dim); border:1px solid var(--border);
@@ -2724,7 +2724,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260605-59';
+const SW_CACHE_VER = '20260605-60';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -5936,14 +5936,16 @@ class SayIt {
        editor set + any deployer/owner-signed profile (Layer 2), then re-render.
        renderBanner reads these caches, so a profile re-render won't clobber
        them and precedence is: human self-profile > verified > token > address. */
-    Promise.all([
-      this._fetchTokenInfo(address),
-      this._fetchVerifiedTokenProfile(address), /* also populates _tokenAuthCache */
-    ]).then(() => {
+    const reRender = () => {
       if (this.state.channel === address && banner.style.display !== 'none') {
         this.renderBanner(this.state.profCache[address] || {}, address);
       }
-    });
+    };
+    /* Layer 1 (DexScreener) is fast — render it as soon as it lands. Layer 2
+       (deployer/owner verified + auth) may scan the channel; re-render when it
+       resolves to upgrade the badge and reveal the edit button if applicable. */
+    this._fetchTokenInfo(address).then(reRender);
+    this._fetchVerifiedTokenProfile(address).then(reRender);
   }
 
   renderBanner(profile, address) {
@@ -6009,7 +6011,9 @@ class SayIt {
        the scheme — chain data is attacker-controlled. */
     const coverEl = document.querySelector('#channel-banner .cb-cover');
     if (coverEl) {
-      const safeCover = profile?.coverUrl ? utils.cssUrlValue(profile.coverUrl) : '';
+      /* Cover precedence: human cover > dev-verified cover > DexScreener banner. */
+      const coverSrc = (profile && profile.coverUrl) || (verified && verified.coverUrl) || (token && token.header) || '';
+      const safeCover = coverSrc ? utils.cssUrlValue(coverSrc) : '';
       if (safeCover) {
         coverEl.style.background = `url('${safeCover}') center/cover no-repeat`;
       } else {
@@ -6043,6 +6047,7 @@ class SayIt {
             name:   bt.name || 'Token',
             symbol: bt.symbol || '',
             logo:   utils.safeUrl(info.imageUrl || '') || '',
+            header: utils.safeUrl(info.header || '') || '', /* DexScreener banner (600x200), if the token set one */
             website:(info.websites || [])[0]?.url || '',
             socials: Array.isArray(info.socials) ? info.socials : [],
             dexUrl: pair.url || '',
@@ -6160,6 +6165,7 @@ class SayIt {
         <label class="tp-l">Name<input id="tp-name" class="tp-in" maxlength="60" value="${val(v.username || t.name)}"></label>
         <label class="tp-l">Bio<textarea id="tp-bio" class="tp-in" rows="3" maxlength="300">${val(v.bio)}</textarea></label>
         <label class="tp-l">Logo image URL<input id="tp-pic" class="tp-in" value="${val(v.picUrl || t.logo)}"></label>
+        <label class="tp-l">Banner image URL<input id="tp-cover" class="tp-in" value="${val(v.coverUrl || t.header)}"></label>
         <label class="tp-l">Website<input id="tp-web" class="tp-in" value="${val(v.website)}"></label>
         <div class="tp-note">Published on-chain from your wallet (the token's deployer/owner) — anyone can verify it. Gas only; no value sent.</div>
         <button class="btn-pri" id="tp-save">Publish token profile</button>
@@ -6171,6 +6177,7 @@ class SayIt {
         username: document.getElementById('tp-name').value.trim(),
         bio:      document.getElementById('tp-bio').value.trim(),
         picUrl:   document.getElementById('tp-pic').value.trim(),
+        coverUrl: document.getElementById('tp-cover').value.trim(),
         website:  document.getElementById('tp-web').value.trim(),
       };
       this._closeGenericModal();
@@ -6809,6 +6816,9 @@ class SayIt {
     });
     this.g('feed').innerHTML = profHeaderHTML + this._profilePageHTML(address, prof, isOwn);
     this._wireProfilePageListeners(address, isOwn);
+    /* If this profile is a token contract, fill in its identity (logo, name,
+       banner, verified profile, links) the same way the channel banner does. */
+    if (!isOwn) this._applyTokenIdentityToProfile(address);
 
     /* Profile scan depth comes from the global Max scan pages setting.
        This way users who bump it to 200 or unlimited get correspondingly
@@ -6934,6 +6944,7 @@ class SayIt {
           title="Click to copy" data-addr="${handle}">${handle}</div>
         ${bio ? `<div class="prof-bio">${bio}</div>` : ''}
         ${metaItems ? `<div class="prof-meta-row">${metaItems}</div>` : ''}
+        <div id="prof-token-meta"></div>
         <div class="prof-counts-row">
           <span class="prof-count-item" id="prof-following-count">
             <strong>—</strong> Following
@@ -6959,6 +6970,57 @@ class SayIt {
         </div>
       </div>
     </div>`;
+  }
+
+  /* Fill in a token contract's identity on its profile page (avatar, name,
+     banner, bio, badge + links), mirroring the channel banner. The fast
+     DexScreener identity (Layer 1) is applied first; the deployer/owner
+     verified profile (Layer 2, may scan the channel) upgrades it when ready.
+     No-op for EOAs or once a human profile has loaded. */
+  async _applyTokenIdentityToProfile(address) {
+    const lc = (address || '').toLowerCase();
+    const token = await this._fetchTokenInfo(lc);
+    if (token) this._patchProfileIdentity(lc, token, null);
+    const verified = await this._fetchVerifiedTokenProfile(lc);
+    if (token || verified) this._patchProfileIdentity(lc, token, verified);
+  }
+
+  _patchProfileIdentity(lc, token, verified) {
+    /* Bail if we've navigated away or a human profile took over. */
+    if (this.state.mode !== 'profile') return;
+    if (this._profilePageState && this._profilePageState.address !== lc) return;
+    if (this.state.profCache[lc] && this.state.profCache[lc].username) return;
+    const page = document.querySelector('.prof-page');
+    if (!page) return;
+    const name = (verified && verified.username)
+      || (token ? (token.symbol ? `${token.name} (${token.symbol})` : token.name) : '');
+    if (name) {
+      const nameEl = document.getElementById('prof-display-name');
+      if (nameEl) nameEl.textContent = name;
+      const titleEl = document.querySelector('.page-header-title');
+      if (titleEl) titleEl.textContent = name;
+      this._updateTitle(name);
+    }
+    const avatar = (verified && utils.safeUrl(verified.picUrl || '')) || (token && token.logo);
+    if (avatar) { const av = document.getElementById('prof-page-avatar'); if (av) av.src = avatar; }
+    const coverSrc = (verified && verified.coverUrl) || (token && token.header) || '';
+    if (coverSrc) {
+      const css = utils.cssUrlValue(coverSrc);
+      const coverEl = page.querySelector('.prof-cover');
+      if (css && coverEl) coverEl.style.background = `url('${css}') center/cover no-repeat`;
+    }
+    const bioText = (verified && verified.bio) || (token ? 'Token on PulseChain' : '');
+    if (bioText) {
+      let bioEl = page.querySelector('.prof-bio');
+      if (!bioEl) {
+        bioEl = document.createElement('div');
+        bioEl.className = 'prof-bio';
+        document.getElementById('prof-handle-addr')?.insertAdjacentElement('afterend', bioEl);
+      }
+      bioEl.textContent = bioText;
+    }
+    const meta = document.getElementById('prof-token-meta');
+    if (meta) meta.innerHTML = this._tokenMetaHTML(token, !!verified, verified);
   }
 
   _wireProfilePageListeners(address, isOwn) {
