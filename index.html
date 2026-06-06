@@ -2747,7 +2747,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260606-74';
+const SW_CACHE_VER = '20260606-75';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -4527,6 +4527,31 @@ class SayIt {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
+  /* Search a trend term from the sidebar "What's happening" card (visible on
+     any page). #tags use the tag filter; plain words do a text search. Routes
+     through Home first when on a self-managed view (Explore, Profile, …) where
+     renderFeed() no-ops, so results actually appear. */
+  _searchTrend(term) {
+    term = (term || '').trim();
+    if (!term) return;
+    const run = () => {
+      if (term.startsWith('#')) { this.filterByTag(term.slice(1)); return; }
+      this.state.activeTag  = null;
+      this.state.searchTerm = term.toLowerCase();
+      const si = this.g('search-input');
+      if (si) si.value = term;
+      this._updateSearchClearBtn?.();
+      this.renderFeed();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+    if (this._selfManagedModes.has(this.state.mode)) {
+      const r = this.goHome();
+      (r && r.then) ? r.then(run) : run();
+    } else {
+      run();
+    }
+  }
+
   openComposeModal() {
     const existing = this.g('compose-text').value;
     this.g('modal-compose-text').value = existing;
@@ -5252,8 +5277,11 @@ class SayIt {
     });
   }
 
-  /* ── Trending: rank #hashtags + significant words from recent posts ───── */
-  _exploreTrendingHTML() {
+  /* Shared trend computation — ranks #hashtags + significant words across
+     recent posts (binary posts + stopwords excluded). Returns [[term,count]].
+     Used by BOTH the Explore Trending tab and the sidebar "What's happening",
+     so they never disagree. */
+  _computeTrends(maxTerms = 12, sample = 500) {
     const STOP = this._exploreStopwords || (this._exploreStopwords = new Set(
       ('the a an and or but if then else for to of in on at by with from as is are was were be been being '
       + 'this that these those it its has have had will can could would should just so up out get got about '
@@ -5261,7 +5289,7 @@ class SayIt {
       + 'too very more most some such only own same than now into over also dont cant wont im ive pls www http '
       + 'https com one will new like via').split(' ')));
     const counts = new Map();
-    this.state.posts.slice(0, 500).forEach(p => {
+    this.state.posts.slice(0, sample).forEach(p => {
       if (p.postType && p.postType !== 'post') return;
       if (!p.display) return;
       /* Skip binary/non-text posts so their decoded garbage (e.g. "arc.txt")
@@ -5277,9 +5305,14 @@ class SayIt {
         counts.set(w, (counts.get(w) || 0) + 1);
       });
     });
-    let ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+    const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]);
     const strong = ranked.filter(([, n]) => n >= 2);
-    ranked = (strong.length ? strong : ranked).slice(0, 12);
+    return (strong.length ? strong : ranked).slice(0, maxTerms);
+  }
+
+  /* ── Trending tab: ranked terms, each taps through to a search ────────── */
+  _exploreTrendingHTML() {
+    const ranked = this._computeTrends(12);
     if (!ranked.length) {
       return `<div class="explore-empty">No trends yet — load the feed, then check back.</div>`;
     }
@@ -11577,44 +11610,29 @@ class SayIt {
   renderTrending() {
     const list = this.g('sb-trending-list');
     if (!list) return;
-    /* Scan up to ~200 most recent posts. Match #tag patterns (alphanumeric
-       + underscore), lowercase for grouping, count occurrences. */
-    const counts = new Map();
-    const sample = this.state.posts.slice(0, 200);
-    sample.forEach(p => {
-      if (!p.display) return;
-      const tags = p.display.match(/#[A-Za-z0-9_]{2,30}/g);
-      if (!tags) return;
-      tags.forEach(t => {
-        const key = t.toLowerCase();
-        counts.set(key, (counts.get(key) || 0) + 1);
-      });
-    });
-    /* Top 5 by count, drop singletons — a tag mentioned once isn't a trend. */
-    const top = [...counts.entries()]
-      .filter(([_, n]) => n >= 2)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5);
+    /* Real trends: #hashtags + significant words (shared with Explore via
+       _computeTrends), not hashtags-only — on-chain posts rarely use #tags, so
+       the old hashtag-only version almost always fell back to a static
+       "#PulseChain" placeholder. Top 5 for the compact sidebar card. */
+    const top = this._computeTrends(5, 200);
 
     /* Preserve pinned partner rows already in the DOM. */
     const pinned = [...list.querySelectorAll('.sb-card-row')]
       .filter(r => r.querySelector('.trend-label')?.textContent?.match(/partner|powered/i));
 
-    const trendHTML = top.map(([tag, count]) => {
-      const display = tag.replace(/^#/, '');
-      return `<div class="sb-card-row" role="button" tabindex="0" onclick="pulse.filterByTag('${utils.safe(display)}')" style="cursor:pointer">
+    const trendHTML = top.map(([term, count]) =>
+      `<div class="sb-card-row" role="button" tabindex="0" onclick="pulse._searchTrend('${utils.safe(term)}')" style="cursor:pointer">
         <div style="flex:1">
           <span class="trend-label">Trending on PulseChain</span>
-          <span class="trend-name">#${utils.safe(display)}</span>
+          <span class="trend-name">${utils.safe(term)}</span>
           <span class="trend-count">${count} post${count > 1 ? 's' : ''}</span>
         </div>
         <span style="font-size:20px;align-self:center">📈</span>
-      </div>`;
-    }).join('');
+      </div>`).join('');
 
     /* Fallback when nothing trends yet — keeps the card from looking empty. */
     const fallback = (top.length === 0)
-      ? `<div class="sb-card-row" role="button" tabindex="0" onclick="pulse.filterByTag('PulseChain')" style="cursor:pointer">
+      ? `<div class="sb-card-row" role="button" tabindex="0" onclick="pulse._searchTrend('PulseChain')" style="cursor:pointer">
           <div style="flex:1">
             <span class="trend-label">Trending on PulseChain</span>
             <span class="trend-name">#PulseChain</span>
