@@ -2747,7 +2747,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260606-75';
+const SW_CACHE_VER = '20260606-76';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -4791,6 +4791,52 @@ class SayIt {
     this._showGenericModal('Keyboard shortcuts', `<div class="ks-wrap">${body}</div>`);
   }
 
+  /* Accumulate a like/reply/repost seen during a feed scan, keyed by its tx
+     hash. Bounded to ~300 recent entries so memory stays flat on busy
+     channels. _engagementNotifs() later filters these to the ones targeting
+     the signed-in user's posts — so engagement notifications cost no extra API
+     calls (they ride along with the feed scan, like poll-vote tallies). */
+  _recordEngagement(type, from, target, preview, tx) {
+    if (!type || !from || !target) return;
+    const me = this.state.signerAddr;
+    if (me && from === me) return;            /* never notify yourself */
+    const txHash = tx.hash?.toLowerCase();
+    if (!txHash) return;
+    this._engagementAccum = this._engagementAccum || new Map();
+    if (this._engagementAccum.has(txHash)) return;
+    const ts = tx.timeStamp ? Number(tx.timeStamp) * 1000 : Date.now();
+    this._engagementAccum.set(txHash, { type, from, target, preview: preview || '', ts, txHash });
+    if (this._engagementAccum.size > 400) {
+      /* Bulk-trim to the 300 newest (cheap, runs only once per 100 over cap). */
+      const keep = [...this._engagementAccum.values()].sort((a, b) => b.ts - a.ts).slice(0, 300);
+      this._engagementAccum = new Map(keep.map(e => [e.txHash, e]));
+    }
+  }
+
+  /* Turn accumulated engagement into notifications for likes/replies/reposts
+     that target MY posts. My post hashes come from loaded state + the IDB
+     cache (no network). Returns [] when nothing matches. */
+  async _engagementNotifs() {
+    const me = this.state.signerAddr;
+    if (!me || !this._engagementAccum || this._engagementAccum.size === 0) return [];
+    const mine = new Set();
+    this.state.posts.forEach(p => { if (p.reporter === me) mine.add(p.txHash); });
+    try {
+      const cached = await this.cache.getPosts(p => p.reporter === me);
+      cached.forEach(p => mine.add(p.txHash));
+    } catch { /* IDB unavailable — use in-memory posts only */ }
+    if (!mine.size) return [];
+    const out = [];
+    for (const e of this._engagementAccum.values()) {
+      if (!mine.has(e.target)) continue;
+      out.push({
+        type: e.type, from: e.from, target: e.target, preview: e.preview || '',
+        timestamp: new Date(e.ts).toISOString(), txHash: e.txHash,
+      });
+    }
+    return out;
+  }
+
   async goNotifications() {
     if (!this.signer) { utils.toast('Connect wallet to view Notifications'); return; }
     this._updateTitle('Notifications');
@@ -4864,8 +4910,21 @@ class SayIt {
       try {
         const pollNotifs = await this._scanPollNotifications();
         if (pollNotifs.length) allNotifs.push(...pollNotifs);
-        allNotifs.sort((a, b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()));
       } catch (err) { console.warn('Poll notif scan:', err); }
+
+      /* Likes/replies/reposts on my posts — gathered for free from feed scans
+         (no extra channel scan), matched against my posts here. */
+      try {
+        const eng = await this._engagementNotifs();
+        if (eng.length) allNotifs.push(...eng);
+      } catch (err) { console.warn('Engagement notif:', err); }
+
+      /* Dedupe by tx hash, then sort newest-first. */
+      const _seenNotif = new Set();
+      const _deduped = allNotifs.filter(n => n.txHash && !_seenNotif.has(n.txHash) && _seenNotif.add(n.txHash));
+      _deduped.sort((a, b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()));
+      allNotifs.length = 0;
+      allNotifs.push(..._deduped);
 
       /* User navigated away while we were scanning — don't paint over the
          new view (this caused a flash of Notifications when returning Home). */
@@ -8529,6 +8588,21 @@ class SayIt {
           if (poll) { display = poll.question; postType = 'poll'; }
         }
         if (!display && !repostOf) return acc;
+      }
+
+      /* Piggyback engagement detection on the feed scan (no extra API calls):
+         record likes/replies/reposts so Notifications can surface the ones
+         targeting the signed-in user's posts. Likes/replies/reposts are
+         addressed to the channel (not the author), so they'd otherwise never
+         reach an inbox-based notification. Matched to my posts in
+         _engagementNotifs(); recorded for all since signerAddr may be unset on
+         the first scan. */
+      if (postType === 'like' && reactionTarget) {
+        this._recordEngagement('like', from, reactionTarget, '', tx);
+      } else if (postType === 'repost' && repostOf) {
+        this._recordEngagement('repost', from, repostOf, display.slice(0, 100), tx);
+      } else if (parentTx) {
+        this._recordEngagement('reply', from, parentTx, display.slice(0, 100), tx);
       }
 
       acc.push({
