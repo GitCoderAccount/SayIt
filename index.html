@@ -805,6 +805,45 @@ nav { flex:1; padding:4px 0; }
 @media (max-width:900px) {
   .explore-search-wrap { display:block; }
 }
+/* Explore redesign: always-visible search bar + sticky tab bar */
+.explore-search-bar {
+  display:flex; align-items:center; gap:10px;
+  margin:10px 12px; padding:10px 16px;
+  background:rgba(255,255,255,0.08); border:1px solid transparent;
+  border-radius:9999px; transition:background 0.2s, border-color 0.2s;
+}
+.explore-search-bar:focus-within { background:var(--bg-dark); border-color:var(--primary); }
+.explore-search-bar .search-icon { font-size:15px; color:var(--muted); flex-shrink:0; }
+.xp-search-input {
+  flex:1; min-width:0; background:transparent; border:0; outline:none;
+  color:var(--text); font-size:15px; padding:2px 0;
+}
+.xp-search-input::placeholder { color:var(--muted); }
+.explore-tabs {
+  display:flex; border-bottom:1px solid var(--border);
+  position:sticky; top:0; background:var(--bg); z-index:5;
+}
+.explore-tab {
+  flex:1; padding:15px 0; background:transparent; border:0; cursor:pointer;
+  color:var(--muted); font-size:15px; font-weight:600;
+  position:relative; transition:background 0.15s, color 0.15s;
+}
+.explore-tab:hover { background:rgba(255,255,255,0.04); }
+.explore-tab.active { color:var(--text); font-weight:800; }
+.explore-tab.active::after {
+  content:''; position:absolute; bottom:0; left:50%; transform:translateX(-50%);
+  width:56px; height:4px; border-radius:4px; background:var(--primary);
+}
+.explore-empty { padding:36px 20px; text-align:center; color:var(--muted); font-size:15px; line-height:1.6; }
+.explore-person { align-items:center; }
+.explore-follow-btn {
+  padding:7px 16px; border-radius:9999px; background:var(--primary); color:#fff;
+  font-weight:700; font-size:13px; border:0; cursor:pointer; flex-shrink:0;
+}
+.explore-follow-btn:hover { background:var(--primary-lt); }
+.explore-follow-btn.following {
+  background:transparent; color:var(--text); border:1px solid var(--border);
+}
 /* PWA install prompt card — appears at top of right sidebar when the
    beforeinstallprompt event has fired (Chromium-based browsers on
    installable sites). Hidden by default; show via JS when the event
@@ -2697,7 +2736,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260605-72';
+const SW_CACHE_VER = '20260605-73';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -5007,9 +5046,10 @@ class SayIt {
   }
 
   /* ── New navigation methods ─────────────────────────────────────────── */
-  goExplore() {
+  goExplore(tab = null) {
+    this.state.exploreTab = tab || this.state.exploreTab || 'trending';
     this._updateTitle('Explore');
-    this._setRoute('/explore');
+    this._setRoute('/explore' + (this.state.exploreTab !== 'trending' ? '/' + this.state.exploreTab : ''));
     this.setNav('nav-explore','explore');
     this.state.mode = 'explore';
     this.g('feed-tabs').classList.remove('tabs-sticky');
@@ -5022,123 +5062,261 @@ class SayIt {
     this._renderExplorePage(_exploreHeader);
   }
 
+  /* ── Explore page (X-style: search-first, tabbed) ───────────────────────
+     Tabs: Trending (frequent #hashtags + significant words from recent
+     posts), People (who-to-follow), Channels (most-active channels), Latest
+     (recent posts). All derived from the in-memory feed + profile cache —
+     clicks route through Home because Explore is a self-managed mode where
+     renderFeed() no-ops. */
   _renderExplorePage(_headerHTML = '') {
-    const posts = this.state.posts;
-    /* ── Trending hashtags ── */
-    const tagCounts = new Map();
-    posts.slice(0, 500).forEach(p => {
-      if (!p.display) return;
-      (p.display.match(/#[A-Za-z0-9_]{2,30}/g) || []).forEach(t => {
-        const k = t.toLowerCase();
-        tagCounts.set(k, (tagCounts.get(k)||0) + 1);
-      });
-    });
-    const topTags = [...tagCounts.entries()]
-      .filter(([,n]) => n >= 2)
-      .sort((a,b) => b[1]-a[1])
-      .slice(0, 10);
-
-    /* ── Most active addresses (by post count in feed) ── */
-    const addrCounts = new Map();
-    posts.filter(p => !p.postType || p.postType === 'post').forEach(p => {
-      const r = p.reporter?.toLowerCase();
-      if (r) addrCounts.set(r, (addrCounts.get(r)||0) + 1);
-    });
-    const topAddrs = [...addrCounts.entries()]
-      .sort((a,b) => b[1]-a[1])
-      .slice(0, 8);
-
-    /* ── Channel history ── */
-    const recentChannels = (this.state.channelHistory || []).slice(0, 6);
-
-    const tagHTML = topTags.length
-      ? topTags.map(([tag, count], i) => {
-          const display = tag.replace(/^#/, '');
-          return `<div class="explore-row" role="button" tabindex="0" onclick="pulse.filterByTag('${utils.safe(display)}')">
-            <div class="explore-rank">${i+1}</div>
-            <div class="explore-content">
-              <div class="explore-label">Trending on PulseChain</div>
-              <div class="explore-name">#${utils.safe(display)}</div>
-              <div class="explore-meta">${count} post${count>1?'s':''}</div>
-            </div>
-            <div class="explore-arrow">→</div>
-          </div>`;
-        }).join('')
-      : '<div style="padding:16px;color:var(--muted)">Load the feed first to see trending hashtags.</div>';
-
-    const addrHTML = topAddrs.length
-      ? topAddrs.map(([addr, count]) => {
-          const prof = this.state.profCache[addr];
-          const name = prof?.username ? utils.safe(prof.username) : this.trunc(addr);
-          const pic  = utils.safe(prof?.picUrl || 'image1.jpeg');
-          return `<div class="explore-row" role="button" tabindex="0" onclick="pulse.goProfilePage('${utils.safe(addr)}', ${addr===this.state.signerAddr})">
-            <img src="${pic}" class="explore-avatar" onerror="this.src='image1.jpeg'">
-            <div class="explore-content">
-              <div class="explore-name">${name}</div>
-              <div class="explore-meta">${count} post${count>1?'s':''} in feed</div>
-            </div>
-            <div class="explore-arrow">→</div>
-          </div>`;
-        }).join('')
-      : '<div style="padding:16px;color:var(--muted)">Load the feed first to see active posters.</div>';
-
-    const chHTML = recentChannels.length
-      ? recentChannels.map(ch => {
-          const prof = this.state.profCache[ch.address];
-          const name = prof?.username || ch.label || this.trunc(ch.address);
-          const pic  = utils.safe(prof?.picUrl || ch.picUrl || 'image1.jpeg');
-          return `<div class="explore-row" role="button" tabindex="0" onclick="pulse.g('custom-input').value='${utils.safe(ch.address)}';pulse.goCustom()">
-            <img src="${pic}" class="explore-avatar" onerror="this.src='image1.jpeg'">
-            <div class="explore-content">
-              <div class="explore-name">${utils.safe(name)}</div>
-              <div class="explore-meta">${this.trunc(ch.address)}</div>
-            </div>
-            <div class="explore-arrow">→</div>
-          </div>`;
-        }).join('')
-      : '<div style="padding:16px;color:var(--muted)">Visit some channels to see them here.</div>';
-
-    /* Mobile search affordance — sidebar search is hidden at ≤900px so
-       this is the only way to search on mobile. Visible via CSS media query;
-       desktop users see the sidebar search instead. */
+    const tab = this.state.exploreTab || 'trending';
     const searchTermVal = utils.safe(this.state.searchTerm || '');
-    const mobileSearchHTML = `
-      <div class="explore-search-wrap">
-        <span class="search-icon">🔎</span>
-        <input type="text" id="explore-search-input" class="explore-search-input"
-          placeholder="Search posts" autocomplete="off" value="${searchTermVal}"
-          aria-label="Search posts">
-        ${searchTermVal ? `<button class="explore-search-clear" id="explore-search-clear"
-          type="button" title="Clear search" aria-label="Clear search">✕</button>` : ''}
-      </div>`;
+    const tabBtn = (id, label) =>
+      `<button class="explore-tab${tab === id ? ' active' : ''}" data-explore-tab="${id}" role="tab">${label}</button>`;
     this.g('feed').innerHTML = _headerHTML + `
       <div class="explore-page">
-        ${mobileSearchHTML}
-        <div class="explore-section">
-          <div class="explore-section-title">📈 Trending</div>
-          ${tagHTML}
+        <div class="explore-search-bar">
+          <span class="search-icon" aria-hidden="true">🔎</span>
+          <input type="text" id="explore-search-input" class="xp-search-input"
+            placeholder="Search Say It DeFi" autocomplete="off" value="${searchTermVal}"
+            aria-label="Search posts and people">
+          ${searchTermVal ? `<button class="explore-search-clear" id="explore-search-clear"
+            type="button" title="Clear search" aria-label="Clear search">✕</button>` : ''}
         </div>
-        <div class="explore-section">
-          <div class="explore-section-title">🏆 Most Active</div>
-          ${addrHTML}
+        <div class="explore-tabs" role="tablist">
+          ${tabBtn('trending', 'Trending')}
+          ${tabBtn('people', 'People')}
+          ${tabBtn('channels', 'Channels')}
+          ${tabBtn('latest', 'Latest')}
         </div>
-        ${recentChannels.length ? `<div class="explore-section">
-          <div class="explore-section-title">📡 Recent Channels</div>
-          ${chHTML}
-        </div>` : ''}
-        <div style="padding:16px;text-align:center">
-          <button class="settings-btn" onclick="pulse.goHome();setTimeout(()=>pulse.goExplore(),3000)">
-            ↺ Refresh from feed
-          </button>
-        </div>
+        <div id="explore-tab-content"></div>
       </div>`;
-    /* Wire the mobile search input now that the DOM exists. */
-    setTimeout(() => this._wireExploreSearch(), 0);
+    /* Wire tab bar, search input, and a delegated click handler for the rows
+       (terms/people/channels/follow) once the DOM exists. */
+    setTimeout(() => {
+      const feed = this.g('feed');
+      feed.querySelectorAll('[data-explore-tab]').forEach(btn => {
+        btn.onclick = () => this.setExploreTab(btn.dataset.exploreTab);
+      });
+      const host = this.g('explore-tab-content');
+      if (host) {
+        host.addEventListener('click', e => {
+          const fol = e.target.closest('[data-explore-follow]');
+          if (fol) { e.stopPropagation(); this.toggleFollowAddr(fol.dataset.exploreFollow, fol); return; }
+          const term = e.target.closest('[data-explore-term]');
+          if (term) { this._exploreSearch(term.dataset.exploreTerm); return; }
+          const ch = e.target.closest('[data-explore-channel]');
+          if (ch) { this.g('custom-input').value = ch.dataset.exploreChannel; this.goCustom(); return; }
+          const prof = e.target.closest('[data-explore-profile]');
+          if (prof) { const a = prof.dataset.exploreProfile; this.goProfilePage(a, a === this.state.signerAddr); return; }
+        });
+      }
+      this._wireExploreSearch();
+    }, 0);
+    this._renderExploreTab(tab);
   }
 
-  /* Wire the mobile search input on Explore. Same behavior as the sidebar
-     search: typing routes to Home with the search term applied. Both
-     inputs stay synced. */
+  setExploreTab(tab) {
+    this.state.exploreTab = tab;
+    this._setRoute('/explore' + (tab !== 'trending' ? '/' + tab : ''));
+    const feed = this.g('feed');
+    feed.querySelectorAll('[data-explore-tab]').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.exploreTab === tab);
+    });
+    this._renderExploreTab(tab);
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  }
+
+  _renderExploreTab(tab) {
+    const host = this.g('explore-tab-content');
+    if (!host) return;
+    if (tab === 'people')        host.innerHTML = this._explorePeopleHTML();
+    else if (tab === 'channels') host.innerHTML = this._exploreChannelsHTML();
+    else if (tab === 'latest')   this._exploreRenderLatest(host);
+    else                         host.innerHTML = this._exploreTrendingHTML();
+  }
+
+  /* Run a search/term from Explore. Explore is self-managed (renderFeed no-ops),
+     so navigate Home first, then apply the term and re-render the feed. */
+  _exploreSearch(term) {
+    term = (term || '').trim();
+    if (!term) return;
+    this.state.activeTag = null;
+    const apply = () => {
+      this.state.searchTerm = term.toLowerCase();
+      const si = this.g('search-input');
+      if (si) si.value = term;
+      this._updateSearchClearBtn?.();
+      this.renderFeed();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+    const r = this.goHome();
+    (r && r.then) ? r.then(apply) : apply();
+  }
+
+  /* Fetch profiles for a set of addresses (once each), then re-render the tab
+     so real names/avatars replace truncated addresses. _exploreProfTried stops
+     addresses with no on-chain profile from looping forever. */
+  _exploreResolveProfiles(addrs, tab) {
+    this._exploreProfTried = this._exploreProfTried || new Set();
+    const todo = addrs.filter(a => !this.state.profCache[a]?.username && !this._exploreProfTried.has(a));
+    if (!todo.length) return;
+    todo.forEach(a => this._exploreProfTried.add(a));
+    Promise.all(todo.map(a => this.fetchOtherProfile(a).catch(() => {}))).then(() => {
+      if (this.state.mode === 'explore' && this.state.exploreTab === tab) this._renderExploreTab(tab);
+    });
+  }
+
+  /* ── Trending: rank #hashtags + significant words from recent posts ───── */
+  _exploreTrendingHTML() {
+    const STOP = this._exploreStopwords || (this._exploreStopwords = new Set(
+      ('the a an and or but if then else for to of in on at by with from as is are was were be been being '
+      + 'this that these those it its has have had will can could would should just so up out get got about '
+      + 'not no yes do does did done you your youre they them their there here what when who how why all any '
+      + 'too very more most some such only own same than now into over also dont cant wont im ive pls www http '
+      + 'https com one will new like via').split(' ')));
+    const counts = new Map();
+    this.state.posts.slice(0, 500).forEach(p => {
+      if (p.postType && p.postType !== 'post') return;
+      if (!p.display) return;
+      /* Skip binary/non-text posts so their decoded garbage (e.g. "arc.txt")
+         doesn't pollute the trend list. */
+      if (this._isLikelyBinary(p.display)) return;
+      (p.display.match(/#[A-Za-z0-9_]{2,30}/g) || []).forEach(t => {
+        const k = t.toLowerCase();
+        counts.set(k, (counts.get(k) || 0) + 1);
+      });
+      const noTags = p.display.replace(/#[A-Za-z0-9_]+/g, ' ');
+      (noTags.toLowerCase().match(/[a-z][a-z0-9]{2,20}/g) || []).forEach(w => {
+        if (STOP.has(w)) return;
+        counts.set(w, (counts.get(w) || 0) + 1);
+      });
+    });
+    let ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+    const strong = ranked.filter(([, n]) => n >= 2);
+    ranked = (strong.length ? strong : ranked).slice(0, 12);
+    if (!ranked.length) {
+      return `<div class="explore-empty">No trends yet — load the feed, then check back.</div>`;
+    }
+    return ranked.map(([term, count], i) =>
+      `<div class="explore-row" role="button" tabindex="0" data-explore-term="${utils.safe(term)}">
+        <div class="explore-rank">${i + 1}</div>
+        <div class="explore-content">
+          <div class="explore-label">Trending on PulseChain</div>
+          <div class="explore-name">${utils.safe(term)}</div>
+          <div class="explore-meta">${count} post${count > 1 ? 's' : ''}</div>
+        </div>
+        <div class="explore-arrow">→</div>
+      </div>`).join('');
+  }
+
+  /* ── People: who-to-follow, ranked by post activity ───────────────────── */
+  _explorePeopleHTML() {
+    const me = this.state.signerAddr;
+    const counts = new Map();
+    this.state.posts.forEach(p => {
+      if (p.postType && p.postType !== 'post') return;
+      const r = p.reporter?.toLowerCase();
+      if (!r || r === me) return;
+      counts.set(r, (counts.get(r) || 0) + 1);
+    });
+    let ranked = [...counts.entries()]
+      .filter(([, n]) => n >= 2)
+      .sort((a, b) => {
+        const ap = this.state.profCache[a[0]]?.username ? 1 : 0;
+        const bp = this.state.profCache[b[0]]?.username ? 1 : 0;
+        if (ap !== bp) return bp - ap;
+        return b[1] - a[1];
+      });
+    if (!ranked.length) ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+    ranked = ranked.slice(0, 15);
+    if (!ranked.length) {
+      return `<div class="explore-empty">No active posters yet — load the feed first.</div>`;
+    }
+    this._exploreResolveProfiles(ranked.map(([a]) => a), 'people');
+    return ranked.map(([addr, count]) => {
+      const c = this.state.profCache[addr];
+      const name = c?.username ? utils.safe(c.username) : this.trunc(addr);
+      const pic  = utils.safe(c?.picUrl || 'image1.jpeg');
+      const meta = c?.bio ? utils.safe(c.bio.slice(0, 80)) : `${count} post${count > 1 ? 's' : ''} in feed`;
+      const isFollowing = this.state.following.has(addr);
+      const followBtn = (me && addr !== me)
+        ? `<button class="explore-follow-btn${isFollowing ? ' following' : ''}" data-explore-follow="${utils.safe(addr)}">${isFollowing ? 'Following' : 'Follow'}</button>`
+        : '';
+      return `<div class="explore-row explore-person" role="button" tabindex="0" data-explore-profile="${utils.safe(addr)}">
+        <img src="${pic}" class="explore-avatar" data-pop-addr="${utils.safe(addr)}" onerror="this.src='image1.jpeg'" alt="">
+        <div class="explore-content">
+          <div class="explore-name">${name}</div>
+          <div class="explore-meta">${meta}</div>
+        </div>
+        ${followBtn}
+      </div>`;
+    }).join('');
+  }
+
+  /* ── Channels: most-posted-to channels in the feed (excl. the main feed) +
+       recently visited channels ──────────────────────────────────────────── */
+  _exploreChannelsHTML() {
+    const main = MAIN_CHANNEL.toLowerCase();
+    const counts = new Map();
+    this.state.posts.forEach(p => {
+      const to = (p.to || p.channel)?.toLowerCase();
+      if (!to || to === main) return;
+      counts.set(to, (counts.get(to) || 0) + 1);
+    });
+    let ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12);
+    const seen = new Set(ranked.map(([a]) => a));
+    (this.state.channelHistory || []).forEach(ch => {
+      const a = ch.address?.toLowerCase();
+      if (a && a !== main && !seen.has(a)) { ranked.push([a, 0]); seen.add(a); }
+    });
+    if (!ranked.length) {
+      return `<div class="explore-empty">No channels in the feed yet. Open one from a token post or the Channels page.</div>`;
+    }
+    this._exploreResolveProfiles(ranked.map(([a]) => a), 'channels');
+    return ranked.map(([addr, count]) => {
+      const c = this.state.profCache[addr];
+      const hist = (this.state.channelHistory || []).find(h => h.address?.toLowerCase() === addr);
+      const name = c?.username ? utils.safe(c.username) : utils.safe(hist?.label || this.trunc(addr));
+      const pic  = utils.safe(c?.picUrl || hist?.picUrl || 'image1.jpeg');
+      const meta = count > 0 ? `${count} post${count > 1 ? 's' : ''} in feed` : utils.safe(this.trunc(addr));
+      return `<div class="explore-row" role="button" tabindex="0" data-explore-channel="${utils.safe(addr)}">
+        <img src="${pic}" class="explore-avatar" onerror="this.src='image1.jpeg'" alt="">
+        <div class="explore-content">
+          <div class="explore-name">${name}</div>
+          <div class="explore-meta">${meta}</div>
+        </div>
+        <div class="explore-arrow">→</div>
+      </div>`;
+    }).join('');
+  }
+
+  /* ── Latest: most recent posts, rendered as real post cards. They live
+       inside #feed, so the feed's delegated click handler gives them full
+       reply/like/thread interactivity for free. ─────────────────────────── */
+  _exploreRenderLatest(host) {
+    const posts = this.state.posts
+      .filter(p => !p.postType || p.postType === 'post')
+      .slice()
+      .sort((a, b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()))
+      .slice(0, 20);
+    if (!posts.length) { host.innerHTML = `<div class="explore-empty">No posts loaded yet.</div>`; return; }
+    const frag = document.createDocumentFragment();
+    posts.forEach(post => {
+      this._postMap.set(post.txHash, post);
+      const el = document.createElement('div');
+      el.className = 'post-item';
+      el.dataset.txhash = post.txHash;
+      el.innerHTML = this.postHTML(post, false, null);
+      frag.appendChild(el);
+    });
+    host.innerHTML = '';
+    host.appendChild(frag);
+    posts.forEach(p => { if (p.reporter !== this.state.signerAddr) this.fetchOtherProfile(p.reporter); });
+  }
+
+  /* Wire the Explore search input — same behavior as the sidebar search:
+     typing routes to Home with the search term applied. */
   _wireExploreSearch() {
     const inp = this.g('explore-search-input');
     const clr = this.g('explore-search-clear');
@@ -9974,7 +10152,7 @@ class SayIt {
     try {
       switch (seg) {
         case '': case 'home':  this.goHome(); break;
-        case 'explore':        this.goExplore(); break;
+        case 'explore':        this.goExplore(['people','channels','latest','trending'].includes(arg) ? arg : null); break;
         case 'notifications':  this.goNotifications(); break;
         case 'bookmarks':      this.goBookmarks(); break;
         case 'channels':       this.goChannels(); break;
