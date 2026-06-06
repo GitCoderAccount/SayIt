@@ -2314,6 +2314,12 @@ nav { flex:1; padding:4px 0; }
           <div class="page-header-title" id="cb-header-title">Channel</div>
           <div class="page-header-subtitle" id="cb-header-sub">Channel</div>
         </div>
+        <button class="page-header-action" id="cb-search-btn" title="Search this channel"
+          aria-label="Search this channel" onclick="pulse._channelSearch()">
+          <svg viewBox="0 0 24 24" width="20" height="20">
+            <path fill="currentColor" d="M10.25 3.75c-3.59 0-6.5 2.91-6.5 6.5s2.91 6.5 6.5 6.5c1.795 0 3.419-.726 4.596-1.904 1.178-1.177 1.904-2.801 1.904-4.596 0-3.59-2.91-6.5-6.5-6.5zm-8.5 6.5c0-4.694 3.806-8.5 8.5-8.5s8.5 3.806 8.5 8.5c0 1.986-.682 3.815-1.814 5.272l4.771 4.771-1.414 1.414-4.771-4.771A8.456 8.456 0 0110.25 18.75c-4.694 0-8.5-3.806-8.5-8.5z"/>
+          </svg>
+        </button>
       </div>
       <div class="cb-cover"></div>
       <div class="cb-avatar-row">
@@ -2755,7 +2761,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260606-80';
+const SW_CACHE_VER = '20260606-81';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -5130,6 +5136,18 @@ class SayIt {
     this._markChannelSeen(raw);
     await this.resetAndFetch();
     this._updateChannelSubtitle();
+  }
+
+  /* Search within the current channel. The global search box scopes to
+     whichever feed is loaded, and a channel feed (mode 'custom', not
+     self-managed) is loaded here — so focusing it filters this channel's
+     posts. Mirrors the profile header's search affordance. (On phones the
+     sidebar search is hidden; that's a shared limitation with the profile.) */
+  _channelSearch() {
+    const inp = this.g('search-input');
+    if (!inp) return;
+    inp.focus();
+    inp.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
   async goOfficialChannel() {
