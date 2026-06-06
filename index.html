@@ -304,34 +304,33 @@ nav { flex:1; padding:4px 0; }
 }
 
 #channel-banner { display:none; border-bottom:1px solid var(--border); }
+/* Channel banner is laid out to be pixel-identical to the profile header, so
+   switching between a channel and a profile looks the same. Every value below
+   mirrors the matching .prof-* rule (cover 200px, avatar 96px, etc.). */
 .cb-cover {
-  height:150px;  /* Channel banner cover */
-  background:linear-gradient(135deg,rgba(124,77,255,0.45),rgba(179,136,255,0.2),rgba(0,229,160,0.1));
+  height:200px; position:relative; overflow:hidden;
+  background:linear-gradient(135deg,rgba(124,77,255,0.55),rgba(179,136,255,0.25),rgba(43,134,197,0.15));
 }
-/* Channel banner mirrors the profile header: a sticky title bar, then the
-   cover, an avatar+actions row, and a full-width info block below (so the
-   action buttons never overlap the long address). */
 .cb-avatar-row {
   display:flex; align-items:flex-end; justify-content:space-between;
-  padding:0 16px; margin-top:-40px; margin-bottom:8px;
+  padding:0 16px; margin-top:-40px; margin-bottom:12px; position:relative;
 }
 #cb-avatar {
-  width:80px; height:80px; border-radius:50%;
-  border:4px solid #000000; object-fit:cover;
-  background:#16181c; flex-shrink:0;
+  width:96px; height:96px; border-radius:50%;
+  border:4px solid var(--bg-dark); object-fit:cover;
+  background:var(--bg-card); flex-shrink:0; position:relative; z-index:2;
 }
-.cb-actions { display:flex; gap:8px; padding-bottom:4px; flex-shrink:0; }
-.cb-info { padding:0 16px 14px; min-width:0; }
-#cb-name {
-  font-size:20px; font-weight:800; line-height:1.2;
-  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
-}
+.cb-actions { display:flex; gap:8px; align-items:center; padding-bottom:4px; flex-shrink:0; }
+.cb-info { padding:0 16px 12px; min-width:0; }
+#cb-name { font-size:20px; font-weight:800; line-height:1.2; color:var(--text); }
 #cb-address {
-  font-size:14px; color:var(--muted); margin-top:2px;
-  font-family:monospace; cursor:pointer; display:block;
-  overflow:hidden; text-overflow:ellipsis;
+  font-size:15px; color:var(--muted); margin-top:2px;
+  font-family:monospace; cursor:pointer; display:inline-block;
 }
-#cb-bio { font-size:15px; color:var(--text); margin-top:8px; line-height:1.4; }
+#cb-bio {
+  font-size:15px; line-height:1.6; color:var(--text);
+  margin-top:10px; word-break:break-word; white-space:pre-wrap;
+}
 #cb-address:hover { color:var(--primary-lt); text-decoration:underline; }
 #cb-token-meta, #prof-token-meta { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:8px; }
 #cb-token-meta:empty, #prof-token-meta:empty { display:none; }
@@ -1540,8 +1539,6 @@ nav { flex:1; padding:4px 0; }
   #app  { max-width:100%; }
   .modal { padding:16px; }
   #toast { bottom:76px; }
-  .cb-avatar-row { padding-left:12px; padding-right:12px; }
-  .cb-info { padding-left:12px; padding-right:12px; }
   /* No forced banner on mobile — the JS shows it only on channel/profile
      views and hides it on the main feed. */
 }
@@ -2754,7 +2751,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260606-78';
+const SW_CACHE_VER = '20260606-79';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -5128,6 +5125,7 @@ class SayIt {
     this._touchChannelHistory(raw);
     this._markChannelSeen(raw);
     await this.resetAndFetch();
+    this._updateChannelSubtitle();
   }
 
   async goOfficialChannel() {
@@ -5145,6 +5143,7 @@ class SayIt {
     this.updateChLabel();
     this.showChannelBanner(OFFICIAL_CHANNEL);
     await this.resetAndFetch();
+    this._updateChannelSubtitle();
   }
 
   /* ── New navigation methods ─────────────────────────────────────────── */
@@ -6365,11 +6364,12 @@ class SayIt {
       : this.trunc(address);
     this.g('cb-bio').textContent = profile?.bio || (verified && verified.bio) || (token ? 'Token on PulseChain' : '');
     this.g('cb-address').textContent = address || '';
-    /* Sticky page-style header (mirrors the profile): name + what page you're on. */
+    /* Sticky page-style header — mirrors the profile: name as the title, and a
+       post-count subtitle (filled by _updateChannelSubtitle once the feed
+       loads), rather than a redundant "Channel" label. */
     const _hdrTitle = this.g('cb-header-title');
-    const _hdrSub   = this.g('cb-header-sub');
     if (_hdrTitle) _hdrTitle.textContent = this.g('cb-name').textContent || 'Channel';
-    if (_hdrSub)   _hdrSub.textContent   = (verified || token) ? 'Token channel' : 'Channel';
+    this._updateChannelSubtitle();
     const meta = this.g('cb-token-meta');
     if (meta) meta.innerHTML = (verified || token) ? this._tokenMetaHTML(token, !!verified, verified) : '';
     /* "Set token profile" — shown only when the connected wallet is the
@@ -11289,6 +11289,17 @@ class SayIt {
     const profFeed = this.g('feed')?.querySelector('.prof-feed');
     const count = profFeed ? profFeed.querySelectorAll('.post-item').length : 0;
     if (count > 0) subtitle.textContent = `${count} post${count !== 1 ? 's' : ''}`;
+  }
+
+  /* Channel banner header subtitle = post count (mirrors the profile header,
+     instead of a static "Channel" label). Counts mounted + virtualized rows. */
+  _updateChannelSubtitle() {
+    const sub = this.g('cb-header-sub');
+    if (!sub) return;
+    if (this.state.mode !== 'custom') { sub.textContent = ''; return; }
+    const feed = this.g('feed');
+    const count = feed ? feed.querySelectorAll('.post-item, .post-placeholder').length : 0;
+    sub.textContent = count > 0 ? `${count} post${count !== 1 ? 's' : ''}` : '';
   }
 
   /* Fetch a single quoted post that isn't in _postMap yet.
