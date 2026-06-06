@@ -308,25 +308,30 @@ nav { flex:1; padding:4px 0; }
   height:150px;  /* Channel banner cover */
   background:linear-gradient(135deg,rgba(124,77,255,0.45),rgba(179,136,255,0.2),rgba(0,229,160,0.1));
 }
-.cb-content {
-  display:flex; align-items:flex-end; gap:12px;
-  padding:0 16px 16px; margin-top:-40px;
+/* Channel banner mirrors the profile header: a sticky title bar, then the
+   cover, an avatar+actions row, and a full-width info block below (so the
+   action buttons never overlap the long address). */
+.cb-avatar-row {
+  display:flex; align-items:flex-end; justify-content:space-between;
+  padding:0 16px; margin-top:-40px; margin-bottom:8px;
 }
 #cb-avatar {
   width:80px; height:80px; border-radius:50%;
   border:4px solid #000000; object-fit:cover;
   background:#16181c; flex-shrink:0;
 }
-.cb-info { flex:1; min-width:0; padding-top:44px; }
+.cb-actions { display:flex; gap:8px; padding-bottom:4px; flex-shrink:0; }
+.cb-info { padding:0 16px 14px; min-width:0; }
 #cb-name {
-  font-size:20px; font-weight:700; line-height:1.2;
+  font-size:20px; font-weight:800; line-height:1.2;
   display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
 }
-#cb-bio { font-size:14px; color:var(--muted); margin-top:2px; line-height:1.4; }
 #cb-address {
-  font-size:12px; color:var(--muted); margin-top:4px;
-  font-family:monospace; cursor:pointer; display:inline-block;
+  font-size:14px; color:var(--muted); margin-top:2px;
+  font-family:monospace; cursor:pointer; display:block;
+  overflow:hidden; text-overflow:ellipsis;
 }
+#cb-bio { font-size:15px; color:var(--text); margin-top:8px; line-height:1.4; }
 #cb-address:hover { color:var(--primary-lt); text-decoration:underline; }
 #cb-token-meta, #prof-token-meta { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:8px; }
 #cb-token-meta:empty, #prof-token-meta:empty { display:none; }
@@ -1535,7 +1540,8 @@ nav { flex:1; padding:4px 0; }
   #app  { max-width:100%; }
   .modal { padding:16px; }
   #toast { bottom:76px; }
-  .cb-content { padding:0 12px 12px; }
+  .cb-avatar-row { padding-left:12px; padding-right:12px; }
+  .cb-info { padding-left:12px; padding-right:12px; }
   /* No forced banner on mobile — the JS shows it only on channel/profile
      views and hides it on the main feed. */
 }
@@ -2297,20 +2303,31 @@ nav { flex:1; padding:4px 0; }
     </div>
 
     <div id="channel-banner">
-      <div class="cb-cover"></div>
-      <div class="cb-content">
-        <img id="cb-avatar" src="image1.jpeg" alt="" onerror="this.src='image1.jpeg'">
-        <div class="cb-info">
-          <div id="cb-name">—</div>
-          <div id="cb-bio"></div>
-          <div id="cb-address" title="Click to copy"></div>
-          <div id="cb-token-meta"></div>
-          <button id="cb-token-edit-btn" class="prof-edit-btn" style="display:none;margin-top:10px">Set token profile</button>
+      <div class="page-header cb-header">
+        <button class="page-header-back" onclick="pulse._navBack()" aria-label="Back">
+          <svg viewBox="0 0 24 24" width="20" height="20">
+            <path fill="currentColor" d="M7.414 13l5.043 5.04-1.414 1.42L3.586 12l7.457-7.46 1.414 1.42L7.414 11H21v2H7.414z"/>
+          </svg>
+        </button>
+        <div class="page-header-titles">
+          <div class="page-header-title" id="cb-header-title">Channel</div>
+          <div class="page-header-subtitle" id="cb-header-sub">Channel</div>
         </div>
-        <div class="cb-actions" style="margin-left:auto;align-self:flex-end;display:flex;gap:8px;padding-bottom:4px">
+      </div>
+      <div class="cb-cover"></div>
+      <div class="cb-avatar-row">
+        <img id="cb-avatar" src="image1.jpeg" alt="" onerror="this.src='image1.jpeg'">
+        <div class="cb-actions">
+          <button id="cb-token-edit-btn" class="prof-edit-btn" style="display:none">Set token profile</button>
           <button id="cb-profile-btn" class="prof-edit-btn" style="display:none">View profile</button>
           <button id="cb-follow-btn" class="prof-follow-btn" style="display:none">Follow</button>
         </div>
+      </div>
+      <div class="cb-info">
+        <div id="cb-name">—</div>
+        <div id="cb-address" title="Click to copy"></div>
+        <div id="cb-bio"></div>
+        <div id="cb-token-meta"></div>
       </div>
     </div>
 
@@ -2737,7 +2754,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260606-77';
+const SW_CACHE_VER = '20260606-78';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -5413,7 +5430,7 @@ class SayIt {
       return `<div class="explore-row explore-person" role="button" tabindex="0" data-explore-profile="${utils.safe(addr)}">
         <img src="${pic}" class="explore-avatar" data-pop-addr="${utils.safe(addr)}" onerror="this.src='image1.jpeg'" alt="">
         <div class="explore-content">
-          <div class="explore-name">${name}</div>
+          <div class="explore-name" data-pop-addr="${utils.safe(addr)}">${name}</div>
           <div class="explore-meta">${meta}</div>
         </div>
         ${followBtn}
@@ -6348,6 +6365,11 @@ class SayIt {
       : this.trunc(address);
     this.g('cb-bio').textContent = profile?.bio || (verified && verified.bio) || (token ? 'Token on PulseChain' : '');
     this.g('cb-address').textContent = address || '';
+    /* Sticky page-style header (mirrors the profile): name + what page you're on. */
+    const _hdrTitle = this.g('cb-header-title');
+    const _hdrSub   = this.g('cb-header-sub');
+    if (_hdrTitle) _hdrTitle.textContent = this.g('cb-name').textContent || 'Channel';
+    if (_hdrSub)   _hdrSub.textContent   = (verified || token) ? 'Token channel' : 'Channel';
     const meta = this.g('cb-token-meta');
     if (meta) meta.innerHTML = (verified || token) ? this._tokenMetaHTML(token, !!verified, verified) : '';
     /* "Set token profile" — shown only when the connected wallet is the
