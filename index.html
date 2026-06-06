@@ -17,7 +17,7 @@
 <meta name="twitter:title" content="Say It DeFi — uncensorable social on PulseChain">
 <meta name="twitter:description" content="Post on-chain, own your voice. No accounts, no servers, no middlemen.">
 <meta name="twitter:image" content="https://sayitdefi.com/image1.jpeg">
-<link rel="icon" type="image/jpeg" href="image1.jpeg">
+<link rel="icon" type="image/png" href="title_icon.png">
 <link rel="manifest" href="./manifest.json">
 <link rel="apple-touch-icon" href="./image1.jpeg">
 <meta name="theme-color" content="#7c4dff">
@@ -2697,7 +2697,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260605-71';
+const SW_CACHE_VER = '20260605-72';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -12580,7 +12580,7 @@ class SayIt {
       };
       if (this._unreadCount <= 0) {
         /* Restore the plain favicon */
-        link.href = 'image1.jpeg';
+        link.href = 'title_icon.png';
         return;
       }
       if (this._faviconBase) {
@@ -12590,7 +12590,7 @@ class SayIt {
         img.crossOrigin = 'anonymous';
         img.onload = () => { this._faviconBase = img; draw(img); };
         img.onerror = () => draw(null); /* draw dot on solid bg if image fails */
-        img.src = 'image1.jpeg';
+        img.src = 'title_icon.png';
       }
     } catch { /* favicon badge is non-essential — never throw */ }
   }
