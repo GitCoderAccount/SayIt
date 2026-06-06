@@ -2761,7 +2761,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260606-81';
+const SW_CACHE_VER = '20260606-82';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -6690,17 +6690,29 @@ class SayIt {
     const eth = this._getEthereum();
     if (!eth || typeof eth.on !== 'function') return;
     eth.on('accountsChanged', accounts => {
-      if (accounts.length === 0) this.disconnect();
-      else if (accounts[0].toLowerCase() !== this.state.signerAddr) {
+      if (accounts.length === 0) { this.disconnect(); return; }
+      /* Ignore the accountsChanged that fires during our own connect(). */
+      if (this._connecting) return;
+      if (accounts[0].toLowerCase() !== this.state.signerAddr) {
         utils.toast('Account changed — reconnecting…');
         this.disconnect();
         setTimeout(() => this.connect(), 500);
       }
     });
     eth.on('chainChanged', chainId => {
-      if (parseInt(chainId, 16) !== PULSE_CHAIN_ID) {
-        utils.toast('Wrong network — please switch to PulseChain');
-        this.disconnect();
+      /* Ignore switches WE triggered (connect / _ensurePulseChain). Reacting to
+         our own switch — plus hard-disconnecting on any non-369 chain — is what
+         made the wallet connect then disconnect repeatedly on mobile. */
+      if (this._switchingChain) return;
+      const onPulse = parseInt(chainId, 16) === PULSE_CHAIN_ID;
+      this._wrongChain = !onPulse;
+      if (onPulse) {
+        /* Back on PulseChain — refresh the signer on a provider that sees it. */
+        try { this.signer = new ethers.providers.Web3Provider(eth).getSigner(); } catch {}
+      } else {
+        /* Don't disconnect — keep the session. Posting is guarded by
+           _ensureOnPulseForTx, which offers to switch back on demand. */
+        utils.toast('Wrong network — switch to PulseChain to post');
       }
     });
   }
@@ -6757,31 +6769,80 @@ class SayIt {
     }
   }
 
+  /* Read the wallet's current chain id via a live eth_chainId call. We avoid
+     ethers' Web3Provider.getNetwork() here because it caches the network and
+     reads stale right after a switch (a big source of the mobile flakiness). */
+  async _readChainId(eth) {
+    try { return parseInt(await eth.request({ method: 'eth_chainId' }), 16); }
+    catch { return null; }
+  }
+
+  /* Poll eth_chainId until the wallet reports PulseChain — switches are async
+     on mobile and can take a moment. Returns the last value read (~2s max). */
+  async _readChainWithRetry(eth, tries = 8) {
+    let id = null;
+    for (let i = 0; i < tries; i++) {
+      id = await this._readChainId(eth);
+      if (id === PULSE_CHAIN_ID) return id;
+      await new Promise(r => setTimeout(r, 250));
+    }
+    return id;
+  }
+
+  /* Make sure the wallet is on PulseChain before sending a transaction. Mobile
+     wallets often sit on Ethereum; a tx there wastes gas and never shows up
+     here. Tries to switch and refreshes the signer; returns false (with a
+     toast) if it can't, so the caller aborts the send. */
+  async _ensureOnPulseForTx() {
+    const eth = this._getEthereum();
+    if (!eth) return true;
+    let chainId = await this._readChainId(eth);
+    if (chainId === PULSE_CHAIN_ID) return true;
+    utils.toast('Switching to PulseChain…');
+    try { await this._ensurePulseChain(eth); } catch { /* handled below */ }
+    chainId = await this._readChainWithRetry(eth);
+    if (chainId === PULSE_CHAIN_ID) {
+      this.signer = new ethers.providers.Web3Provider(eth).getSigner();
+      this._wrongChain = false;
+      return true;
+    }
+    utils.toast('Please switch your wallet to PulseChain (chain 369), then try again.');
+    return false;
+  }
+
   /* Switch the wallet to PulseChain. If the chain isn't known to the wallet
      (EIP-1193 error 4902), add it first with the canonical RPC params, then
-     the wallet switches to it automatically. */
+     the wallet switches to it automatically. _switchingChain guards the
+     chainChanged listener so OUR switches don't trigger its handler. */
   async _ensurePulseChain(eth) {
+    this._switchingChain = true;
     try {
-      await eth.request({ method:'wallet_switchEthereumChain', params:[{ chainId:'0x171' }] });
-    } catch (err) {
-      const code = err?.code ?? err?.data?.originalError?.code;
-      if (code === 4902 || /unrecognized chain|add this network|wallet_addEthereumChain/i.test(err?.message || '')) {
-        await eth.request({
-          method:'wallet_addEthereumChain',
-          params:[{
-            chainId:'0x171',
-            chainName:'PulseChain',
-            nativeCurrency:{ name:'Pulse', symbol:'PLS', decimals:18 },
-            rpcUrls:['https://rpc.pulsechain.com'],
-            blockExplorerUrls:['https://scan.pulsechain.com'],
-          }],
-        });
-        /* Adding a chain usually switches to it; make the switch explicit. */
-        try { await eth.request({ method:'wallet_switchEthereumChain', params:[{ chainId:'0x171' }] }); }
-        catch {}
-      } else {
-        throw err;
+      try {
+        await eth.request({ method:'wallet_switchEthereumChain', params:[{ chainId:'0x171' }] });
+      } catch (err) {
+        const code = err?.code ?? err?.data?.originalError?.code;
+        if (code === 4902 || /unrecognized chain|add this network|wallet_addEthereumChain/i.test(err?.message || '')) {
+          await eth.request({
+            method:'wallet_addEthereumChain',
+            params:[{
+              chainId:'0x171',
+              chainName:'PulseChain',
+              nativeCurrency:{ name:'Pulse', symbol:'PLS', decimals:18 },
+              rpcUrls:['https://rpc.pulsechain.com'],
+              blockExplorerUrls:['https://scan.pulsechain.com'],
+            }],
+          });
+          /* Adding a chain usually switches to it; make the switch explicit. */
+          try { await eth.request({ method:'wallet_switchEthereumChain', params:[{ chainId:'0x171' }] }); }
+          catch {}
+        } else {
+          throw err;
+        }
       }
+    } finally {
+      /* Keep the guard up briefly — the chainChanged event can arrive a moment
+         after the request resolves; we don't want it treated as external. */
+      setTimeout(() => { this._switchingChain = false; }, 1500);
     }
   }
 
@@ -6798,14 +6859,30 @@ class SayIt {
         : 'No wallet detected. Install a PulseChain-compatible wallet extension to connect.');
       return;
     }
+    this._connecting = true;
     try {
       const prov = new ethers.providers.Web3Provider(eth);
-      if ((await prov.getNetwork()).chainId !== PULSE_CHAIN_ID) {
-        await this._ensurePulseChain(eth);
-      }
+      /* Request accounts FIRST. Mobile wallets (MetaMask/Rabby) often won't
+         honor a network switch until the dApp is actually connected, and doing
+         it first avoids the switch-then-connect ordering that made mobile
+         flaky. */
       await prov.send('eth_requestAccounts', []);
-      this.signer = prov.getSigner();
+      /* Ensure PulseChain, reading the live chain id (not ethers' cached
+         network) and polling until the async switch lands. */
+      let chainId = await this._readChainId(eth);
+      if (chainId !== PULSE_CHAIN_ID) {
+        await this._ensurePulseChain(eth);
+        chainId = await this._readChainWithRetry(eth);
+        if (chainId !== PULSE_CHAIN_ID) {
+          utils.toast('Couldn\'t switch to PulseChain. In your wallet, switch to PulseChain (chain 369), then tap Connect again.');
+          return;
+        }
+      }
+      /* Fresh provider so the signer/network reflect the (just-switched) chain. */
+      const liveProv = new ethers.providers.Web3Provider(eth);
+      this.signer = liveProv.getSigner();
       this.state.signerAddr = (await this.signer.getAddress()).toLowerCase();
+      this._wrongChain = false;
       utils.safeLS.set('sayitConnected', '1');
       this._registerWalletListeners();
       await this.afterConnect();
@@ -6830,6 +6907,8 @@ class SayIt {
       } else {
         utils.toast('Connect failed: ' + msg);
       }
+    } finally {
+      this._connecting = false;
     }
   }
 
@@ -9946,6 +10025,9 @@ class SayIt {
   async publish(content, parentTx = null, toAddress = null) {
     if (!this.signer)     { utils.toast('Connect wallet first'); return false; }
     if (!content?.trim()) { utils.toast('Message cannot be empty'); return false; }
+    /* Guard the chain: never send on the wrong network (mobile wallets default
+       to Ethereum). Switches to PulseChain if needed; aborts if it can't. */
+    if (!(await this._ensureOnPulseForTx())) return false;
     let body = content.trim();
     /* No character limit — users can post articles, essays, or books.
        The feed truncates long posts with a "Show more" expand link. */
