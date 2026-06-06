@@ -819,6 +819,17 @@ nav { flex:1; padding:4px 0; }
   color:var(--text); font-size:15px; padding:2px 0;
 }
 .xp-search-input::placeholder { color:var(--muted); }
+/* Clear button lives inside the flex search bar (override the absolute
+   positioning the old mobile-search rule sets on this class). */
+.explore-search-bar .explore-search-clear {
+  position:static; transform:none; flex-shrink:0;
+  width:22px; height:22px; font-size:11px;
+}
+.explore-search-clear.hidden { display:none; }
+.explore-results-head {
+  padding:14px 16px 8px; font-size:15px; font-weight:800; color:var(--text);
+  border-bottom:1px solid var(--border);
+}
 .explore-tabs {
   display:flex; border-bottom:1px solid var(--border);
   position:sticky; top:0; background:var(--bg); z-index:5;
@@ -2736,7 +2747,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260605-73';
+const SW_CACHE_VER = '20260606-74';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -5070,7 +5081,6 @@ class SayIt {
      renderFeed() no-ops. */
   _renderExplorePage(_headerHTML = '') {
     const tab = this.state.exploreTab || 'trending';
-    const searchTermVal = utils.safe(this.state.searchTerm || '');
     const tabBtn = (id, label) =>
       `<button class="explore-tab${tab === id ? ' active' : ''}" data-explore-tab="${id}" role="tab">${label}</button>`;
     this.g('feed').innerHTML = _headerHTML + `
@@ -5078,10 +5088,10 @@ class SayIt {
         <div class="explore-search-bar">
           <span class="search-icon" aria-hidden="true">🔎</span>
           <input type="text" id="explore-search-input" class="xp-search-input"
-            placeholder="Search Say It DeFi" autocomplete="off" value="${searchTermVal}"
+            placeholder="Search Say It DeFi" autocomplete="off"
             aria-label="Search posts and people">
-          ${searchTermVal ? `<button class="explore-search-clear" id="explore-search-clear"
-            type="button" title="Clear search" aria-label="Clear search">✕</button>` : ''}
+          <button class="explore-search-clear hidden" id="explore-search-clear"
+            type="button" title="Clear search" aria-label="Clear search">✕</button>
         </div>
         <div class="explore-tabs" role="tablist">
           ${tabBtn('trending', 'Trending')}
@@ -5117,6 +5127,12 @@ class SayIt {
   }
 
   setExploreTab(tab) {
+    /* Switching tabs exits any active search. */
+    const inp = this.g('explore-search-input');
+    if (inp) inp.value = '';
+    const clr = this.g('explore-search-clear');
+    if (clr) clr.classList.add('hidden');
+    this._exploreSearchToken = (this._exploreSearchToken || 0) + 1; /* cancel pending IDB search */
     this.state.exploreTab = tab;
     this._setRoute('/explore' + (tab !== 'trending' ? '/' + tab : ''));
     const feed = this.g('feed');
@@ -5136,22 +5152,91 @@ class SayIt {
     else                         host.innerHTML = this._exploreTrendingHTML();
   }
 
-  /* Run a search/term from Explore. Explore is self-managed (renderFeed no-ops),
-     so navigate Home first, then apply the term and re-render the feed. */
+  /* Run a search/term from Explore (trending tap or a typed query). Results
+     render INLINE on the Explore page — we no longer yank the user back to the
+     main feed or echo the query into the sidebar search box. */
   _exploreSearch(term) {
     term = (term || '').trim();
     if (!term) return;
-    this.state.activeTag = null;
-    const apply = () => {
-      this.state.searchTerm = term.toLowerCase();
-      const si = this.g('search-input');
-      if (si) si.value = term;
-      this._updateSearchClearBtn?.();
-      this.renderFeed();
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    };
-    const r = this.goHome();
-    (r && r.then) ? r.then(apply) : apply();
+    const inp = this.g('explore-search-input');
+    if (inp) inp.value = term;
+    this._exploreApplySearch(term);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  /* Apply the Explore search box: a term shows results in the tab-content
+     area; an empty term restores the active tab. */
+  _exploreApplySearch(term) {
+    term = (term || '').trim();
+    const host = this.g('explore-tab-content');
+    if (!host) return;
+    const clr = this.g('explore-search-clear');
+    if (clr) clr.classList.toggle('hidden', !term);
+    const tabs = this.g('feed').querySelectorAll('[data-explore-tab]');
+    if (!term) {
+      const active = this.state.exploreTab || 'trending';
+      tabs.forEach(b => b.classList.toggle('active', b.dataset.exploreTab === active));
+      this._renderExploreTab(active);
+      return;
+    }
+    /* Searching → results aren't a tab, so drop the tab highlight. */
+    tabs.forEach(b => b.classList.remove('active'));
+    this._exploreRenderResults(host, term);
+  }
+
+  /* Filter loaded posts by the term (text or #tag), falling back to the IDB
+     trigram index when nothing matches in memory. */
+  _exploreRenderResults(host, term) {
+    const lc = term.toLowerCase();
+    const isTag = lc.startsWith('#');
+    const inMem = this.state.posts.filter(p => {
+      if (p.postType && p.postType !== 'post') return false;
+      if (!p.display) return false;
+      if (isTag) return p.display.toLowerCase().includes(lc);
+      return p.display.toLowerCase().includes(lc) || p.reporter?.toLowerCase().includes(lc);
+    });
+    this._exploreRenderPostList(host, inMem, term);
+    const token = (this._exploreSearchToken = (this._exploreSearchToken || 0) + 1);
+    if (!inMem.length && !isTag && term.length >= 3) {
+      this.cache.searchByText(term).then(hashes => {
+        if (token !== this._exploreSearchToken || this.state.mode !== 'explore') return;
+        if (!hashes?.length) return;
+        return Promise.all(hashes.map(h => new Promise(res => {
+          const req = this.cache._db?.transaction('posts', 'readonly')?.objectStore('posts')?.get(h);
+          if (req) { req.onsuccess = () => res(req.result); req.onerror = () => res(null); } else res(null);
+        }))).then(found => {
+          if (token !== this._exploreSearchToken || this.state.mode !== 'explore') return;
+          const posts = (found || []).filter(Boolean);
+          if (posts.length) this._exploreRenderPostList(host, posts, term);
+        });
+      }).catch(() => {});
+    }
+  }
+
+  _exploreRenderPostList(host, posts, term) {
+    if (!posts.length) {
+      host.innerHTML = `<div class="explore-empty">No results for “${utils.safe(term)}”.<br>Try another word, #tag, or address.</div>`;
+      return;
+    }
+    const sorted = posts.slice()
+      .sort((a, b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()))
+      .slice(0, 30);
+    const frag = document.createDocumentFragment();
+    const head = document.createElement('div');
+    head.className = 'explore-results-head';
+    head.textContent = `Results for “${term}”`;
+    frag.appendChild(head);
+    sorted.forEach(post => {
+      this._postMap.set(post.txHash, post);
+      const el = document.createElement('div');
+      el.className = 'post-item';
+      el.dataset.txhash = post.txHash;
+      el.innerHTML = this.postHTML(post, false, null);
+      frag.appendChild(el);
+    });
+    host.innerHTML = '';
+    host.appendChild(frag);
+    sorted.forEach(p => { if (p.reporter !== this.state.signerAddr) this.fetchOtherProfile(p.reporter); });
   }
 
   /* Fetch profiles for a set of addresses (once each), then re-render the tab
@@ -5317,45 +5402,27 @@ class SayIt {
 
   /* Wire the Explore search input — same behavior as the sidebar search:
      typing routes to Home with the search term applied. */
+  /* Wire the Explore search input. Results render inline on the Explore page
+     (via _exploreApplySearch) — this no longer navigates to Home or writes to
+     the sidebar search box. */
   _wireExploreSearch() {
     const inp = this.g('explore-search-input');
     const clr = this.g('explore-search-clear');
     if (!inp) return;
-    inp.oninput = utils.debounce(async () => {
-      const term = inp.value.trim();
-      this.state.searchTerm = term.toLowerCase();
-      this.state.activeTag  = null;
-      const si = this.g('search-input');
-      if (si) si.value = term;
-      this._updateSearchClearBtn();
-      if (term) {
-        await this.goHome();
-        this.state.searchTerm = term.toLowerCase();
-        if (si) si.value = term;
-        this._updateSearchClearBtn();
-        this.renderFeed();
-      }
-    }, 250);
+    if (clr) clr.classList.toggle('hidden', !inp.value.trim());
+    inp.oninput = utils.debounce(() => this._exploreApplySearch(inp.value.trim()), 250);
     inp.addEventListener('keydown', e => {
       if (e.key === 'Escape' && inp.value) {
         e.preventDefault();
         inp.value = '';
-        this.state.searchTerm = '';
-        const si = this.g('search-input');
-        if (si) si.value = '';
-        this._updateSearchClearBtn();
+        this._exploreApplySearch('');
         inp.blur();
       }
     });
     if (clr) {
       clr.onclick = () => {
         inp.value = '';
-        this.state.searchTerm = '';
-        this.state.activeTag  = null;
-        const si = this.g('search-input');
-        if (si) si.value = '';
-        this._updateSearchClearBtn();
-        if (this.state.mode === 'explore') this.goExplore();
+        this._exploreApplySearch('');
         inp.focus();
       };
     }
