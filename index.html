@@ -1881,6 +1881,20 @@ nav { flex:1; padding:4px 0; }
 .settings-row-label { flex:1; min-width:0; }
 .settings-row-label strong { display:block; font-size:15px; font-weight:600; color:var(--text); }
 .settings-row-label span   { display:block; font-size:13px; color:var(--muted); margin-top:2px; }
+/* Toggle switch for boolean settings */
+.settings-switch { position:relative; display:inline-block; width:44px; height:24px; flex-shrink:0; }
+.settings-switch input { opacity:0; width:0; height:0; }
+.settings-switch-slider {
+  position:absolute; inset:0; cursor:pointer; border-radius:9999px;
+  background:var(--bg-mid); border:1px solid var(--border); transition:0.2s;
+}
+.settings-switch-slider::before {
+  content:''; position:absolute; width:18px; height:18px; left:2px; top:2px;
+  background:var(--muted); border-radius:50%; transition:0.2s;
+}
+.settings-switch input:checked + .settings-switch-slider { background:var(--primary); border-color:var(--primary); }
+.settings-switch input:checked + .settings-switch-slider::before { transform:translateX(20px); background:#fff; }
+.settings-switch input:focus-visible + .settings-switch-slider { outline:2px solid var(--primary-lt); outline-offset:2px; }
 .settings-input {
   width:100%; padding:10px 12px;
   background:var(--bg-dark); border:1px solid var(--border);
@@ -2764,7 +2778,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260606-87';
+const SW_CACHE_VER = '20260606-88';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -6081,10 +6095,37 @@ class SayIt {
             value="${utils.safe(s.backupApiUrl || '')}"
             placeholder="https://…">
         </div>
+        <div class="settings-row" style="flex-direction:column;align-items:flex-start;margin-top:12px">
+          <div class="settings-row-label">
+            <strong>JSON-RPC node URL</strong>
+            <span>Used to read on-chain data (token owner, block timestamps). Switch if rpc.pulsechain.com is down.</span>
+          </div>
+          <input class="settings-input" id="set-rpc-url"
+            value="${utils.safe(s.rpcUrl || '')}"
+            placeholder="https://rpc.pulsechain.com">
+        </div>
         <div class="settings-row" style="margin-top:12px">
           <button class="settings-btn primary" id="set-test-api">Test Connection</button>
           <button class="settings-btn" id="set-save-api">Save API Settings</button>
         </div>
+      </div>
+
+      <!-- Content & Feed filters -->
+      <div class="settings-section">
+        <div class="settings-section-title">Content &amp; Feed</div>
+        ${[
+          ['set-hide-reposts', 'hideReposts', 'Hide reposts', 'Hide reposts &amp; quotes from the timeline'],
+          ['set-hide-replies', 'hideReplies', 'Hide replies', 'Hide standalone replies from the feed'],
+          ['set-hide-polls',   'hidePolls',   'Hide polls',   'Hide poll posts'],
+          ['set-hide-binary',  'hideBinary',  'Hide non-text posts', 'Hide posts whose content is binary / undecodable'],
+        ].map(([id, key, title, desc]) => `
+          <div class="settings-row">
+            <div class="settings-row-label"><strong>${title}</strong><span>${desc}</span></div>
+            <label class="settings-switch">
+              <input type="checkbox" id="${id}" data-feed-filter ${s[key] ? 'checked' : ''}>
+              <span class="settings-switch-slider"></span>
+            </label>
+          </div>`).join('')}
       </div>
 
       <!-- Cache -->
@@ -6238,10 +6279,27 @@ class SayIt {
       if (rawBackup && !isValidUrl(rawBackup)) {
         utils.toast('Backup API URL is not a valid URL'); return;
       }
+      const rawRpc = g('set-rpc-url')?.value.trim() || '';
+      if (rawRpc && !isValidUrl(rawRpc)) {
+        utils.toast('RPC URL is not a valid URL'); return;
+      }
       s.apiUrl       = rawPrimary || 'https://api.scan.pulsechain.com/api';
       s.backupApiUrl = rawBackup;
+      s.rpcUrl       = rawRpc;
+      this._readProvider = null;   /* rebuilt on next read with the new RPC URL */
       this._saveSettings(s);
       utils.toast('API settings saved ✓');
+    });
+    /* Content & Feed filter toggles — save on change; the feed picks them up
+       on the next renderFeed (when the user navigates back to it). */
+    const filterKeys = { 'set-hide-reposts': 'hideReposts', 'set-hide-replies': 'hideReplies',
+      'set-hide-polls': 'hidePolls', 'set-hide-binary': 'hideBinary' };
+    document.querySelectorAll('[data-feed-filter]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const s = this._getSettings();
+        s[filterKeys[cb.id]] = cb.checked;
+        this._saveSettings(s);
+      });
     });
     /* Test API — mirrors runtime: tries primary, falls back to backup */
     g('set-test-api')?.addEventListener('click', async () => {
@@ -9081,10 +9139,17 @@ class SayIt {
        are real posts (postType 'poll') and must be included. Defensive:
        also drop any stray VOTE tx (e.g. cached before the drop logic
        existed) so raw VOTE data can never surface in the feed. */
+    const cf = this._getSettings();
     const displayList = list.filter(p => {
       if (this._notInterested?.has(p.txHash)) return false; /* locally hidden */
       if (p.content && p.content.startsWith(VOTE_PREFIX)) return false;
-      return !p.postType || p.postType === 'post' || p.postType === 'repost' || p.postType === 'poll';
+      if (!(!p.postType || p.postType === 'post' || p.postType === 'repost' || p.postType === 'poll')) return false;
+      /* User content filters (Settings → Content & Feed). */
+      if (cf.hideReposts && p.postType === 'repost') return false;
+      if (cf.hidePolls   && p.postType === 'poll')   return false;
+      if (cf.hideReplies && p.parentTx)              return false;
+      if (cf.hideBinary  && this._isLikelyBinary(p.display)) return false;
+      return true;
     });
 
     if (!displayList.length) {
