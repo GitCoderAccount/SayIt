@@ -331,7 +331,7 @@ nav { flex:1; padding:4px 0; }
   border:4px solid var(--bg-dark); object-fit:cover;
   background:var(--bg-card); flex-shrink:0; position:relative; z-index:2;
 }
-.cb-actions { display:flex; gap:8px; align-items:center; padding-bottom:4px; flex-shrink:0; }
+.cb-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; align-items:center; padding-bottom:4px; }
 .cb-info { padding:0 16px 12px; min-width:0; }
 #cb-name { font-size:20px; font-weight:800; line-height:1.2; color:var(--text); }
 #cb-address {
@@ -1280,9 +1280,9 @@ nav { flex:1; padding:4px 0; }
   padding:6px 0 calc(10px + env(safe-area-inset-bottom));
 }
 .mn-btn {
-  display:flex; flex-direction:column; align-items:center; gap:2px;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;
   background:none; border:none; color:var(--muted);
-  font-size:10px; cursor:pointer; padding:6px 12px;
+  font-size:10px; cursor:pointer; padding:6px 10px; min-width:44px; min-height:44px;
   border-radius:12px; position:relative; transition:color 0.18s;
 }
 .mn-btn .mn-icon { width:26px; height:26px; line-height:1; display:flex; align-items:center; justify-content:center; }
@@ -2808,7 +2808,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260606-94';
+const SW_CACHE_VER = '20260607-95';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -3208,16 +3208,22 @@ const utils = {
   updateCharCount(el, countEl) {
     const n   = el.value.length;
     const max = 62.83;
-    const ring = document.getElementById('char-ring');
-    const fg   = document.getElementById('cr-fg');
-    const num  = document.getElementById('char-count-num');
-    if (ring && fg) {
-      ring.style.display = n > 0 ? 'flex' : 'none';   /* hide the counter until typing (X-style) */
-      const pct = Math.min(n / 1000, 1);
-      fg.setAttribute('stroke-dasharray', `${pct * max} ${max}`);
-      const cls = n > 1000 ? 'over' : n > 500 ? 'warn' : n > 280 ? 'note' : 'ok';
-      ring.className = 'char-ring ' + cls;
-      if (num) num.textContent = n > 280 ? (n > 1000 ? '+' + (n-1000) : n) : '';
+    /* The ring belongs to the HOME composer — don't let the modal/thread
+       composers (which pass their own countEl) drive it. */
+    if (el.id === 'compose-text') {
+      const ring = document.getElementById('char-ring');
+      const fg   = document.getElementById('cr-fg');
+      const num  = document.getElementById('char-count-num');
+      if (ring && fg) {
+        ring.style.display = n > 0 ? 'flex' : 'none';   /* hide until typing (X-style) */
+        /* There's no hard character limit (long-form posts are intended), so
+           the ring is a soft length hint that tops out — not an "over the
+           limit" warning. Show the real count, never a red "over" state. */
+        const pct = Math.min(n / 1000, 1);
+        fg.setAttribute('stroke-dasharray', `${pct * max} ${max}`);
+        ring.className = 'char-ring ' + (n > 700 ? 'warn' : n > 280 ? 'note' : 'ok');
+        if (num) num.textContent = n > 280 ? n.toLocaleString() : '';
+      }
     }
     if (countEl && countEl !== document.getElementById('char-ring')) {
       countEl.textContent = n > 0 ? n.toLocaleString() : '';
@@ -11900,9 +11906,10 @@ class SayIt {
       /* Patch display name */
       const nameEl = item.querySelector('.post-name');
       if (nameEl && prof.username) {
-        const safe = utils.safe(prof.username);
-        if (nameEl.textContent !== safe && nameEl.textContent.includes('...')) {
-          nameEl.textContent = safe;
+        /* Assign the RAW username — textContent doesn't parse HTML, so escaping
+           here double-encoded "&"/"<" and made the !== guard always misfire. */
+        if (nameEl.textContent !== prof.username && nameEl.textContent.includes('...')) {
+          nameEl.textContent = prof.username;
         }
       }
     });
