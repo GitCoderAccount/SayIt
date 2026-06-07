@@ -48,14 +48,14 @@ Effort: S/M/L. Status: `[ ]` todo · `[x]` done · `[~]` partial · `[-]` skippe
 - [x] My-Channel (`self`) subtitle blank + hex-name flash *(S · channel)*
 - [x] Token-channel button crowding — `flex-wrap` or overflow menu *(S · channel)*
 - [x] 7-item bottom nav < 44px taps on small phones *(S · mobile)*
-- [ ] Wrong Following / tag-search empty-state copy *(S · home/explore)*
+- [x] Wrong Following / tag-search empty-state copy — the feed empty-state is now context-aware: distinct copy + icon for scanning / tag-search / Following / text-search vs the generic "be the first to post". *(S · home/explore)*
 - [x] Bookmark "couldn't load" sticks on transient failures *(S · lists-thread)*
 - [x] Generic modal: no Escape / dialog ARIA; `openShareCard` missing focus trap — generic modal now has `role=dialog`/`aria-modal`/`aria-label` + Escape (closes topmost first); `openShareCard` now calls `_trapFocus`. *(S · modals/a11y)*
 - [x] Standardize avatar `src` on `safeUrl` (notif/muted/preview/compose) *(S · consistency)*
 - [x] Double-escaped usernames in `_patchProfilesInFeed` *(S · correctness)*
 - [x] Clickable spans (`.post-handle`/`.post-mention`/counts) not keyboard-operable — `.post-tag`/`.post-mention`/`.post-handle` are now `role=button tabindex=0` with a delegated Enter/Space handler reusing the click dispatch. (Action counts were already real `<button>`s.) *(S · a11y)*
 - [x] Cover live-preview ad-hoc escaping (route through `cssUrlValue`/`safeUrl`) — the `pe-cover` oninput preview now uses `utils.cssUrlValue` (same path as the saved cover), so it validates scheme + CSS-escapes instead of hand-rolling. *(S · profile)*
-- [ ] Explore results hard-capped, no "load more" *(M · explore)*
+- [x] Explore results hard-capped, no "load more" — search results (was 30) and the Latest tab (was 20) now share one paged renderer (`_exploreRenderPaged`/`_exploreLoadMore`) that shows 30 at a time with a "Load more (N)" button. *(M · explore)*
 - [x] Char ring implies a non-existent 1000-char limit *(S · home)*
 
 ## P3 — Optional / future

@@ -2822,7 +2822,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260607-101';
+const SW_CACHE_VER = '20260607-102';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -5449,14 +5449,34 @@ class SayIt {
       return;
     }
     const sorted = posts.slice()
-      .sort((a, b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()))
-      .slice(0, 30);
+      .sort((a, b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()));
+    this._exploreRenderPaged(host, sorted, `Results for “${term}”`);
+  }
+
+  /* Render a sorted post list into an Explore host with incremental
+     "Load more" (no more hard 20/30 cap). headText is an optional results
+     header. State lives on _exploreList so the button can append the next
+     batch in place. */
+  _exploreRenderPaged(host, sorted, headText) {
+    this._exploreList = { sorted, host, shown: 0, headText: headText || '' };
+    host.innerHTML = '';
+    this._exploreLoadMore();
+  }
+  _exploreLoadMore() {
+    const st = this._exploreList;
+    if (!st || !st.host) return;
+    const PAGE = 30;
+    const { sorted, host } = st;
+    host.querySelector('.explore-load-more')?.remove();
+    if (st.shown === 0 && st.headText) {
+      const head = document.createElement('div');
+      head.className = 'explore-results-head';
+      head.textContent = st.headText;
+      host.appendChild(head);
+    }
+    const next = sorted.slice(st.shown, st.shown + PAGE);
     const frag = document.createDocumentFragment();
-    const head = document.createElement('div');
-    head.className = 'explore-results-head';
-    head.textContent = `Results for “${term}”`;
-    frag.appendChild(head);
-    sorted.forEach(post => {
+    next.forEach(post => {
       this._postMap.set(post.txHash, post);
       const el = document.createElement('div');
       el.className = 'post-item';
@@ -5464,9 +5484,17 @@ class SayIt {
       el.innerHTML = this.postHTML(post, false, null);
       frag.appendChild(el);
     });
-    host.innerHTML = '';
     host.appendChild(frag);
-    sorted.forEach(p => { if (p.reporter !== this.state.signerAddr) this.fetchOtherProfile(p.reporter); });
+    st.shown += next.length;
+    next.forEach(p => { if (p.reporter !== this.state.signerAddr) this.fetchOtherProfile(p.reporter); });
+    if (st.shown < sorted.length) {
+      const btn = document.createElement('button');
+      btn.className = 'settings-btn explore-load-more';
+      btn.style.cssText = 'display:block;margin:16px auto';
+      btn.textContent = `Load more (${sorted.length - st.shown})`;
+      btn.onclick = () => this._exploreLoadMore();
+      host.appendChild(btn);
+    }
   }
 
   /* Fetch profiles for a set of addresses (once each), then re-render the tab
@@ -5621,21 +5649,9 @@ class SayIt {
     const posts = this.state.posts
       .filter(p => !p.postType || p.postType === 'post')
       .slice()
-      .sort((a, b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()))
-      .slice(0, 20);
+      .sort((a, b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()));
     if (!posts.length) { host.innerHTML = `<div class="explore-empty">No posts loaded yet.</div>`; return; }
-    const frag = document.createDocumentFragment();
-    posts.forEach(post => {
-      this._postMap.set(post.txHash, post);
-      const el = document.createElement('div');
-      el.className = 'post-item';
-      el.dataset.txhash = post.txHash;
-      el.innerHTML = this.postHTML(post, false, null);
-      frag.appendChild(el);
-    });
-    host.innerHTML = '';
-    host.appendChild(frag);
-    posts.forEach(p => { if (p.reporter !== this.state.signerAddr) this.fetchOtherProfile(p.reporter); });
+    this._exploreRenderPaged(host, posts, null);
   }
 
   /* Wire the Explore search input — same behavior as the sidebar search:
@@ -9406,15 +9422,35 @@ class SayIt {
     });
 
     if (!displayList.length) {
-      const msgs = {
-        notifications: 'No new notifications',
-        self:  'No posts to your channel yet',
-      };
+      /* Context-aware empty state — the message has to match WHY the feed is
+         empty (still scanning / no tag matches / no followed posts / no search
+         hits / genuinely empty channel), not always "be the first to post". */
+      let icon = '📡', title, sub;
+      if (this.state.loading) {
+        title = 'Scanning the chain…';
+        sub   = `Checked ${this.state.nextPage - 1} page(s) so far`;
+      } else if (this.state.activeTag) {
+        icon = '🔍';
+        title = `No posts tagged #${utils.safe(this.state.activeTag)}`;
+        sub   = 'Nobody has used this hashtag yet — try another, or be the first.';
+      } else if (this._followingFilter) {
+        icon = '👤';
+        title = 'No posts from people you follow yet';
+        sub   = 'When the accounts you follow post, you’ll see them here.';
+      } else if (term) {
+        icon = '🔍';
+        title = `No posts matching “${utils.safe(term)}”`;
+        sub   = 'Try a different word, #tag, or address.';
+      } else {
+        const msgs = { notifications: 'No new notifications', self: 'No posts to your channel yet' };
+        title = msgs[this.state.mode] || 'Nothing here yet';
+        sub   = 'Be the first to post in this channel';
+      }
       feed.innerHTML = `
         <div class="empty-state">
-          <span class="empty-icon">📡</span>
-          <h3>${this.state.loading ? 'Scanning the chain…' : (msgs[this.state.mode] || 'Nothing here yet')}</h3>
-          <p style="font-size:14px;margin-top:6px;color:var(--muted)">${this.state.loading ? `Checked ${this.state.nextPage - 1} page(s) so far` : 'Be the first to post in this channel'}</p>
+          <span class="empty-icon">${icon}</span>
+          <h3>${title}</h3>
+          <p style="font-size:14px;margin-top:6px;color:var(--muted)">${sub}</p>
         </div>`;
       return;
     }
