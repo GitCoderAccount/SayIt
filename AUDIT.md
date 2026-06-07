@@ -30,12 +30,12 @@ Effort: S/M/L. Status: `[ ]` todo · `[x]` done · `[~]` partial · `[-]` skippe
 - [x] **Long error toasts clipped on mobile** — toast now wraps (`white-space:normal`). — allow wrapping (`white-space:normal`). *(S · mobile)*
 - [x] **Toasts/loading invisible to screen readers** — added `role=status aria-live` to #toast and #loading-overlay. — add `role="status" aria-live`. *(S · a11y)*
 - [ ] **Post menu / emoji / repost popups mouse-only** — roles, keyboard nav, Escape, ARIA on triggers. *(M · a11y)*
-- [ ] **Like/reply/repost notifications open the explorer, not the post** — call `openThreadByHash(n.target)`. *(S · notifications)*
+- [x] **Like/reply/repost notifications open the post** — vote/like/reply/repost now openThreadByHash(target); message/follow keep the tx link. — call `openThreadByHash(n.target)`. *(S · notifications)*
 - [ ] **Notification badge undercounts engagement** — fold engagement/poll counts in (or fix the misleading comment). *(M · notifications)*
-- [ ] **Following feed admits non-followed authors / cross-channel posts** — filter `to===channel` and `from===addr`. *(M · correctness)*
+- [x] **Following feed filter** — keep only the followed user's own posts (reporter===addr) to an allowed channel. — filter `to===channel` and `from===addr`. *(M · correctness)*
 - [ ] **No persistent wrong-network indicator on mobile** — show a pill while `_wrongChain`; clear it on disconnect/reconnect. *(M · mobile/wallet)*
-- [ ] **Explore Follow button breaks after click** — `toggleFollow` overwrites `className`; re-sync misses `data-explore-follow`. *(S · explore)*
-- [ ] **Engagement counts don't update optimistically** — bump `.act-count` on like/repost, revert on failure. *(S · home)*
+- [x] **Explore Follow button breaks after click** — toggle `.following` instead of replacing className; re-sync includes data-explore-follow. — `toggleFollow` overwrites `className`; re-sync misses `data-explore-follow`. *(S · explore)*
+- [x] **Engagement counts update optimistically** — like/unlike bumps .act-count, reverts on failure. — bump `.act-count` on like/repost, revert on failure. *(S · home)*
 
 ## P2 — Polish & consistency
 
