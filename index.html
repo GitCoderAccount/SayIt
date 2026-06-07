@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Say It DeFi</title>
 <meta name="description" content="Uncensorable social media on PulseChain. Post on-chain, own your voice. No accounts, no servers, no middlemen — just your wallet and the chain.">
 <!-- Open Graph / Facebook / Discord / Telegram link previews -->
@@ -1231,7 +1231,7 @@ nav { flex:1; padding:4px 0; }
 
 /* ── Mobile ─────────────────────────────────────────────────────────────── */
 #mobile-fab {
-  display:none; position:fixed; bottom:80px; right:16px;
+  display:none; position:fixed; bottom:calc(80px + env(safe-area-inset-bottom)); right:16px;
   width:56px; height:56px; border-radius:50%;
   background:var(--primary); border:none; color:#fff;
   font-size:26px; cursor:pointer; z-index:90;
@@ -1241,7 +1241,7 @@ nav { flex:1; padding:4px 0; }
 }
 #mobile-fab:hover { background:var(--primary-lt); transform:scale(1.05); }
 #mobile-connect {
-  display:none; position:fixed; bottom:84px; right:16px; z-index:91;
+  display:none; position:fixed; bottom:calc(84px + env(safe-area-inset-bottom)); right:16px; z-index:91;
   padding:13px 22px; border:none; border-radius:9999px;
   background:var(--primary); color:#fff; font-size:15px; font-weight:700;
   cursor:pointer; box-shadow:0 4px 20px rgba(124,77,255,0.6);
@@ -1255,7 +1255,7 @@ nav { flex:1; padding:4px 0; }
   #mobile-connect { display:block; }
   body.wallet-connected #mobile-connect { display:none; }
   /* When the connect button is showing, lift the post FAB above it. */
-  body:not(.wallet-connected) #mobile-fab { bottom:148px; }
+  body:not(.wallet-connected) #mobile-fab { bottom:calc(148px + env(safe-area-inset-bottom)); }
 }
 @media (min-width:769px) { #mobile-connect { display:none !important; } }
 
@@ -1264,7 +1264,7 @@ nav { flex:1; padding:4px 0; }
   background:rgba(0,0,0,0.95); backdrop-filter:blur(12px);
   border-top:1px solid var(--border);
   z-index:100; justify-content:space-around;
-  padding:6px 0 10px;
+  padding:6px 0 calc(10px + env(safe-area-inset-bottom));
 }
 .mn-btn {
   display:flex; flex-direction:column; align-items:center; gap:2px;
@@ -1403,7 +1403,10 @@ nav { flex:1; padding:4px 0; }
   border-radius:9999px; padding:12px 20px;
   font-size:14px; font-weight:600; display:none; z-index:2000;
   box-shadow:0 4px 24px rgba(124,77,255,0.4);
-  white-space:nowrap; max-width:90vw;
+  /* Allow long messages (e.g. the multi-sentence mobile connect guidance) to
+     wrap instead of being clipped at max-width. */
+  white-space:normal; word-break:break-word; text-align:center;
+  max-width:min(90vw, 420px);
 }
 
 /* Loading overlay */
@@ -2568,8 +2571,8 @@ nav { flex:1; padding:4px 0; }
 </nav>
 
 <div id="ptr-pill">↓ Release to refresh</div>
-<div id="loading-overlay"><div class="spinner"></div><span id="loading-label">Publishing…</span></div>
-<div id="toast"></div>
+<div id="loading-overlay" role="status" aria-live="assertive"><div class="spinner"></div><span id="loading-label">Publishing…</span></div>
+<div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <!-- Fullscreen compose modal -->
 <div class="modal-bg" id="compose-modal">
@@ -2761,7 +2764,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260606-85';
+const SW_CACHE_VER = '20260606-86';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
