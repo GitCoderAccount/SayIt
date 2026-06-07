@@ -2822,7 +2822,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260607-103';
+const SW_CACHE_VER = '20260607-104';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -8924,6 +8924,9 @@ class SayIt {
       /* Only hide the loader if we left it as text — don't clobber the
          "Load more" button we may have installed. */
       if (loadingEl.textContent === 'Scanning the chain…') loadingEl.style.display = 'none';
+      /* A deep scan can capture many VOTE txs in one go — bound the poll maps
+         here too (no-op when under the cap). */
+      this._prunePollMaps();
     }
   }
 
@@ -9149,6 +9152,11 @@ class SayIt {
         this.state.pending = [...fresh, ...this.state.pending];
         this._updateNewBanner();
       }
+      /* parseTxs above captured any VOTE txs into the poll maps. Bound them on
+         this recurring path too — previously they were only pruned on the
+         cold-scan fallback, so a long session that never cold-opened a poll
+         grew _voteAccum without limit. (No-op when under the cap.) */
+      this._prunePollMaps();
       if (this.state.signerAddr) this.checkNotifBadge();
     } catch (err) { console.warn('Poll error', err); }
   }
@@ -9479,6 +9487,15 @@ class SayIt {
         this.fetchOtherProfile(post.reporter);
       }
     });
+    /* Bound the virtualization height cache: heights for posts no longer in the
+       feed are dead weight that accumulates over a long session. _postMap now
+       holds exactly the current feed, so prune to it once the cache has grown
+       well past the feed (slack avoids churning the map on every render). */
+    if (this._vfHeightMap.size > displayList.length + 500) {
+      for (const k of this._vfHeightMap.keys()) {
+        if (!this._postMap.has(k)) this._vfHeightMap.delete(k);
+      }
+    }
     feed.innerHTML = '';
     feed.appendChild(frag);
     this._wireVideoObserver(feed);

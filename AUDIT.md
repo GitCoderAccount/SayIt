@@ -64,7 +64,7 @@ Effort: S/M/L. Status: `[ ]` todo · `[x]` done · `[~]` partial · `[-]` skippe
 - [ ] Consolidate empty/loading/error + button components *(M · design)*
 - [ ] Coherent accent palette; bump `--muted` contrast for WCAG AA *(S · design/a11y)*
 - [x] Closed polls still tally late votes (gate by `endMs`) — votes mined after a poll's `endMs` are now excluded at tally time (`_pollTally`) and dropped at record time (`_recordVote`, via a new `_pollEndMs` cache) so a late re-vote can't clobber a valid one. Cache pruned in `_prunePollMaps`. *(M · correctness)*
-- [ ] Bound `_voteAccum` / `_vfHeightMap` growth *(S · perf)*
+- [x] Bound `_voteAccum` / `_vfHeightMap` growth — `_vfHeightMap` is pruned to the current feed in `renderFeed` (was never cleared); `_prunePollMaps` now also runs on the feed paths (`pollNew` + end of `fetchPosts`), not only the cold-scan fallback, so `_voteAccum` stays capped over a long session. *(S · perf)*
 - [ ] Avoid full-table IDB scans / redundant work on hot paths *(M · perf)*
 - [ ] Search-index partial-prune corruption (prune by whole-post groups) *(M · correctness)*
 - [ ] Robustness batch (`_scanFollowers` target check, history-open address guard, `pruneIfStale` promise, gas-estimate fallback) *(M · correctness/wallet)*
