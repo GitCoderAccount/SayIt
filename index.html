@@ -2761,7 +2761,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260606-82';
+const SW_CACHE_VER = '20260606-83';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -4405,7 +4405,10 @@ class SayIt {
       this.muteAddress(post.reporter);
     } else if (action === 'menu') {
       e.stopPropagation();
-      this.openPostMenu(post, e.currentTarget || e.target.closest('.post-menu-btn'));
+      /* Anchor to the actual ⋯ button. e.currentTarget is the delegated
+         listener host (#feed), which made the menu open against the whole
+         feed's rect instead of the button. */
+      this.openPostMenu(post, e.target.closest('[data-action="menu"]') || e.target.closest('.post-menu-btn'));
     } else if (!action && !inModal && !e.target.closest('a') && !e.target.closest('button')) {
       /* Don't open threads for pure reaction posts — they have no body to display */
       if (post.postType === 'like' || post.postType === 'follow') return;
@@ -4867,7 +4870,9 @@ class SayIt {
     this.g('new-banner').classList.remove('visible');
     this.g('loading-more').style.display   = 'none';
     this.state.mode = 'notifications';
-    utils.safeLS.set(LAST_CHECK_KEY, Date.now().toString());
+    /* NOTE: don't stamp LAST_CHECK_KEY here — _scanPollNotifications reads it to
+       window vote/poll-end notifications, so writing "now" before the scan made
+       that window empty every time. We stamp it AFTER the scan (below). */
     this.clearNotifBadge();
 
     if (navToken !== this._navToken) return;
@@ -4943,6 +4948,10 @@ class SayIt {
       /* User navigated away while we were scanning — don't paint over the
          new view (this caused a flash of Notifications when returning Home). */
       if (navToken !== this._navToken) return;
+
+      /* Scan succeeded and we're still here → mark everything up to now as seen
+         (the scanners above used the PREVIOUS value to build their windows). */
+      utils.safeLS.set(LAST_CHECK_KEY, Date.now().toString());
 
       if (!allNotifs.length) {
         this.g('feed').innerHTML = this._applyPageHeader() +
@@ -8078,6 +8087,9 @@ class SayIt {
 
     if (tab === 'likes' && !isOwn) {
       feedEl.innerHTML = `<div class="prof-empty"><span>🔒</span><h3>Private</h3><p>Likes are only visible to the account holder.</p></div>`;
+      /* Non-paginated placeholder tab — stop infinite-scroll from paging in
+         the owner's real posts under this placeholder. */
+      if (this._profilePageState) { this._profilePageState.tab = tab; this._profilePageState.hasMore = false; }
       return;
     }
 
@@ -8091,6 +8103,7 @@ class SayIt {
         <p>${isArt
           ? 'Long-form articles are coming soon — a Premium feature for posting essays, guides, or even whole books on-chain.'
           : 'Highlighted posts are coming soon.'}</p></div>`;
+      if (this._profilePageState) { this._profilePageState.tab = tab; this._profilePageState.hasMore = false; }
       return;
     }
 
@@ -8775,7 +8788,10 @@ class SayIt {
       /* Use _postHashSet (O(1)) if available, fall back to _postMap.has */
       const inFeed = this._postHashSet || null;
       const fresh = this.parseTxs(raw).filter(p =>
-        new Date(p.timestamp) > latestTs &&
+        /* >= not >: PulseScan timestamps are per-second, so a genuinely new
+           post mined in the same second as the newest loaded post would be
+           dropped. The hash-set + pending checks below reject true dupes. */
+        new Date(p.timestamp) >= latestTs &&
         !(inFeed ? inFeed.has(p.txHash) : this._postMap.has(p.txHash)) &&
         !inPending.has(p.txHash)
       );
@@ -10046,13 +10062,22 @@ class SayIt {
       utils.toast('Submitting to chain… you can keep browsing');
       const receipt = await tx.wait();
       const hash    = receipt.transactionHash.toLowerCase();
+      /* Only insert an optimistic feed row for genuine feed content (plain
+         post, reply, repost/quote, poll). Exclude every non-feed prefix —
+         VOTE/NOTERATE/PROFILE_FOR/NOTE/LC_SYNC were missing, so those showed
+         up as a bogus "post" after publishing. */
       if (!body.startsWith(PROFILE_PREFIX) &&
           !body.startsWith(LIKE_PREFIX) &&
           !body.startsWith(UNLIKE_PREFIX) &&
           !body.startsWith(BOOKMARK_PREFIX) &&
           !body.startsWith(UNBOOKMARK_PREFIX) &&
           !body.startsWith(FOLLOW_PREFIX) &&
-          !body.startsWith(UNFOLLOW_PREFIX)) {
+          !body.startsWith(UNFOLLOW_PREFIX) &&
+          !body.startsWith(VOTE_PREFIX) &&
+          !body.startsWith(NOTERATE_PREFIX) &&
+          !body.startsWith(TOKEN_PROFILE_PREFIX) &&
+          !body.startsWith(NOTE_PREFIX) &&
+          !body.startsWith(LC_SYNC_PREFIX)) {
         /* If this is a poll, parse it so the feed renders the poll UI
            rather than the raw POLL:{json} text. */
         const parsedPoll = body.startsWith(POLL_PREFIX) ? this._parsePoll(body) : null;
