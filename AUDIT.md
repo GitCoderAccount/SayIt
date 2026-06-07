@@ -26,9 +26,9 @@ Effort: S/M/L. Status: `[ ]` todo · `[x]` done · `[~]` partial · `[-]` skippe
 - [ ] **Export / Import app data** — back up mutes/lists/communities/history/settings to JSON. *(M · settings)*
 - [ ] **JSON-RPC node URL setting** — expose `s.rpcUrl`; null `_readProvider` on save. *(S · settings)*
 - [ ] **Mobile header search is a dead button** — channel/profile search focus a hidden sidebar input on phones; route narrow viewports to inline search. *(M · mobile)*
-- [ ] **Bottom nav ignores safe-area insets** — add `viewport-fit=cover` + `env(safe-area-inset-bottom)`. *(S · mobile)*
-- [ ] **Long error toasts clipped on mobile** — allow wrapping (`white-space:normal`). *(S · mobile)*
-- [ ] **Toasts/loading invisible to screen readers** — add `role="status" aria-live`. *(S · a11y)*
+- [x] **Bottom nav ignores safe-area insets** — added `viewport-fit=cover` + `env(safe-area-inset-bottom)` to mobile-nav/fab/connect. — add `viewport-fit=cover` + `env(safe-area-inset-bottom)`. *(S · mobile)*
+- [x] **Long error toasts clipped on mobile** — toast now wraps (`white-space:normal`). — allow wrapping (`white-space:normal`). *(S · mobile)*
+- [x] **Toasts/loading invisible to screen readers** — added `role=status aria-live` to #toast and #loading-overlay. — add `role="status" aria-live`. *(S · a11y)*
 - [ ] **Post menu / emoji / repost popups mouse-only** — roles, keyboard nav, Escape, ARIA on triggers. *(M · a11y)*
 - [ ] **Like/reply/repost notifications open the explorer, not the post** — call `openThreadByHash(n.target)`. *(S · notifications)*
 - [ ] **Notification badge undercounts engagement** — fold engagement/poll counts in (or fix the misleading comment). *(M · notifications)*
