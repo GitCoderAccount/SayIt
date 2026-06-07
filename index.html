@@ -1420,6 +1420,19 @@ nav { flex:1; padding:4px 0; }
   max-width:min(90vw, 420px);
 }
 
+/* Persistent wrong-network bar (shown while connected on a non-369 chain). */
+#wrong-chain-bar {
+  display:none; position:fixed; top:0; left:0; right:0; z-index:1500;
+  align-items:center; justify-content:center; gap:12px;
+  padding:calc(9px + env(safe-area-inset-top)) 16px 9px;
+  background:var(--like); color:#fff; font-size:14px; font-weight:600; text-align:center;
+}
+#wrong-chain-bar.on { display:flex; }
+#wrong-chain-switch {
+  background:rgba(255,255,255,0.22); border:0; color:#fff;
+  border-radius:9999px; padding:5px 16px; font-weight:700; cursor:pointer; flex-shrink:0;
+}
+#wrong-chain-switch:hover { background:rgba(255,255,255,0.32); }
 /* Loading overlay */
 #loading-overlay {
   position:fixed; inset:0; background:rgba(0,0,0,0.65);
@@ -2596,6 +2609,10 @@ nav { flex:1; padding:4px 0; }
 </nav>
 
 <div id="ptr-pill">↓ Release to refresh</div>
+<div id="wrong-chain-bar" role="alert">
+  <span>⚠️ Wrong network — switch to PulseChain to post</span>
+  <button id="wrong-chain-switch" onclick="pulse._switchToPulse()">Switch</button>
+</div>
 <div id="loading-overlay" role="status" aria-live="assertive"><div class="spinner"></div><span id="loading-label">Publishing…</span></div>
 <div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
@@ -2789,7 +2806,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260606-90';
+const SW_CACHE_VER = '20260606-91';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -6886,6 +6903,7 @@ class SayIt {
       if (this._switchingChain) return;
       const onPulse = parseInt(chainId, 16) === PULSE_CHAIN_ID;
       this._wrongChain = !onPulse;
+      this._reflectChainState();
       if (onPulse) {
         /* Back on PulseChain — refresh the signer on a provider that sees it. */
         try { this.signer = new ethers.providers.Web3Provider(eth).getSigner(); } catch {}
@@ -6984,10 +7002,21 @@ class SayIt {
     if (chainId === PULSE_CHAIN_ID) {
       this.signer = new ethers.providers.Web3Provider(eth).getSigner();
       this._wrongChain = false;
+      this._reflectChainState();
       return true;
     }
     utils.toast('Please switch your wallet to PulseChain (chain 369), then try again.');
     return false;
+  }
+
+  /* Show/hide the persistent wrong-network bar (only while connected). */
+  _reflectChainState() {
+    document.getElementById('wrong-chain-bar')?.classList.toggle('on', !!this._wrongChain && !!this.signer);
+  }
+  /* "Switch" button on the wrong-network bar. */
+  async _switchToPulse() {
+    await this._ensureOnPulseForTx();
+    this._reflectChainState();
   }
 
   /* Switch the wallet to PulseChain. If the chain isn't known to the wallet
@@ -7063,6 +7092,7 @@ class SayIt {
       this.signer = liveProv.getSigner();
       this.state.signerAddr = (await this.signer.getAddress()).toLowerCase();
       this._wrongChain = false;
+      this._reflectChainState();
       utils.safeLS.set('sayitConnected', '1');
       this._registerWalletListeners();
       await this.afterConnect();
@@ -7195,6 +7225,8 @@ class SayIt {
   disconnect() {
     this.signer = null;
     this.state.signerAddr = null;
+    this._wrongChain = false;
+    this._reflectChainState();
     this.state.profile    = { username:'', picUrl:'image1.jpeg', bio:'' };
     document.body.classList.remove('wallet-connected');
     this._updateMobileProfileAvatar();
