@@ -33,7 +33,7 @@ Effort: S/M/L. Status: `[ ]` todo · `[x]` done · `[~]` partial · `[-]` skippe
 - [x] **Like/reply/repost notifications open the post** — vote/like/reply/repost now openThreadByHash(target); message/follow keep the tx link. — call `openThreadByHash(n.target)`. *(S · notifications)*
 - [ ] **Notification badge undercounts engagement** — fold engagement/poll counts in (or fix the misleading comment). *(M · notifications)*
 - [x] **Following feed filter** — keep only the followed user's own posts (reporter===addr) to an allowed channel. — filter `to===channel` and `from===addr`. *(M · correctness)*
-- [ ] **No persistent wrong-network indicator on mobile** — show a pill while `_wrongChain`; clear it on disconnect/reconnect. *(M · mobile/wallet)*
+- [x] **Persistent wrong-network bar** — shows while connected on a non-369 chain, with a Switch button; cleared on disconnect/reconnect. — show a pill while `_wrongChain`; clear it on disconnect/reconnect. *(M · mobile/wallet)*
 - [x] **Explore Follow button breaks after click** — toggle `.following` instead of replacing className; re-sync includes data-explore-follow. — `toggleFollow` overwrites `className`; re-sync misses `data-explore-follow`. *(S · explore)*
 - [x] **Engagement counts update optimistically** — like/unlike bumps .act-count, reverts on failure. — bump `.act-count` on like/repost, revert on failure. *(S · home)*
 
