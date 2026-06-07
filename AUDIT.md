@@ -50,10 +50,10 @@ Effort: S/M/L. Status: `[ ]` todo · `[x]` done · `[~]` partial · `[-]` skippe
 - [x] 7-item bottom nav < 44px taps on small phones *(S · mobile)*
 - [ ] Wrong Following / tag-search empty-state copy *(S · home/explore)*
 - [x] Bookmark "couldn't load" sticks on transient failures *(S · lists-thread)*
-- [ ] Generic modal: no Escape / dialog ARIA; `openShareCard` missing focus trap *(S · modals/a11y)*
+- [x] Generic modal: no Escape / dialog ARIA; `openShareCard` missing focus trap — generic modal now has `role=dialog`/`aria-modal`/`aria-label` + Escape (closes topmost first); `openShareCard` now calls `_trapFocus`. *(S · modals/a11y)*
 - [x] Standardize avatar `src` on `safeUrl` (notif/muted/preview/compose) *(S · consistency)*
 - [x] Double-escaped usernames in `_patchProfilesInFeed` *(S · correctness)*
-- [ ] Clickable spans (`.post-handle`/`.post-mention`/counts) not keyboard-operable *(S · a11y)*
+- [x] Clickable spans (`.post-handle`/`.post-mention`/counts) not keyboard-operable — `.post-tag`/`.post-mention`/`.post-handle` are now `role=button tabindex=0` with a delegated Enter/Space handler reusing the click dispatch. (Action counts were already real `<button>`s.) *(S · a11y)*
 - [x] Cover live-preview ad-hoc escaping (route through `cssUrlValue`/`safeUrl`) — the `pe-cover` oninput preview now uses `utils.cssUrlValue` (same path as the saved cover), so it validates scheme + CSS-escapes instead of hand-rolling. *(S · profile)*
 - [ ] Explore results hard-capped, no "load more" *(M · explore)*
 - [x] Char ring implies a non-existent 1000-char limit *(S · home)*
