@@ -730,10 +730,12 @@ nav { flex:1; padding:4px 0; }
 .post-menu-dropdown.open { display:block; }
 /* Close post-menu-dropdown when clicking outside — handled in openPostMenu */
 .post-menu-item {
-  display:flex; align-items:center; gap:12px;
-  padding:12px 16px; cursor:pointer; font-size:15px;
+  display:flex; align-items:center; gap:12px; width:100%;
+  padding:12px 16px; cursor:pointer; font-size:15px; text-align:left;
+  background:transparent; border:0; font-family:inherit;
   color:var(--text); transition:background 0.12s;
 }
+.post-menu-item:focus-visible { outline:none; background:var(--primary-hov); box-shadow:inset 3px 0 0 var(--primary); }
 .post-menu-item:hover { background:rgba(255,255,255,0.06); }
 .post-menu-item.danger { color:#f4212e; }
 .post-menu-item svg { flex-shrink:0; }
@@ -2806,7 +2808,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260606-92';
+const SW_CACHE_VER = '20260606-93';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -9685,7 +9687,7 @@ class SayIt {
           aria-label="View profile" tabindex="-1"><img src="${utils.safe(picUrl)}" class="post-avatar" alt=""
           loading="lazy" onerror="this.src='image1.jpeg'"></a>
         <button class="post-menu-btn" data-action="menu" title="More options"
-          aria-label="More options">${this.icon('ic-menu')}</button>
+          aria-label="More options" aria-haspopup="menu" aria-expanded="false">${this.icon('ic-menu')}</button>
         <div class="post-col">
           <div class="post-meta-row">
             <a class="post-name" href="#/profile/${utils.safe(post.reporter)}">${displayName}</a>${verifiedBadge}
@@ -11555,6 +11557,7 @@ class SayIt {
 
     const menu = document.createElement('div');
     menu.className = 'post-menu-dropdown open';
+    menu.setAttribute('role', 'menu');
 
     const items = [];
     /* Follow / unfollow + mute — never shown on your own posts */
@@ -11596,17 +11599,32 @@ class SayIt {
         label: 'Posts are permanent on-chain', action: () => utils.toast('On-chain posts are permanent by design.'), danger: false });
     }
 
+    /* removeMenu cleans up listeners + the trigger's aria-expanded; restores
+       focus to the trigger only on keyboard dismissal (Escape). */
+    const removeMenu = (restoreFocus) => {
+      menu.remove();
+      document.removeEventListener('click', close, true);
+      document.removeEventListener('keydown', onKey, true);
+      anchorEl?.setAttribute?.('aria-expanded', 'false');
+      if (restoreFocus) anchorEl?.focus?.();
+    };
     items.forEach(({ icon, label, action, danger }) => {
-      const el = document.createElement('div');
+      const el = document.createElement('button');
+      el.type = 'button';
+      el.setAttribute('role', 'menuitem');
       el.className = 'post-menu-item' + (danger ? ' danger' : '');
       el.innerHTML = `${icon}<span>${utils.safe(label)}</span>`;
-      el.onclick = e2 => {
-        e2.stopPropagation();
-        menu.remove();
-        action();
-      };
+      el.onclick = e2 => { e2.stopPropagation(); removeMenu(false); action(); };
       menu.appendChild(el);
     });
+    /* Keyboard: Escape closes (restoring focus), arrows move between items. */
+    const onKey = e2 => {
+      const btns = [...menu.querySelectorAll('.post-menu-item')];
+      const idx  = btns.indexOf(document.activeElement);
+      if (e2.key === 'Escape')         { e2.preventDefault(); removeMenu(true); }
+      else if (e2.key === 'ArrowDown') { e2.preventDefault(); btns[(idx + 1) % btns.length]?.focus(); }
+      else if (e2.key === 'ArrowUp')   { e2.preventDefault(); btns[(idx - 1 + btns.length) % btns.length]?.focus(); }
+    };
 
     /* Append to DOM first so offsetWidth/Height are measurable */
     document.body.appendChild(menu);
@@ -11627,13 +11645,13 @@ class SayIt {
     menu.style.top  = top  + 'px';
 
     /* Close on outside click */
-    const close = e2 => {
-      if (!menu.contains(e2.target)) {
-        menu.remove();
-        document.removeEventListener('click', close, true);
-      }
-    };
-    setTimeout(() => document.addEventListener('click', close, true), 0);
+    const close = e2 => { if (!menu.contains(e2.target)) removeMenu(false); };
+    anchorEl?.setAttribute?.('aria-expanded', 'true');
+    setTimeout(() => {
+      document.addEventListener('click', close, true);
+      document.addEventListener('keydown', onKey, true);
+      menu.querySelector('.post-menu-item')?.focus();   /* focus first item for keyboard users */
+    }, 0);
   }
 
   /* Update the profile page-header subtitle with the real post count
