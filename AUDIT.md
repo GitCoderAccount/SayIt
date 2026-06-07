@@ -29,7 +29,7 @@ Effort: S/M/L. Status: `[ ]` todo · `[x]` done · `[~]` partial · `[-]` skippe
 - [x] **Bottom nav ignores safe-area insets** — added `viewport-fit=cover` + `env(safe-area-inset-bottom)` to mobile-nav/fab/connect. — add `viewport-fit=cover` + `env(safe-area-inset-bottom)`. *(S · mobile)*
 - [x] **Long error toasts clipped on mobile** — toast now wraps (`white-space:normal`). — allow wrapping (`white-space:normal`). *(S · mobile)*
 - [x] **Toasts/loading invisible to screen readers** — added `role=status aria-live` to #toast and #loading-overlay. — add `role="status" aria-live`. *(S · a11y)*
-- [ ] **Post menu / emoji / repost popups mouse-only** — roles, keyboard nav, Escape, ARIA on triggers. *(M · a11y)*
+- [~] **Post ⋯ menu keyboard-operable** — role=menu/menuitem buttons, focus first item, Escape/arrow nav, aria-haspopup/expanded on trigger. (emoji/repost popups still mouse-first) — roles, keyboard nav, Escape, ARIA on triggers. *(M · a11y)*
 - [x] **Like/reply/repost notifications open the post** — vote/like/reply/repost now openThreadByHash(target); message/follow keep the tx link. — call `openThreadByHash(n.target)`. *(S · notifications)*
 - [x] **Notification badge undercounts engagement** — fold engagement (likes/replies/reposts on your posts) into the badge; fixed the misleading comment. — fold engagement/poll counts in (or fix the misleading comment). *(M · notifications)*
 - [x] **Following feed filter** — keep only the followed user's own posts (reporter===addr) to an allowed channel. — filter `to===channel` and `from===addr`. *(M · correctness)*
