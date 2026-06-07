@@ -796,19 +796,6 @@ nav { flex:1; padding:4px 0; }
   color:var(--muted); font-size:14px;
 }
 .empty-state { padding:64px 32px; text-align:center; color:var(--muted); }
-/* Mobile search affordance on the Explore page — sidebar search is hidden
-   below 900px so users would otherwise have no way to search. Hidden on
-   desktop where the sidebar search input is available. */
-.explore-search-wrap {
-  position:relative;
-  margin:12px 16px;
-  display:none;
-}
-.explore-search-wrap .search-icon {
-  position:absolute; left:14px; top:50%;
-  transform:translateY(-50%); font-size:16px;
-  color:var(--muted); pointer-events:none;
-}
 .explore-search-input {
   width:100%; padding:10px 36px 10px 44px;
   background:rgba(255,255,255,0.1); border:1px solid transparent;
@@ -830,9 +817,6 @@ nav { flex:1; padding:4px 0; }
   transition:background 0.15s;
 }
 .explore-search-clear:hover { background:var(--primary-lt); }
-@media (max-width:900px) {
-  .explore-search-wrap { display:block; }
-}
 /* Explore redesign: always-visible search bar + sticky tab bar */
 .explore-search-bar {
   display:flex; align-items:center; gap:10px;
@@ -2432,7 +2416,7 @@ html.force-reduce-motion *, html.force-reduce-motion *::before, html.force-reduc
       </div>
     </div>
 
-    <button id="new-banner" aria-label="Show new posts">
+    <button id="new-banner" aria-label="Show new posts" aria-live="polite">
       <span class="new-banner-avatars" id="new-banner-avatars"></span>
       <span class="new-banner-text" id="new-banner-text">New posts</span>
     </button>
@@ -2684,7 +2668,7 @@ html.force-reduce-motion *, html.force-reduce-motion *::before, html.force-reduc
         border:1px solid var(--border)">
         🖼 Cover photo URL below
       </div>
-      <img src="image1.jpeg" id="pe-preview" style="
+      <img src="image1.jpeg" id="pe-preview" alt="" style="
         position:absolute;bottom:-44px;left:16px;
         width:80px;height:80px;border-radius:50%;
         border:4px solid var(--bg-mid);object-fit:cover;background:var(--bg-card)">
@@ -2822,7 +2806,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260607-105';
+const SW_CACHE_VER = '20260607-106';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -5153,7 +5137,7 @@ class SayIt {
         return `
           <div class="notif-item" role="button" tabindex="0" data-from="${utils.safe(n.from)}" ${clickAttr}>
             <div class="notif-icon-wrap">${icon}</div>
-            <img src="${pic}" class="notif-avatar notif-pop" data-pop-addr="${utils.safe(n.from)}" onerror="this.src='image1.jpeg'">
+            <img src="${pic}" class="notif-avatar notif-pop" alt="" data-pop-addr="${utils.safe(n.from)}" onerror="this.src='image1.jpeg'">
             <div class="notif-body">
               <span class="notif-name notif-pop" data-pop-addr="${utils.safe(n.from)}">${name}</span>
               <span class="notif-label"> ${label}</span>
@@ -5279,7 +5263,6 @@ class SayIt {
     this._pendingPageHeader = this._makePageHeader({
       title: 'Say It DeFi Channel', subtitle: 'Official channel', noBack: false });
     this.g('compose-area').style.display = 'flex';
-    this.g('feed-tabs').style.display    = 'none';
     this.setChActive(null);
     this.updateChLabel();
     this.showChannelBanner(OFFICIAL_CHANNEL);
@@ -6790,7 +6773,6 @@ class SayIt {
       } else {
         /* Reset to default gradient if no cover */
         coverEl.style.background = '';
-        coverEl.classList.remove('has-custom-cover');
       }
     }
   }
@@ -8177,7 +8159,7 @@ class SayIt {
       <div class="post-item follow-list-row" data-follow-addr="${utils.safe(addr)}"
         style="cursor:pointer;display:flex;align-items:center;gap:12px;padding:12px 16px"
         onclick="pulse.goProfilePage('${utils.safe(addr)}', ${isSelf})">
-        <img class="follow-list-avatar" src="${pic}" data-pop-addr="${utils.safe(addr)}"
+        <img class="follow-list-avatar" alt="" src="${pic}" data-pop-addr="${utils.safe(addr)}"
           style="width:40px;height:40px;border-radius:50%;object-fit:cover;flex-shrink:0"
           onerror="this.src='image1.jpeg'" loading="lazy">
         <div style="flex:1;min-width:0">
@@ -8670,6 +8652,10 @@ class SayIt {
     g('pe-pic').value      = (p.picUrl && p.picUrl !== 'image1.jpeg') ? p.picUrl : '';
     g('pe-cover').value    = p.coverUrl  || '';
     g('pe-preview').src    = p.picUrl    || 'image1.jpeg';
+    /* Reset the NFT sub-form fully so a prior session's contract/token-id don't
+       linger (only the status line was being cleared). */
+    g('nft-contract').value = '';
+    g('nft-token-id').value = '';
     g('nft-status').textContent = '';
 
     /* Bio counter */
@@ -9800,7 +9786,7 @@ class SayIt {
       return `
         <div class="repost-card" data-open-quote="${utils.safe(post.repostOf)}" onclick="event.stopPropagation();pulse._openQuotedPost('${utils.safe(post.repostOf)}', '${utils.safe(post.to || this.state.channel || '')}')">
           <div class="repost-card-hdr">
-            <img src="${utils.safe(origPic)}" class="repost-card-avatar" onerror="this.src='image1.jpeg'">
+            <img src="${utils.safe(origPic)}" class="repost-card-avatar" alt="" onerror="this.src='image1.jpeg'">
             <span class="repost-card-name">${origName}</span>
             <span style="color:var(--muted);font-size:13px;margin-left:4px">· ${this.relTime(orig.timestamp)}</span>
           </div>
@@ -10832,7 +10818,7 @@ class SayIt {
     this.g('repost-quote').innerHTML = `
       <div class="quote-card-preview">
         <div class="repost-card-hdr">
-          <img src="${pic}" class="repost-card-avatar" onerror="this.src='image1.jpeg'">
+          <img src="${pic}" class="repost-card-avatar" alt="" onerror="this.src='image1.jpeg'">
           <span class="repost-card-name">${name}</span>
           <span style="color:var(--muted);font-size:13px;margin-left:4px">· ${relT}</span>
         </div>
@@ -11166,7 +11152,7 @@ class SayIt {
         <div class="thread-reply-to">Replying to <span>@${utils.safe(replyingToName)}</span></div>
         <div class="thread-compose">
           <img src="${utils.safe(utils.safeUrl(this.state.profile.picUrl) || 'image1.jpeg')}"
-            class="compose-avatar" onerror="this.src='image1.jpeg'">
+            class="compose-avatar" alt="" onerror="this.src='image1.jpeg'">
           <div style="flex:1">
             <textarea class="auto-textarea" id="thread-page-input"
               placeholder="Post your reply…" style="min-height:54px"></textarea>
@@ -11489,7 +11475,7 @@ class SayIt {
     const picker = document.createElement('div');
     picker.id = 'emoji-picker-pop';
     picker.style.cssText = `
-      position:absolute; z-index:400;
+      position:absolute; z-index:600;
       background:var(--bg-mid); border:1px solid var(--border);
       border-radius:16px; padding:0;
       width:320px; max-height:360px; display:flex; flex-direction:column;
@@ -11966,7 +11952,7 @@ class SayIt {
               };
               placeholder.innerHTML = `
                 <div class="repost-card-hdr">
-                  <img src="${pic}" class="repost-card-avatar" onerror="this.src='image1.jpeg'">
+                  <img src="${pic}" class="repost-card-avatar" alt="" onerror="this.src='image1.jpeg'">
                   <span class="repost-card-name">${name}</span>
                   <span style="color:var(--muted);font-size:13px;margin-left:4px">· ${this.relTime(orig.timestamp)}</span>
                 </div>
