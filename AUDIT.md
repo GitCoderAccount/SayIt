@@ -40,9 +40,9 @@ Effort: S/M/L. Status: `[ ]` todo · `[x]` done · `[~]` partial · `[-]` skippe
 ## P2 — Polish & consistency
 
 - [x] Reduce-motion + font-scale settings — Settings → Appearance: forced reduce-motion toggle + Display-size zoom (0.9/1/1.1/1.25). Applied no-flash via the early head script. (Font-scale done as display zoom since the design is px-based, not rem.) *(M · settings)*
-- [ ] Per-type notification opt-outs *(S · settings)*
+- [x] Per-type notification opt-outs — Settings → Notifications: 6 category toggles (likes/replies/reposts/follows/messages/poll activity). Filtered in `_renderNotifs` (cached, no rescan) and `checkNotifBadge`. *(S · settings)*
 - [ ] Media-autoplay toggle + default-channel setting *(S · settings)*
-- [ ] Notif tabs drop the `follow` category (realign `inTab`) *(S · notifications)*
+- [x] Notif tabs drop the `follow` category (realign `inTab`) — tabs now partition cleanly: Likes = plain likes, Mentions = everything else (so follows/poll-ends are no longer orphaned to All-only). *(S · notifications)*
 - [ ] Profile Media filter differs paint-vs-scroll (share one `isMediaUrl`) *(S · profile)*
 - [ ] Stale profile post-count subtitle (recompute on scroll/tab) *(S · profile)*
 - [x] My-Channel (`self`) subtitle blank + hex-name flash *(S · channel)*
