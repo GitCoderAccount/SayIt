@@ -2761,7 +2761,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260606-84';
+const SW_CACHE_VER = '20260606-85';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -10622,53 +10622,27 @@ class SayIt {
     this._threadBackOverride = true;
 
     this.state.threadPost = post;
+    this.state.threadAncestors = [];   /* reset; filled by _fetchThreadAncestors */
     this._renderThreadPage(post);
     this.fetchThreadReplies(post);
     /* If this post is a reply, fetch and render its ancestors above it */
     if (post.parentTx) this._fetchThreadAncestors(post);
   }
 
-  /* Walk the parentTx chain upward from the focused post, showing up to
-     5 ancestors above it. Each hop requires an OtterScan API call.
-     Appends ancestor posts ABOVE the thread-orig-item. */
+  /* Walk the parentTx chain upward from the focused post, up to 5 ancestors.
+     Missing parents are resolved by hash via _fetchTxByHash (works no matter
+     how deep in the channel they are — the old page-1 scan missed anything
+     older than the latest 50 txs). Ancestors are stored in state and rendered
+     by _renderThreadPage, so a reply re-render no longer wipes them. */
   async _fetchThreadAncestors(post) {
     const MAX_HOPS = 5;
     let current = post;
     const ancestors = [];
     for (let hop = 0; hop < MAX_HOPS && current.parentTx; hop++) {
-      /* Check in-memory postMap first */
       let parent = this._postMap.get(current.parentTx);
       if (!parent) {
-        /* Try to find it via OtterScan tx lookup */
-        try {
-          const raw = await this.apiFetch(post.to || this.state.channel, 1);
-          parent = null;
-          for (const tx of raw) {
-            if (tx.hash?.toLowerCase() === current.parentTx) {
-              try {
-                const text = ethers.utils.toUtf8String(tx.input).trim();
-                if (!text || text.startsWith(PROFILE_PREFIX)) continue;
-                const m = text.match(/^REPLY_TO:(0x[a-f0-9]{64})\n\n/i);
-                parent = {
-                  content: text,
-                  display: m ? text.slice(m[0].length).trim() : text,
-                  parentTx: m ? m[1].toLowerCase() : null,
-                  reporter: tx.from?.toLowerCase(),
-                  to: tx.to?.toLowerCase(),
-                  timestamp: tx.timeStamp
-                    ? new Date(Number(tx.timeStamp)*1000).toISOString()
-                    : new Date().toISOString(),
-                  txHash: tx.hash.toLowerCase(),
-                  mode: 'thread', channel: tx.to?.toLowerCase(),
-                  postType: 'post', direction: null,
-                  repostOf: null, reactionTarget: null, blockNumber: tx.blockNumber ? Number(tx.blockNumber) : null,
-                };
-                this._postMap.set(parent.txHash, parent);
-              } catch { /* skip */ }
-              break;
-            }
-          }
-        } catch { break; }
+        try { parent = await this._fetchTxByHash(current.parentTx); }
+        catch { break; }
       }
       if (!parent) break;
       ancestors.unshift(parent);
@@ -10677,31 +10651,11 @@ class SayIt {
       current = parent;
     }
     if (!ancestors.length) return;
-    /* Render ancestors above the focal post */
-    const orig = this.g('feed')?.querySelector('.thread-orig-item');
-    if (!orig) return;
-    const frag = document.createDocumentFragment();
-    ancestors.forEach((anc, i) => {
-      const el = document.createElement('div');
-      el.className = 'post-item thread-ancestor-item';
-      el.dataset.txhash = anc.txHash;
-      el.style.cssText = 'opacity:0.85;border-bottom:1px solid var(--border);position:relative;';
-      el.innerHTML = this.postHTML(anc, true, null, null);
-      /* Connecting line between ancestors */
-      if (i < ancestors.length - 1) {
-        el.style.paddingBottom = '0';
-        el.insertAdjacentHTML('beforeend',
-          '<div style="width:2px;height:16px;background:var(--border);margin:0 auto 0 30px;"></div>');
-      }
-      el.addEventListener('click', e => this.onFeedClick(e, true));
-      frag.appendChild(el);
-    });
-    /* Insert a label */
-    const label = document.createElement('div');
-    label.style.cssText = 'padding:8px 16px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--border);';
-    label.textContent = `↑ ${ancestors.length} ancestor post${ancestors.length > 1 ? 's' : ''}`;
-    orig.parentNode.insertBefore(label, orig);
-    orig.parentNode.insertBefore(frag, label);
+    /* Bail if the user navigated away or opened a different thread while we
+       were fetching. */
+    if (this.state.mode !== 'thread' || this.state.threadPost?.txHash !== post.txHash) return;
+    this.state.threadAncestors = ancestors;
+    this._renderThreadPage(post);
   }
 
   _threadBack() {
@@ -10724,6 +10678,20 @@ class SayIt {
     });
     this._postMap.set(post.txHash, post);
     const origHTML = this.postHTML(post, true, replyMap, null);
+
+    /* Ancestor posts above the focal post — resolved by _fetchThreadAncestors
+       and kept in state, so this re-render (e.g. after posting a reply) keeps
+       them instead of wiping the DOM-inserted rows. Clicks are handled by the
+       #feed delegated listener (the posts are in _postMap). */
+    const ancestors = this.state.threadAncestors || [];
+    let ancestorsHTML = '';
+    if (ancestors.length) {
+      ancestorsHTML = `<div style="padding:8px 16px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--border)">↑ ${ancestors.length} ancestor post${ancestors.length > 1 ? 's' : ''}</div>`;
+      ancestors.forEach(anc => {
+        this._postMap.set(anc.txHash, anc);
+        ancestorsHTML += `<div class="post-item thread-ancestor-item" data-txhash="${utils.safe(anc.txHash)}" style="opacity:0.85;border-bottom:1px solid var(--border)">${this.postHTML(anc, true, null, null)}</div>`;
+      });
+    }
 
     const replies = this.state.posts
       .filter(p => p.parentTx === post.txHash && p.postType !== 'like' && p.postType !== 'follow')
@@ -10748,6 +10716,7 @@ class SayIt {
       || this.trunc(post.reporter);
     this.g('feed').innerHTML = threadHeader + `
       <div class="thread-page">
+        ${ancestorsHTML}
         <div class="post-item thread-orig-item" data-txhash="${utils.safe(post.txHash)}"
           style="cursor:default">
           ${origHTML}
