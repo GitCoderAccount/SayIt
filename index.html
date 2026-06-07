@@ -2806,7 +2806,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260607-106';
+const SW_CACHE_VER = '20260607-107';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -3344,18 +3344,38 @@ class Cache {
     const count = await new Promise(res => { countReq.onsuccess = () => res(countReq.result); });
     if (count <= maxRows) return;
     const toDelete = count - maxRows;
-    const tx = this._db.transaction('search_index', 'readwrite');
-    const store = tx.objectStore('search_index');
-    let deleted = 0;
-    return new Promise(res => {
-      const req = store.openCursor();
+    /* Evict by WHOLE post (txHash) groups, not a raw row count. Each post
+       contributes many trigram rows, so deleting an arbitrary number of oldest
+       rows would slice through a post — leaving it partially indexed, so it
+       matched some search queries but not others (corrupt results). Pass 1
+       gathers the txHashes covering the oldest ~toDelete rows; pass 2 deletes
+       every row belonging to them (rounding up to whole posts). */
+    const victims = await new Promise(res => {
+      const set = new Set();
+      let seen = 0;
+      const req = this._db.transaction('search_index', 'readonly')
+        .objectStore('search_index').openCursor();
       req.onsuccess = e => {
         const cur = e.target.result;
-        if (!cur || deleted >= toDelete) { res(); return; }
-        cur.delete(); deleted++;
+        if (!cur || seen >= toDelete) { res(set); return; }
+        set.add(cur.value.txHash);
+        seen++;
         cur.continue();
       };
-      req.onerror = () => res();
+      req.onerror = () => res(set);
+    });
+    if (!victims.size) return;
+    return new Promise(res => {
+      const tx = this._db.transaction('search_index', 'readwrite');
+      tx.oncomplete = () => res();
+      tx.onerror    = () => res();
+      const req = tx.objectStore('search_index').openCursor();
+      req.onsuccess = e => {
+        const cur = e.target.result;
+        if (!cur) return;
+        if (victims.has(cur.value.txHash)) cur.delete();
+        cur.continue();
+      };
     });
   }
 
