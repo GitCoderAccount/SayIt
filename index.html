@@ -21,8 +21,15 @@
 <link rel="manifest" href="./manifest.json">
 <link rel="apple-touch-icon" href="./image1.jpeg">
 <meta name="theme-color" content="#7c4dff">
-<script>/* Apply the saved theme before first paint to avoid a flash of the wrong colors. */
-try { if (JSON.parse(localStorage.getItem('sayitSettings') || '{}').theme === 'dim') document.documentElement.setAttribute('data-theme', 'dim'); } catch (e) {}</script>
+<script>/* Apply saved appearance prefs before first paint to avoid a flash of the wrong
+   colors / size / motion. Theme, forced reduce-motion, and display zoom. */
+try {
+  const _s = JSON.parse(localStorage.getItem('sayitSettings') || '{}');
+  const _de = document.documentElement;
+  if (_s.theme === 'dim') _de.setAttribute('data-theme', 'dim');
+  if (_s.reduceMotion) _de.classList.add('force-reduce-motion');
+  if (_s.displayZoom && String(_s.displayZoom) !== '1') _de.style.zoom = _s.displayZoom;
+} catch (e) {}</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js" integrity="sha384-Htz1SE4Sl5aitpvFgr2j0sfsGUIuSXI6t8hEyrlQ93zflEF3a29bH2AvkUROUw7J" crossorigin="anonymous"></script>
 <style>
 /* ── Variables ──────────────────────────────────────────────────────────── */
@@ -2230,6 +2237,13 @@ nav { flex:1; padding:4px 0; }
     scroll-behavior: auto !important;
   }
 }
+/* User-forced reduce-motion (Settings → Appearance), independent of the OS pref */
+html.force-reduce-motion *, html.force-reduce-motion *::before, html.force-reduce-motion *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
 /* Visually hidden but exposed to screen readers (page title landmark) */
 .visually-hidden {
   position:absolute !important; width:1px; height:1px;
@@ -2808,7 +2822,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260607-96';
+const SW_CACHE_VER = '20260607-97';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -6180,6 +6194,20 @@ class SayIt {
             <option value="dim"  ${s.theme === 'dim' ? 'selected' : ''}>Dim</option>
           </select>
         </div>
+        <div class="settings-row">
+          <div class="settings-row-label"><strong>Display size</strong><span>Scale the whole interface up or down</span></div>
+          <select class="settings-btn" id="set-zoom" style="padding:9px 12px">
+            ${[['0.9','Small'],['1','Default'],['1.1','Large'],['1.25','Larger']].map(([v,label]) =>
+              `<option value="${v}" ${String(s.displayZoom || '1') === v ? 'selected' : ''}>${label}</option>`).join('')}
+          </select>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label"><strong>Reduce motion</strong><span>Minimize animations &amp; transitions</span></div>
+          <label class="settings-switch">
+            <input type="checkbox" id="set-reduce-motion" ${s.reduceMotion ? 'checked' : ''}>
+            <span class="settings-switch-slider"></span>
+          </label>
+        </div>
       </div>
 
       <!-- API -->
@@ -6412,6 +6440,20 @@ class SayIt {
       s.theme = g('set-theme').value;
       this._saveSettings(s);
       this._applyTheme(s.theme);
+    });
+    /* Display size (zoom) — apply immediately. '1' clears the override. */
+    g('set-zoom')?.addEventListener('change', () => {
+      const s = this._getSettings();
+      s.displayZoom = g('set-zoom').value;
+      this._saveSettings(s);
+      document.documentElement.style.zoom = (String(s.displayZoom) !== '1') ? s.displayZoom : '';
+    });
+    /* Reduce motion — toggle the forced-motion class immediately. */
+    g('set-reduce-motion')?.addEventListener('change', () => {
+      const s = this._getSettings();
+      s.reduceMotion = g('set-reduce-motion').checked;
+      this._saveSettings(s);
+      document.documentElement.classList.toggle('force-reduce-motion', s.reduceMotion);
     });
     /* Content & Feed filter toggles — save on change; the feed picks them up
        on the next renderFeed (when the user navigates back to it). */

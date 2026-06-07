@@ -39,7 +39,7 @@ Effort: S/M/L. Status: `[ ]` todo · `[x]` done · `[~]` partial · `[-]` skippe
 
 ## P2 — Polish & consistency
 
-- [ ] Reduce-motion + font-scale settings *(M · settings)*
+- [x] Reduce-motion + font-scale settings — Settings → Appearance: forced reduce-motion toggle + Display-size zoom (0.9/1/1.1/1.25). Applied no-flash via the early head script. (Font-scale done as display zoom since the design is px-based, not rem.) *(M · settings)*
 - [ ] Per-type notification opt-outs *(S · settings)*
 - [ ] Media-autoplay toggle + default-channel setting *(S · settings)*
 - [ ] Notif tabs drop the `follow` category (realign `inTab`) *(S · notifications)*
