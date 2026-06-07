@@ -21,6 +21,8 @@
 <link rel="manifest" href="./manifest.json">
 <link rel="apple-touch-icon" href="./image1.jpeg">
 <meta name="theme-color" content="#7c4dff">
+<script>/* Apply the saved theme before first paint to avoid a flash of the wrong colors. */
+try { if (JSON.parse(localStorage.getItem('sayitSettings') || '{}').theme === 'dim') document.documentElement.setAttribute('data-theme', 'dim'); } catch (e) {}</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js" integrity="sha384-Htz1SE4Sl5aitpvFgr2j0sfsGUIuSXI6t8hEyrlQ93zflEF3a29bH2AvkUROUw7J" crossorigin="anonymous"></script>
 <style>
 /* ── Variables ──────────────────────────────────────────────────────────── */
@@ -42,6 +44,15 @@
   --like:        #f91880;
   --neon:        0 0 8px rgba(124,77,255,0.5),0 0 20px rgba(124,77,255,0.15);
   --wave-neon:   0 0 12px rgba(255,60,172,0.5),0 0 28px rgba(120,75,160,0.3);
+}
+/* Dim theme — a softer, slightly blue-grey dark (X-style "Dim") instead of
+   pure black. Only background/border/muted tokens change; accents stay. */
+:root[data-theme="dim"] {
+  --bg-dark:  #15191f;
+  --bg-mid:   #222a35;
+  --bg-card:  #1b212b;
+  --border:   #38414d;
+  --muted:    #8b97a3;
 }
 *,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
 body {
@@ -2778,7 +2789,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260606-88';
+const SW_CACHE_VER = '20260606-89';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -5749,6 +5760,14 @@ class SayIt {
     }
   }
 
+  /* Apply the chosen theme by toggling data-theme on <html> (the [data-theme]
+     CSS-var overrides do the rest). Default 'dark' = no attribute. */
+  _applyTheme(theme) {
+    theme = theme || this._getSettings().theme || 'dark';
+    if (theme === 'dim') document.documentElement.setAttribute('data-theme', 'dim');
+    else document.documentElement.removeAttribute('data-theme');
+  }
+
   goSettings() {
     this._updateTitle('Settings');
     this._setRoute('/settings');
@@ -6074,6 +6093,18 @@ class SayIt {
     const s = this._getSettings();
     return `
     <div class="settings-view">
+      <!-- Appearance -->
+      <div class="settings-section">
+        <div class="settings-section-title">Appearance</div>
+        <div class="settings-row">
+          <div class="settings-row-label"><strong>Theme</strong><span>Pure black (Dark) or a softer slate (Dim)</span></div>
+          <select class="settings-btn" id="set-theme" style="padding:9px 12px">
+            <option value="dark" ${(s.theme || 'dark') === 'dark' ? 'selected' : ''}>Dark</option>
+            <option value="dim"  ${s.theme === 'dim' ? 'selected' : ''}>Dim</option>
+          </select>
+        </div>
+      </div>
+
       <!-- API -->
       <div class="settings-section">
         <div class="settings-section-title">API Configuration</div>
@@ -6289,6 +6320,13 @@ class SayIt {
       this._readProvider = null;   /* rebuilt on next read with the new RPC URL */
       this._saveSettings(s);
       utils.toast('API settings saved ✓');
+    });
+    /* Theme — apply immediately on change. */
+    g('set-theme')?.addEventListener('change', () => {
+      const s = this._getSettings();
+      s.theme = g('set-theme').value;
+      this._saveSettings(s);
+      this._applyTheme(s.theme);
     });
     /* Content & Feed filter toggles — save on change; the feed picks them up
        on the next renderFeed (when the user navigates back to it). */

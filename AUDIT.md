@@ -21,7 +21,7 @@ Effort: S/M/L. Status: `[ ]` todo · `[x]` done · `[~]` partial · `[-]` skippe
 
 ## P1 — Important (UI/UX + high-value features/settings)
 
-- [ ] **Theme setting (Dark / Dim / Light)** — `[data-theme]` CSS-var overrides; persist `s.theme`. *(M · settings)*
+- [~] **Theme setting** — Dark/Dim added (Settings → Appearance, no-flash on load). Full Light deferred per owner.
 - [x] **Content/feed filters** — Settings → Content & Feed: hide reposts/replies/polls/non-text, applied in renderFeed. — hide reposts/replies/polls/binary txs, applied in `renderFeed()`. *(M · settings)*
 - [ ] **Export / Import app data** — back up mutes/lists/communities/history/settings to JSON. *(M · settings)*
 - [x] **JSON-RPC node URL setting** — added to API Configuration; nulls _readProvider on save. — expose `s.rpcUrl`; null `_readProvider` on save. *(S · settings)*
