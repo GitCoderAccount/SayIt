@@ -46,17 +46,17 @@ Effort: S/M/L. Status: `[ ]` todo · `[x]` done · `[~]` partial · `[-]` skippe
 - [ ] Profile Media filter differs paint-vs-scroll (share one `isMediaUrl`) *(S · profile)*
 - [ ] Stale profile post-count subtitle (recompute on scroll/tab) *(S · profile)*
 - [ ] My-Channel (`self`) subtitle blank + hex-name flash *(S · channel)*
-- [ ] Token-channel button crowding — `flex-wrap` or overflow menu *(S · channel)*
-- [ ] 7-item bottom nav < 44px taps on small phones *(S · mobile)*
+- [x] Token-channel button crowding — `flex-wrap` or overflow menu *(S · channel)*
+- [x] 7-item bottom nav < 44px taps on small phones *(S · mobile)*
 - [ ] Wrong Following / tag-search empty-state copy *(S · home/explore)*
 - [ ] Bookmark "couldn't load" sticks on transient failures *(S · lists-thread)*
 - [ ] Generic modal: no Escape / dialog ARIA; `openShareCard` missing focus trap *(S · modals/a11y)*
 - [ ] Standardize avatar `src` on `safeUrl` (notif/muted/preview/compose) *(S · consistency)*
-- [ ] Double-escaped usernames in `_patchProfilesInFeed` *(S · correctness)*
+- [x] Double-escaped usernames in `_patchProfilesInFeed` *(S · correctness)*
 - [ ] Clickable spans (`.post-handle`/`.post-mention`/counts) not keyboard-operable *(S · a11y)*
 - [ ] Cover live-preview ad-hoc escaping (route through `cssUrlValue`/`safeUrl`) *(S · profile)*
 - [ ] Explore results hard-capped, no "load more" *(M · explore)*
-- [ ] Char ring implies a non-existent 1000-char limit *(S · home)*
+- [x] Char ring implies a non-existent 1000-char limit *(S · home)*
 
 ## P3 — Optional / future
 
