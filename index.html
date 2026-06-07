@@ -2822,7 +2822,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260607-102';
+const SW_CACHE_VER = '20260607-103';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -3646,6 +3646,7 @@ class SayIt {
     this._pollScanned  = new Map(); /* pollHash → ts of last cold-scan fallback */
     this._pollScanning = new Set(); /* poll hashes with an in-flight cold scan */
     this._myVotes      = new Map(); /* pollHash → optIdx the user has voted (session) */
+    this._pollEndMs    = new Map(); /* pollHash → endMs; gates out post-close votes */
     /* Community Notes: per-post note data, scan throttle, session ratings,
        and which posts have their pending-note panel expanded. */
     this._noteData      = new Map(); /* postHash → { notes:[…], scannedAt } */
@@ -9967,6 +9968,13 @@ class SayIt {
   /* Upsert a single vote, newest-wins by timestamp. */
   _recordVote(pollHash, voter, optIdx, ts) {
     if (!pollHash || !voter || !Number.isInteger(optIdx) || optIdx < 0) return;
+    /* A poll closes at endMs — a vote mined after it is invalid, so drop it
+       entirely (don't let it overwrite a valid earlier vote via newest-wins).
+       endMs is known once the poll has been parsed/tallied; votes captured
+       before that are filtered at tally time instead. ts===0 = unknown time,
+       treated as valid. */
+    const end = this._pollEndMs.get(pollHash);
+    if (end && ts && ts > end) return;
     let m = this._voteAccum.get(pollHash);
     if (!m) { m = new Map(); this._voteAccum.set(pollHash, m); }
     const prev = m.get(voter);
@@ -9976,13 +9984,22 @@ class SayIt {
      { counts:[n per option], voters:Map(addr→optIdx), total }. Out-of-range
      option indexes (malformed/older polls) are ignored. */
   _pollTally(post) {
-    const optCount = post && post.poll ? post.poll.options.length : 0;
+    const poll     = post && post.poll;
+    const optCount = poll ? poll.options.length : 0;
+    const endMs    = poll ? poll.endMs : 0;
+    /* Remember this poll's close time so _recordVote can drop later late votes
+       at the source (prevents a post-close re-vote clobbering a valid one). */
+    if (endMs) this._pollEndMs.set(post.txHash, endMs);
     const counts = new Array(optCount).fill(0);
     const voters = new Map();
     const accum = this._voteAccum.get(post.txHash);
     if (accum) {
       for (const [voter, v] of accum) {
         if (v.optIdx < 0 || v.optIdx >= optCount) continue;
+        /* Poll closed before this vote was mined → it doesn't count. Catches
+           votes captured before endMs was known (record-time gate handles the
+           rest). ts===0 = unknown time, kept. */
+        if (endMs && v.ts && v.ts > endMs) continue;
         voters.set(voter, v.optIdx);
         counts[v.optIdx]++;
       }
@@ -11651,7 +11668,7 @@ class SayIt {
      hundreds of distinct polls, and an evicted poll simply re-tallies on its
      next render. */
   _prunePollMaps(maxSize = 800) {
-    for (const m of [this._voteAccum, this._pollScanned, this._myVotes]) {
+    for (const m of [this._voteAccum, this._pollScanned, this._myVotes, this._pollEndMs]) {
       if (m.size <= maxSize) continue;
       const keys = [...m.keys()];
       for (let i = 0; i < keys.length - maxSize; i++) m.delete(keys[i]);

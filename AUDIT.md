@@ -63,7 +63,7 @@ Effort: S/M/L. Status: `[ ]` todo · `[x]` done · `[~]` partial · `[-]` skippe
 - [ ] Unify the two tx parsers (`parseTxs` delegate to `_parsePostTx`) — root-causes several items *(L · correctness)*
 - [ ] Consolidate empty/loading/error + button components *(M · design)*
 - [ ] Coherent accent palette; bump `--muted` contrast for WCAG AA *(S · design/a11y)*
-- [ ] Closed polls still tally late votes (gate by `endMs`) *(M · correctness)*
+- [x] Closed polls still tally late votes (gate by `endMs`) — votes mined after a poll's `endMs` are now excluded at tally time (`_pollTally`) and dropped at record time (`_recordVote`, via a new `_pollEndMs` cache) so a late re-vote can't clobber a valid one. Cache pruned in `_prunePollMaps`. *(M · correctness)*
 - [ ] Bound `_voteAccum` / `_vfHeightMap` growth *(S · perf)*
 - [ ] Avoid full-table IDB scans / redundant work on hot paths *(M · perf)*
 - [ ] Search-index partial-prune corruption (prune by whole-post groups) *(M · correctness)*
