@@ -2822,7 +2822,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260607-100';
+const SW_CACHE_VER = '20260607-101';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -3099,11 +3099,11 @@ const utils = {
       const raw = mScan[0];
       if (mScan[1]) {
         /* hashtag */
-        result += `<span class="post-tag" data-tag="${utils.safe(mScan[1])}">#${utils.safe(mScan[1])}</span>`;
+        result += `<span class="post-tag" role="button" tabindex="0" data-tag="${utils.safe(mScan[1])}">#${utils.safe(mScan[1])}</span>`;
       } else if (mScan[2]) {
         /* @address mention */
         const addr = mScan[2].toLowerCase();
-        result += `<span class="post-mention" data-addr="${utils.safe(addr)}">@${utils.safe(addr.slice(0,6)+'…'+addr.slice(-4))}</span>`;
+        result += `<span class="post-mention" role="button" tabindex="0" data-addr="${utils.safe(addr)}">@${utils.safe(addr.slice(0,6)+'…'+addr.slice(-4))}</span>`;
       } else {
         /* URL — suppress if it's a media URL we're already rendering as image/video */
         const resolved = resolveUrl(raw);
@@ -3944,6 +3944,15 @@ class SayIt {
     };
 
     g('feed').addEventListener('click', e => handlePostClick(e, false));
+    /* Keyboard activation for the clickable spans (post-tag / post-mention /
+       post-handle) — they're role="button" tabindex="0", so Enter/Space must
+       fire the same action a click does. Reuses handlePostClick's dispatch. */
+    g('feed').addEventListener('keydown', e => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      if (!e.target.closest('.post-tag, .post-mention, .post-handle')) return;
+      e.preventDefault();
+      handlePostClick(e, false);
+    });
 
     /* ── Hover popup (desktop only) ──────────────────────────────────
        Uses mouseover/mouseout on the feed so we don't attach N listeners.
@@ -4277,6 +4286,9 @@ class SayIt {
           this._kbFocusedPost = null;
           return;
         }
+        /* Generic modal is built on the fly and sits topmost when present —
+           close it first (it removes itself + releases focus). */
+        if (this.g('generic-modal')) { this._closeGenericModal(); return; }
         ['compose-modal','profile-modal','reply-modal','repost-modal','media-modal','share-modal'].forEach(id => {
           if (g(id).classList.contains('open')) this.closeModal(id);
         });
@@ -9818,7 +9830,8 @@ class SayIt {
           <div class="post-meta-row">
             <a class="post-name" href="#/profile/${utils.safe(post.reporter)}">${displayName}</a>${verifiedBadge}
             ${hasProfile ? `<span class="post-dot">·</span>
-            <span class="post-handle" data-addr="${utils.safe(post.reporter)}"
+            <span class="post-handle" role="button" tabindex="0" aria-label="Copy address ${utils.safe(post.reporter)}"
+              data-addr="${utils.safe(post.reporter)}"
               title="Click to copy address">@${this.trunc(post.reporter)}</span>` : ''}
             <span class="post-time-dot">·</span>
             <a href="https://otter.pulsechain.com/tx/${utils.safe(post.txHash)}"
@@ -11305,7 +11318,7 @@ class SayIt {
     overlay.className = 'modal-bg open';
     overlay.id = 'generic-modal';
     overlay.innerHTML = `
-      <div class="modal">
+      <div class="modal" role="dialog" aria-modal="true" aria-label="${utils.safe(title)}">
         <div class="modal-head">
           <span class="modal-title">${utils.safe(title)}</span>
           <button class="modal-close" aria-label="Close" id="generic-modal-close">✕</button>
@@ -12762,6 +12775,7 @@ class SayIt {
     ctx.fillStyle = brand; ctx.font = 'bold 12px system-ui, sans-serif';
     ctx.fillText('Say It DeFi', W-100, H-26);
     modal.classList.add('open');
+    this._trapFocus(modal);   /* keep Tab focus inside; restore on close */
     copyBtn.onclick = async () => {
       try {
         canvas.toBlob(async blob => {
