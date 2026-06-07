@@ -43,8 +43,8 @@ Effort: S/M/L. Status: `[ ]` todo · `[x]` done · `[~]` partial · `[-]` skippe
 - [x] Per-type notification opt-outs — Settings → Notifications: 6 category toggles (likes/replies/reposts/follows/messages/poll activity). Filtered in `_renderNotifs` (cached, no rescan) and `checkNotifBadge`. *(S · settings)*
 - [x] Media-autoplay toggle + default-channel setting — Settings → Content & Feed: "Autoplay videos" (off → native controls, paused, observer skipped) and "Default tab on launch" (Home/Explore/Bookmarks, honored at boot when not deep-linked). Only self-loading views offered, so no wallet/empty-feed footgun. *(S · settings)*
 - [x] Notif tabs drop the `follow` category (realign `inTab`) — tabs now partition cleanly: Likes = plain likes, Mentions = everything else (so follows/poll-ends are no longer orphaned to All-only). *(S · notifications)*
-- [ ] Profile Media filter differs paint-vs-scroll (share one `isMediaUrl`) *(S · profile)*
-- [ ] Stale profile post-count subtitle (recompute on scroll/tab) *(S · profile)*
+- [x] Profile Media filter differs paint-vs-scroll (share one `isMediaUrl`) — both paths now call one `_postHasMedia`/`_mediaImageUrls` helper built on linkify's canonical `_LK_*` patterns; deleted the two divergent local host lists. *(S · profile)*
+- [x] Stale profile post-count subtitle (recompute on scroll/tab) — `_updateProfileSubtitle` is now tab-aware (counts thumbs on Media, per-tab noun) and recomputed after scroll-append + on tab switch (which also clears the prior count up-front). *(S · profile)*
 - [x] My-Channel (`self`) subtitle blank + hex-name flash *(S · channel)*
 - [x] Token-channel button crowding — `flex-wrap` or overflow menu *(S · channel)*
 - [x] 7-item bottom nav < 44px taps on small phones *(S · mobile)*
@@ -54,7 +54,7 @@ Effort: S/M/L. Status: `[ ]` todo · `[x]` done · `[~]` partial · `[-]` skippe
 - [x] Standardize avatar `src` on `safeUrl` (notif/muted/preview/compose) *(S · consistency)*
 - [x] Double-escaped usernames in `_patchProfilesInFeed` *(S · correctness)*
 - [ ] Clickable spans (`.post-handle`/`.post-mention`/counts) not keyboard-operable *(S · a11y)*
-- [ ] Cover live-preview ad-hoc escaping (route through `cssUrlValue`/`safeUrl`) *(S · profile)*
+- [x] Cover live-preview ad-hoc escaping (route through `cssUrlValue`/`safeUrl`) — the `pe-cover` oninput preview now uses `utils.cssUrlValue` (same path as the saved cover), so it validates scheme + CSS-escapes instead of hand-rolling. *(S · profile)*
 - [ ] Explore results hard-capped, no "load more" *(M · explore)*
 - [x] Char ring implies a non-existent 1000-char limit *(S · home)*
 

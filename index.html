@@ -2822,7 +2822,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260607-99';
+const SW_CACHE_VER = '20260607-100';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -4297,12 +4297,13 @@ class SayIt {
     g('pe-cover').oninput = () => {
       const v = g('pe-cover').value.trim();
       const prev = g('pe-cover-preview');
-      if (v) {
-        /* Inside a double-quoted CSS url() only " and \ need escaping.
-           CSS.escape() is for identifiers and encodes : / . which breaks URLs. */
-        const safeV = v.replace(/["\\]/g, c => '\\' + c);
-        prev.style.backgroundImage = `url("${safeV}")`;
-        prev.style.backgroundSize  = 'cover';
+      /* Route through cssUrlValue (validates scheme + CSS-escapes) — same path
+         the saved cover renders through, so the preview matches and a hostile
+         javascript:/data: URL can't break out of url() or render. */
+      const css = v ? utils.cssUrlValue(v) : '';
+      if (css) {
+        prev.style.backgroundImage    = `url('${css}')`;
+        prev.style.backgroundSize     = 'cover';
         prev.style.backgroundPosition = 'center';
         prev.classList.add('has-cover');
       } else {
@@ -7923,7 +7924,12 @@ class SayIt {
           this._profilePageState.tab = btn.dataset.ptab;
           this._profilePageState.visibleTxHashes = new Set();
         }
-        this.loadProfileTab(address, isOwn, btn.dataset.ptab, maxPages);
+        /* Clear the previous tab's count immediately so it can't linger stale
+           while the new tab loads; refresh it once the load resolves. */
+        const sub = this.g('feed')?.querySelector('.page-header-subtitle');
+        if (sub) sub.textContent = '';
+        this.loadProfileTab(address, isOwn, btn.dataset.ptab, maxPages)
+          .then(() => this._updateProfileSubtitle(address)).catch(() => {});
       };
     });
 
@@ -8450,21 +8456,6 @@ class SayIt {
       return;
     }
 
-    /* Match same media-detection logic as linkify */
-    const imgRe     = /\.(jpg|jpeg|png|gif|webp|svg|avif|tiff|bmp)(\?[^\s]*)?$/i;
-    const ipfsRe    = /\/(ipfs|ipns)\//i;
-    const imgHosts  = new Set(['pbs.twimg.com','ton.twimg.com','i.imgur.com','imgur.com',
-      'cdn.discordapp.com','media.discordapp.net','media.tenor.com','c.tenor.com',
-      'media.giphy.com','i.giphy.com','media1.giphy.com','media2.giphy.com',
-      'media3.giphy.com','media4.giphy.com','nftstorage.link','gateway.pinata.cloud',
-      'cloudflare-ipfs.com','dweb.link']);
-    const isMediaUrl = url => {
-      if (imgRe.test(url)) return true;
-      if (ipfsRe.test(url)) return true;
-      if (url.includes('arweave.net/')) return true;
-      try { return imgHosts.has(new URL(url).hostname); } catch { return false; }
-    };
-
     try {
       let posts = [];
       let scannedHasMore = false; /* set below: were there more pages past the initial scan? */
@@ -8514,14 +8505,7 @@ class SayIt {
             const isReply = !!parsed.parentTx;
             if (tab === 'posts'   &&  isReply) return;
             if (tab === 'replies' && !isReply) return;
-            if (tab === 'media') {
-              const d = parsed.display || '';
-              const urls = [...d.matchAll(/https?:\/\/[^\s<>"{}|\\^[\]`]+|ipfs:\/\/\S+|arweave:\/\/\S+/g)].map(m => m[0]);
-              const resolveUrl = u => u.startsWith('ipfs://') ? 'https://ipfs.io/ipfs/' + u.slice(7)
-                : u.startsWith('arweave://') ? 'https://arweave.net/' + u.slice(10) : u;
-              const hasImg = urls.some(u => isMediaUrl(resolveUrl(u)));
-              if (!hasImg) return;
-            }
+            if (tab === 'media' && !this._postHasMedia(parsed.display)) return;
             posts.push(parsed);
           } catch { /* skip */ }
         });
@@ -8554,14 +8538,8 @@ class SayIt {
 
       if (tab === 'media') {
         const imgUrls = [];
-        const resolveUrl = u => u.startsWith('ipfs://') ? 'https://ipfs.io/ipfs/' + u.slice(7)
-          : u.startsWith('arweave://') ? 'https://arweave.net/' + u.slice(10) : u;
         posts.forEach(p => {
-          const matches = [...p.display.matchAll(/https?:\/\/[^\s<>"{}|\\^[\]`]+|ipfs:\/\/\S+|arweave:\/\/\S+/g)];
-          matches.forEach(mm => {
-            const resolved = resolveUrl(mm[0]);
-            if (isMediaUrl(resolved)) imgUrls.push({ url: resolved, txHash: p.txHash });
-          });
+          this._mediaImageUrls(p.display).forEach(url => imgUrls.push({ url, txHash: p.txHash }));
         });
         feedEl.innerHTML = `<div class="prof-media-grid">${
           imgUrls.slice(0,60).map(({ url, txHash }) =>
@@ -11819,10 +11797,19 @@ class SayIt {
     if (this.state.mode !== 'profile') return;
     const subtitle = this.g('feed')?.querySelector('.page-header-subtitle');
     if (!subtitle) return;
-    /* Count profile posts from profFeed (authoritative after tab load) */
+    /* Count the active tab's rendered items (authoritative after a tab load /
+       scroll-append). Media renders thumbs, the other tabs render post rows. */
     const profFeed = this.g('feed')?.querySelector('.prof-feed');
-    const count = profFeed ? profFeed.querySelectorAll('.post-item').length : 0;
-    if (count > 0) subtitle.textContent = `${count} post${count !== 1 ? 's' : ''}`;
+    if (!profFeed) return;
+    const tab = this._profilePageState?.tab || 'posts';
+    const count = tab === 'media'
+      ? profFeed.querySelectorAll('.prof-media-thumb').length
+      : profFeed.querySelectorAll('.post-item').length;
+    if (count <= 0) return;   /* tab switch clears the stale count up-front */
+    const nouns = { posts: ['post', 'posts'], replies: ['reply', 'replies'],
+      media: ['image', 'images'], likes: ['like', 'likes'] };
+    const [one, many] = nouns[tab] || nouns.posts;
+    subtitle.textContent = `${count} ${count === 1 ? one : many}`;
   }
 
   /* Channel banner header subtitle = post count (mirrors the profile header,
@@ -12452,12 +12439,8 @@ class SayIt {
         fresh.forEach(p => { if (p.parentTx) replyMap.set(p.parentTx, (replyMap.get(p.parentTx)||0)+1); });
         fresh.forEach(p => {
           if (tab === 'media') {
-            /* For media tab, just append matching thumbs */
-            const resolveUrl = u => u.startsWith('ipfs://') ? 'https://ipfs.io/ipfs/' + u.slice(7)
-              : u.startsWith('arweave://') ? 'https://arweave.net/' + u.slice(10) : u;
-            const matches = [...p.display.matchAll(/https?:\/\/[^\s<>"{}|\\^[\]`]+|ipfs:\/\/\S+|arweave:\/\/\S+/g)];
-            matches.forEach(mm => {
-              const resolved = resolveUrl(mm[0]);
+            /* For media tab, append matching thumbs (same detection as paint) */
+            this._mediaImageUrls(p.display).forEach(resolved => {
               const img = document.createElement('img');
               img.src = resolved;
               img.className = 'prof-media-thumb';
@@ -12482,6 +12465,9 @@ class SayIt {
           if (p.reporter !== this.state.signerAddr) this.fetchOtherProfile(p.reporter);
         });
         feedEl.insertBefore(frag, footer);
+        /* More posts/thumbs landed — keep the header count in sync (it was
+           stale because it was only computed once after the initial load). */
+        this._updateProfileSubtitle(st.address);
       }
       /* Update footer based on outcome:
          - No more pages: show end marker briefly, then remove.
@@ -12517,21 +12503,30 @@ class SayIt {
     }
   }
 
+  /* Single source of truth for the profile Media tab. Returns every resolved
+     image URL in a post's text, using the SAME compiled host/path patterns as
+     utils.linkify — so the initial paint, the scroll-fill, and what actually
+     renders never diverge (previously three different host lists). */
+  _mediaImageUrls(text) {
+    const out = [];
+    const matches = (text || '').match(_LK_RE) || [];
+    for (const raw of matches) {
+      if (!/^(https?:\/\/|ipfs:\/\/|ar:\/\/|arweave:\/\/)/i.test(raw)) continue;
+      const u = raw.startsWith('ipfs://')    ? 'https://ipfs.io/ipfs/' + raw.slice(7)
+              : raw.startsWith('arweave://') ? 'https://arweave.net/'  + raw.slice(10)
+              : raw.startsWith('ar://')      ? 'https://arweave.net/'  + raw.slice(5)
+              : raw;
+      let isImg = _LK_IMG_RE.test(u) || _LK_IMG_DOMAINS.test(u) || u.includes('arweave.net/');
+      if (!isImg) { try { isImg = _LK_IMG_HOSTS.has(new URL(u).hostname); } catch { /* invalid URL */ } }
+      if (isImg) out.push(u);
+    }
+    return out;
+  }
+  _postHasMedia(text) { return this._mediaImageUrls(text).length > 0; }
+
   /* Pure tx filter — split out of loadProfileTab so fetchProfileMore can
      reuse it without re-fetching. Returns parsed post objects. */
   _filterProfileTxs(rawTxs, tab, address) {
-    const imgRe   = /\.(?:png|jpe?g|gif|webp|svg|bmp)(?:\?[^\s]*)?$/i;
-    const ipfsRe  = /^(ipfs:\/\/|https?:\/\/[^\/]*\/ipfs\/)/i;
-    const imgHosts = new Set(['imgur.com','i.imgur.com','i.ibb.co','postimg.cc',
-      'media.giphy.com','i.giphy.com','tenor.com','media.tenor.com',
-      'pbs.twimg.com','ipfs.io','gateway.pinata.cloud','cf-ipfs.com',
-      'cloudflare-ipfs.com','dweb.link']);
-    const isMediaUrl = url => {
-      if (imgRe.test(url)) return true;
-      if (ipfsRe.test(url)) return true;
-      if (url.includes('arweave.net/')) return true;
-      try { return imgHosts.has(new URL(url).hostname); } catch { return false; }
-    };
     const addrLow = address.toLowerCase();
     const posts = [];
     rawTxs.forEach(tx => {
@@ -12549,12 +12544,7 @@ class SayIt {
         const isReply = !!parsed.parentTx;
         if (tab === 'posts'   &&  isReply) return;
         if (tab === 'replies' && !isReply) return;
-        if (tab === 'media') {
-          const urls = [...(parsed.display || '').matchAll(/https?:\/\/[^\s<>"{}|\\^[\]`]+|ipfs:\/\/\S+|arweave:\/\/\S+/g)].map(mm => mm[0]);
-          const resolveUrl = u => u.startsWith('ipfs://') ? 'https://ipfs.io/ipfs/' + u.slice(7)
-            : u.startsWith('arweave://') ? 'https://arweave.net/' + u.slice(10) : u;
-          if (!urls.some(u => isMediaUrl(resolveUrl(u)))) return;
-        }
+        if (tab === 'media' && !this._postHasMedia(parsed.display)) return;
         posts.push(parsed);
       } catch { /* skip */ }
     });
