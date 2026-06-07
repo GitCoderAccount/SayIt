@@ -2789,7 +2789,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260606-89';
+const SW_CACHE_VER = '20260606-90';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -5760,6 +5760,46 @@ class SayIt {
     }
   }
 
+  /* The user-data localStorage keys that Export/Import round-trips (settings,
+     mutes, lists, communities). Caches (posts/IDB) and the wallet are excluded. */
+  get _exportableKeys() { return [SETTINGS_KEY, MUTE_KEY, LISTS_KEY, COMMUNITIES_KEY]; }
+
+  _exportData() {
+    const data = {};
+    this._exportableKeys.forEach(k => { const v = localStorage.getItem(k); if (v != null) data[k] = v; });
+    const payload = { app: 'SayIt', version: 1, exportedAt: new Date().toISOString(), data };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url  = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'sayit-backup.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    utils.toast('Backup downloaded ✓');
+  }
+
+  _importData(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(reader.result);
+        if (!parsed || parsed.app !== 'SayIt' || !parsed.data || typeof parsed.data !== 'object') {
+          throw new Error('not a SayIt backup');
+        }
+        let n = 0;
+        for (const [k, v] of Object.entries(parsed.data)) {
+          if (!this._exportableKeys.includes(k) || typeof v !== 'string') continue;
+          try { JSON.parse(v); } catch { continue; }   /* value must be valid JSON */
+          localStorage.setItem(k, v); n++;
+        }
+        if (!n) { utils.toast('Nothing to import from this file'); return; }
+        utils.toast(`Imported ${n} item${n !== 1 ? 's' : ''} — reloading…`);
+        setTimeout(() => location.reload(), 1200);
+      } catch { utils.toast('Invalid backup file'); }
+    };
+    reader.onerror = () => utils.toast('Could not read file');
+    reader.readAsText(file);
+  }
+
   /* Apply the chosen theme by toggling data-theme on <html> (the [data-theme]
      CSS-var overrides do the rest). Default 'dark' = no attribute. */
   _applyTheme(theme) {
@@ -6215,6 +6255,21 @@ class SayIt {
           </div>
           <button class="settings-btn danger" id="set-clear-pending">Clear pending</button>
         </div>
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Export data</strong>
+            <span>Download your settings, muted accounts, lists &amp; communities as a JSON backup. (Your wallet/seed remains your only identity backup.)</span>
+          </div>
+          <button class="settings-btn" id="set-export">Export</button>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Import data</strong>
+            <span>Restore settings/mutes/lists/communities from a previously exported file</span>
+          </div>
+          <button class="settings-btn" id="set-import">Import</button>
+          <input type="file" id="set-import-file" accept="application/json,.json" style="display:none">
+        </div>
       </div>
 
       <!-- About -->
@@ -6320,6 +6375,14 @@ class SayIt {
       this._readProvider = null;   /* rebuilt on next read with the new RPC URL */
       this._saveSettings(s);
       utils.toast('API settings saved ✓');
+    });
+    /* Export / Import data backup. */
+    g('set-export')?.addEventListener('click', () => this._exportData());
+    g('set-import')?.addEventListener('click', () => g('set-import-file')?.click());
+    g('set-import-file')?.addEventListener('change', e => {
+      const f = e.target.files?.[0];
+      if (f) this._importData(f);
+      e.target.value = '';
     });
     /* Theme — apply immediately on change. */
     g('set-theme')?.addEventListener('change', () => {

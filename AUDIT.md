@@ -23,7 +23,7 @@ Effort: S/M/L. Status: `[ ]` todo · `[x]` done · `[~]` partial · `[-]` skippe
 
 - [~] **Theme setting** — Dark/Dim added (Settings → Appearance, no-flash on load). Full Light deferred per owner.
 - [x] **Content/feed filters** — Settings → Content & Feed: hide reposts/replies/polls/non-text, applied in renderFeed. — hide reposts/replies/polls/binary txs, applied in `renderFeed()`. *(M · settings)*
-- [ ] **Export / Import app data** — back up mutes/lists/communities/history/settings to JSON. *(M · settings)*
+- [x] **Export / Import app data** — Settings → Cache & Storage: download/restore settings/mutes/lists/communities as JSON. — back up mutes/lists/communities/history/settings to JSON. *(M · settings)*
 - [x] **JSON-RPC node URL setting** — added to API Configuration; nulls _readProvider on save. — expose `s.rpcUrl`; null `_readProvider` on save. *(S · settings)*
 - [ ] **Mobile header search is a dead button** — channel/profile search focus a hidden sidebar input on phones; route narrow viewports to inline search. *(M · mobile)*
 - [x] **Bottom nav ignores safe-area insets** — added `viewport-fit=cover` + `env(safe-area-inset-bottom)` to mobile-nav/fab/connect. — add `viewport-fit=cover` + `env(safe-area-inset-bottom)`. *(S · mobile)*
