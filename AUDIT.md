@@ -68,7 +68,7 @@ Effort: S/M/L. Status: `[ ]` todo · `[x]` done · `[~]` partial · `[-]` skippe
 - [ ] Avoid full-table IDB scans / redundant work on hot paths *(M · perf)*
 - [ ] Search-index partial-prune corruption (prune by whole-post groups) *(M · correctness)*
 - [ ] Robustness batch (`_scanFollowers` target check, history-open address guard, `pruneIfStale` promise, gas-estimate fallback) *(M · correctness/wallet)*
-- [ ] Parser defense-in-depth (`resolveIPFS`→`safeUrl`, hex-validate `LIKE:` target, prefer delegated listeners over inline onclick) *(S · security)*
+- [~] Parser defense-in-depth — NFT metadata `image` now routed `resolveIPFS`→`safeUrl` (blocks `javascript:`/`data:`); reaction targets hex-validated in `parseTxs` (like/unlike→64-hex, follow/unfollow→40-hex; malformed control txs dropped). Inline-onclick→delegated-listener conversion deferred — broad, and args are already `utils.safe`-escaped so there's no XSS gap. *(S · security)*
 - [ ] Misc dead-code cleanup (dead `.explore-search-wrap` CSS, `has-custom-cover`, redundant `feed-tabs` hide, NFT sub-form reset, `alt`, new-posts-banner `aria-live`, emoji-picker z-index) *(S · polish)*
 
 ---
