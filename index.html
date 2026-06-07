@@ -2761,7 +2761,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260606-83';
+const SW_CACHE_VER = '20260606-84';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -8034,6 +8034,11 @@ class SayIt {
   async toggleFollow(address, btn) {
     if (!this.signer) { utils.toast('Connect wallet to follow'); return; }
     const addr = address.toLowerCase();
+    /* Address-level guard: the passed btn is disabled below, but the popup
+       calls this with btn=null and the same address can have several visible
+       buttons — guard by address so a double-tap can't double-fire. */
+    if (!this._reactionBusy('follow:' + addr)) return;
+    try {
     const isFollowing = this.state.following.has(addr);
     /* Send FOLLOW/UNFOLLOW TO the target address (not self-send).
        This lets the target count followers by scanning their received txs.
@@ -8075,6 +8080,9 @@ class SayIt {
         btn.textContent = isFollowing ? 'Following' : 'Follow';
         btn.className   = isFollowing ? 'prof-following-btn' : 'prof-follow-btn';
       }
+    }
+    } finally {
+      this._pendingTx.delete('follow:' + addr);
     }
   }
 
@@ -10117,6 +10125,15 @@ class SayIt {
       const isOffline = !navigator.onLine || msg.includes('network') ||
         msg.includes('timeout') || msg.includes('fetch');
       if (isOffline) {
+        /* Don't queue reactions/control txs (like/unlike/follow/bookmark/vote/
+           note/profile) — they're fire-and-forget, and a stale retry after the
+           original actually mined would duplicate the tx / double gas. Only
+           real posts/replies/quotes/polls are worth re-sending. */
+        const isReaction = [LIKE_PREFIX, UNLIKE_PREFIX, FOLLOW_PREFIX, UNFOLLOW_PREFIX,
+          BOOKMARK_PREFIX, UNBOOKMARK_PREFIX, VOTE_PREFIX, NOTERATE_PREFIX,
+          PROFILE_PREFIX, TOKEN_PROFILE_PREFIX, NOTE_PREFIX, LC_SYNC_PREFIX]
+          .some(p => body.startsWith(p));
+        if (isReaction) { utils.toast('Network error — please try again'); return false; }
         const queueId = `pq_${Date.now()}_${Math.random().toString(36).slice(2)}`;
         const queued = {
           queueId, content, parentTx, toAddress: toAddress || this.state.channel,
@@ -10190,42 +10207,57 @@ class SayIt {
   }
 
   /* ── Like ───────────────────────────────────────────────────────────── */
+  /* In-flight reaction guard: a second tap on like/bookmark/follow/repost
+     while the first tx is still in the wallet round-trip would read the
+     already-flipped optimistic state and fire the OPPOSITE action (e.g. LIKE
+     then UNLIKE), wasting gas. _reactionBusy(key) returns true (and reserves
+     the key) if free, false if already in flight. */
+  _reactionBusy(key) {
+    this._pendingTx ??= new Set();
+    if (this._pendingTx.has(key)) return false;
+    this._pendingTx.add(key);
+    return true;
+  }
+
   async toggleLike(post, itemEl) {
     if (!this.signer) { utils.toast('Connect wallet to like posts'); return; }
     const hash = post.txHash;
-    const btn  = itemEl.querySelector('[data-action="like"]');
-    const icon = btn?.querySelector('.act-icon');
-
-    const heartFull  = this.icon('ic-heart-full');
-    const heartEmpty = this.icon('ic-heart-empty');
-
-    const destination = post.to || this.state.channel;
-    if (this.state.likes.has(hash)) {
-      /* Toggle off — publish UNLIKE so the change persists across sessions.
-         Optimistic UI: remove immediately, revert on tx failure. */
-      this.state.likes.delete(hash);
-      if (btn)  btn.classList.remove('liked');
-      if (icon) icon.innerHTML = heartEmpty;
-      const ok = await this.publish(UNLIKE_PREFIX + hash, null, destination);
-      if (!ok) {
-        this.state.likes.add(hash);
-        if (btn)  btn.classList.add('liked');
-        if (icon) icon.innerHTML = heartFull;
-      } else {
-        utils.toast('Like removed on-chain');
-      }
-    } else {
-      this.state.likes.add(hash);
-      if (btn)  btn.classList.add('liked');
-      if (icon) icon.innerHTML = heartFull;
-      const ok = await this.publish(LIKE_PREFIX + hash, null, destination);
-      if (!ok) {
+    if (!this._reactionBusy('like:' + hash)) return;
+    try {
+      const btn  = itemEl.querySelector('[data-action="like"]');
+      const icon = btn?.querySelector('.act-icon');
+      const heartFull  = this.icon('ic-heart-full');
+      const heartEmpty = this.icon('ic-heart-empty');
+      const destination = post.to || this.state.channel;
+      if (this.state.likes.has(hash)) {
+        /* Toggle off — publish UNLIKE so the change persists across sessions.
+           Optimistic UI: remove immediately, revert on tx failure. */
         this.state.likes.delete(hash);
         if (btn)  btn.classList.remove('liked');
         if (icon) icon.innerHTML = heartEmpty;
+        const ok = await this.publish(UNLIKE_PREFIX + hash, null, destination);
+        if (!ok) {
+          this.state.likes.add(hash);
+          if (btn)  btn.classList.add('liked');
+          if (icon) icon.innerHTML = heartFull;
+        } else {
+          utils.toast('Like removed on-chain');
+        }
       } else {
-        utils.toast('Liked on-chain');
+        this.state.likes.add(hash);
+        if (btn)  btn.classList.add('liked');
+        if (icon) icon.innerHTML = heartFull;
+        const ok = await this.publish(LIKE_PREFIX + hash, null, destination);
+        if (!ok) {
+          this.state.likes.delete(hash);
+          if (btn)  btn.classList.remove('liked');
+          if (icon) icon.innerHTML = heartEmpty;
+        } else {
+          utils.toast('Liked on-chain');
+        }
       }
+    } finally {
+      this._pendingTx.delete('like:' + hash);
     }
   }
 
@@ -10233,37 +10265,40 @@ class SayIt {
   async toggleBookmark(post, itemEl) {
     if (!this.signer) { utils.toast('Connect wallet to bookmark posts'); return; }
     const hash = post.txHash;
-    const btn  = itemEl.querySelector('[data-action="bookmark"]');
-    const icon = btn?.querySelector('.act-icon');
-
-    const bmFull  = this.icon('ic-bookmark-full');
-    const bmEmpty = this.icon('ic-bookmark-empty');
-
-    if (this.state.bookmarks.has(hash)) {
-      /* Toggle off — publish UNBOOKMARK so the change persists. */
-      this.state.bookmarks.delete(hash);
-      if (btn)  btn.classList.remove('bookmarked');
-      if (icon) icon.innerHTML = bmEmpty;
-      const ok = await this.publish(UNBOOKMARK_PREFIX + hash, null, this.state.signerAddr);
-      if (!ok) {
-        this.state.bookmarks.add(hash);
-        if (btn)  btn.classList.add('bookmarked');
-        if (icon) icon.innerHTML = bmFull;
-      } else {
-        utils.toast('Bookmark removed on-chain');
-      }
-    } else {
-      this.state.bookmarks.add(hash);
-      if (btn)  btn.classList.add('bookmarked');
-      if (icon) icon.innerHTML = bmFull;
-      const ok = await this.publish(BOOKMARK_PREFIX + hash, null, this.state.signerAddr);
-      if (!ok) {
+    if (!this._reactionBusy('bookmark:' + hash)) return;
+    try {
+      const btn  = itemEl.querySelector('[data-action="bookmark"]');
+      const icon = btn?.querySelector('.act-icon');
+      const bmFull  = this.icon('ic-bookmark-full');
+      const bmEmpty = this.icon('ic-bookmark-empty');
+      if (this.state.bookmarks.has(hash)) {
+        /* Toggle off — publish UNBOOKMARK so the change persists. */
         this.state.bookmarks.delete(hash);
         if (btn)  btn.classList.remove('bookmarked');
         if (icon) icon.innerHTML = bmEmpty;
+        const ok = await this.publish(UNBOOKMARK_PREFIX + hash, null, this.state.signerAddr);
+        if (!ok) {
+          this.state.bookmarks.add(hash);
+          if (btn)  btn.classList.add('bookmarked');
+          if (icon) icon.innerHTML = bmFull;
+        } else {
+          utils.toast('Bookmark removed on-chain');
+        }
       } else {
-        utils.toast('Bookmarked on-chain');
+        this.state.bookmarks.add(hash);
+        if (btn)  btn.classList.add('bookmarked');
+        if (icon) icon.innerHTML = bmFull;
+        const ok = await this.publish(BOOKMARK_PREFIX + hash, null, this.state.signerAddr);
+        if (!ok) {
+          this.state.bookmarks.delete(hash);
+          if (btn)  btn.classList.remove('bookmarked');
+          if (icon) icon.innerHTML = bmEmpty;
+        } else {
+          utils.toast('Bookmarked on-chain');
+        }
       }
+    } finally {
+      this._pendingTx.delete('bookmark:' + hash);
     }
   }
 
@@ -10327,8 +10362,13 @@ class SayIt {
       menu.remove();
       /* Instant repost — no text, no modal */
       if (!this.signer) { utils.toast('Connect wallet to repost'); return; }
-      const ok = await this.publish(`REPOST:${post.txHash}`);
-      if (ok) utils.toast('Reposted');
+      if (!this._reactionBusy('repost:' + post.txHash)) return;
+      try {
+        const ok = await this.publish(`REPOST:${post.txHash}`);
+        if (ok) utils.toast('Reposted');
+      } finally {
+        this._pendingTx.delete('repost:' + post.txHash);
+      }
     };
     menu.querySelector('#rc-quote').onclick = e2 => {
       e2.stopPropagation();
