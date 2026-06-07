@@ -24,14 +24,14 @@ Effort: S/M/L. Status: `[ ]` todo · `[x]` done · `[~]` partial · `[-]` skippe
 - [~] **Theme setting** — Dark/Dim added (Settings → Appearance, no-flash on load). Full Light deferred per owner.
 - [x] **Content/feed filters** — Settings → Content & Feed: hide reposts/replies/polls/non-text, applied in renderFeed. — hide reposts/replies/polls/binary txs, applied in `renderFeed()`. *(M · settings)*
 - [x] **Export / Import app data** — Settings → Cache & Storage: download/restore settings/mutes/lists/communities as JSON. — back up mutes/lists/communities/history/settings to JSON. *(M · settings)*
-- [x] **JSON-RPC node URL setting** — added to API Configuration; nulls _readProvider on save. — expose `s.rpcUrl`; null `_readProvider` on save. *(S · settings)*
+- [-] **JSON-RPC node URL setting** — removed per owner (reads use the default; the wallet handles the user's network).
 - [ ] **Mobile header search is a dead button** — channel/profile search focus a hidden sidebar input on phones; route narrow viewports to inline search. *(M · mobile)*
 - [x] **Bottom nav ignores safe-area insets** — added `viewport-fit=cover` + `env(safe-area-inset-bottom)` to mobile-nav/fab/connect. — add `viewport-fit=cover` + `env(safe-area-inset-bottom)`. *(S · mobile)*
 - [x] **Long error toasts clipped on mobile** — toast now wraps (`white-space:normal`). — allow wrapping (`white-space:normal`). *(S · mobile)*
 - [x] **Toasts/loading invisible to screen readers** — added `role=status aria-live` to #toast and #loading-overlay. — add `role="status" aria-live`. *(S · a11y)*
 - [ ] **Post menu / emoji / repost popups mouse-only** — roles, keyboard nav, Escape, ARIA on triggers. *(M · a11y)*
 - [x] **Like/reply/repost notifications open the post** — vote/like/reply/repost now openThreadByHash(target); message/follow keep the tx link. — call `openThreadByHash(n.target)`. *(S · notifications)*
-- [ ] **Notification badge undercounts engagement** — fold engagement/poll counts in (or fix the misleading comment). *(M · notifications)*
+- [x] **Notification badge undercounts engagement** — fold engagement (likes/replies/reposts on your posts) into the badge; fixed the misleading comment. — fold engagement/poll counts in (or fix the misleading comment). *(M · notifications)*
 - [x] **Following feed filter** — keep only the followed user's own posts (reporter===addr) to an allowed channel. — filter `to===channel` and `from===addr`. *(M · correctness)*
 - [x] **Persistent wrong-network bar** — shows while connected on a non-369 chain, with a Switch button; cleared on disconnect/reconnect. — show a pill while `_wrongChain`; clear it on disconnect/reconnect. *(M · mobile/wallet)*
 - [x] **Explore Follow button breaks after click** — toggle `.following` instead of replacing className; re-sync includes data-explore-follow. — `toggleFollow` overwrites `className`; re-sync misses `data-explore-follow`. *(S · explore)*

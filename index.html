@@ -2806,7 +2806,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260606-91';
+const SW_CACHE_VER = '20260606-92';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -6183,15 +6183,6 @@ class SayIt {
             value="${utils.safe(s.backupApiUrl || '')}"
             placeholder="https://…">
         </div>
-        <div class="settings-row" style="flex-direction:column;align-items:flex-start;margin-top:12px">
-          <div class="settings-row-label">
-            <strong>JSON-RPC node URL</strong>
-            <span>Used to read on-chain data (token owner, block timestamps). Switch if rpc.pulsechain.com is down.</span>
-          </div>
-          <input class="settings-input" id="set-rpc-url"
-            value="${utils.safe(s.rpcUrl || '')}"
-            placeholder="https://rpc.pulsechain.com">
-        </div>
         <div class="settings-row" style="margin-top:12px">
           <button class="settings-btn primary" id="set-test-api">Test Connection</button>
           <button class="settings-btn" id="set-save-api">Save API Settings</button>
@@ -6382,14 +6373,8 @@ class SayIt {
       if (rawBackup && !isValidUrl(rawBackup)) {
         utils.toast('Backup API URL is not a valid URL'); return;
       }
-      const rawRpc = g('set-rpc-url')?.value.trim() || '';
-      if (rawRpc && !isValidUrl(rawRpc)) {
-        utils.toast('RPC URL is not a valid URL'); return;
-      }
       s.apiUrl       = rawPrimary || 'https://api.scan.pulsechain.com/api';
       s.backupApiUrl = rawBackup;
-      s.rpcUrl       = rawRpc;
-      this._readProvider = null;   /* rebuilt on next read with the new RPC URL */
       this._saveSettings(s);
       utils.toast('API settings saved ✓');
     });
@@ -6842,15 +6827,17 @@ class SayIt {
     const lastCheck = parseInt(utils.safeLS.get(LAST_CHECK_KEY, '0'), 10);
     try {
       const raw   = await this.apiFetch(this.state.signerAddr, 1);
-      const count = raw.filter(tx => {
+      /* Inbound txs sent TO me, newer than last check. In practice this is
+         follows (sent to the target) and direct messages — likes/replies/
+         reposts are addressed to the channel, not me, so they're counted
+         separately below via the engagement accumulator. */
+      let count = raw.filter(tx => {
         if (tx.to?.toLowerCase()   !== this.state.signerAddr) return false;
         if (tx.from?.toLowerCase() === this.state.signerAddr) return false;
         if (!tx.input || tx.input === '0x') return false;
         if (Number(tx.timeStamp) * 1000 <= lastCheck) return false;
         try {
           const text = ethers.utils.toUtf8String(tx.input).trim();
-          /* Include: likes, follows, replies, reposts, direct messages */
-          /* Exclude: profile saves, bookmarks, unfollows */
           if (text.startsWith(PROFILE_PREFIX)) return false;
           if (text.startsWith(BOOKMARK_PREFIX)) return false;
           if (text.startsWith(UNBOOKMARK_PREFIX)) return false;
@@ -6859,6 +6846,12 @@ class SayIt {
           return text.length > 0;
         } catch { return false; }
       }).length;
+      /* Likes/replies/reposts on my posts (gathered from feed scans). Disjoint
+         from the inbound set above (those are channel txs), so no double-count. */
+      try {
+        const eng = await this._engagementNotifs();
+        count += eng.filter(e => new Date(e.timestamp).getTime() > lastCheck).length;
+      } catch { /* engagement is best-effort */ }
       this.setNotifBadge(count);
     } catch { /* silent */ }
   }
