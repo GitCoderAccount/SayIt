@@ -2822,7 +2822,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260607-104';
+const SW_CACHE_VER = '20260607-105';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -8775,13 +8775,13 @@ class SayIt {
       if (tokenUri.startsWith('data:application/json;base64,')) {
         try {
           const meta = JSON.parse(atob(tokenUri.slice('data:application/json;base64,'.length)));
-          imageUrl = utils.resolveIPFS(meta.image);
+          imageUrl = utils.safeUrl(utils.resolveIPFS(meta.image)) || null;
         } catch { status.textContent = '✗ Could not parse metadata'; return; }
       } else {
         try {
           const res  = await fetch(utils.resolveIPFS(tokenUri));
           const meta = await res.json();
-          imageUrl = utils.resolveIPFS(meta.image);
+          imageUrl = utils.safeUrl(utils.resolveIPFS(meta.image)) || null;
         } catch { status.textContent = '✗ Could not fetch metadata'; return; }
       }
       if (!imageUrl) { status.textContent = '✗ No image found'; return; }
@@ -9035,6 +9035,14 @@ class SayIt {
         postType = 'follow';
         reactionTarget = raw.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
       }
+
+      /* Defense-in-depth: a reaction's target is sliced raw from chain data, so
+         validate its shape before it can pollute engagement/notifications. A
+         like/unlike must target a 64-hex tx hash; a follow/unfollow a 40-hex
+         address. Malformed control txs are dropped (they're never feed posts).
+         (REPLY_TO/REPOST targets below are already regex-validated.) */
+      if ((postType === 'like' || postType === 'unlike') && !/^0x[a-f0-9]{64}$/.test(reactionTarget)) return acc;
+      if ((postType === 'follow' || postType === 'unfollow') && !/^0x[a-f0-9]{40}$/.test(reactionTarget)) return acc;
 
       /* Mode-based address filtering */
       let direction = null;
