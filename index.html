@@ -2764,7 +2764,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260606-86';
+const SW_CACHE_VER = '20260606-87';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -4511,6 +4511,12 @@ class SayIt {
              repost/reply handling (mode 'main' so it sits in the home feed). */
           const parsed = this._parsePostTx(tx, { mode: 'main' });
           if (!parsed) return;
+          /* Only the followed user's OWN posts to an allowed channel — not txs
+             where they're merely the recipient (authored by someone else), and
+             not their posts to unrelated channels. _parsePostTx attributes by
+             tx.from, so guard both. */
+          if (parsed.reporter !== addr) return;
+          if (parsed.to && parsed.to !== MAIN_CHANNEL && parsed.to !== addr) return;
           known.add(hash);
           newPosts.push(parsed);
         });
@@ -5048,8 +5054,11 @@ class SayIt {
         const name = prof?.username ? utils.safe(prof.username) : this.trunc(n.from);
         const label = labels[n.type] || 'interacted with you';
         this.fetchOtherProfile(n.from);
-        /* Votes open the poll thread; others open the tx on the explorer. */
-        const clickAttr = n.type === 'vote'
+        /* Engagement on a known post (vote/like/reply/repost) opens that post's
+           thread in-app; types with no post target (message/follow) fall back
+           to the tx on the explorer. */
+        const opensThread = n.target && ['vote', 'like', 'reply', 'repost'].includes(n.type);
+        const clickAttr = opensThread
           ? `onclick="if(event.target.closest('.notif-pop'))return;pulse.openThreadByHash('${utils.safe(n.target)}')"`
           : `onclick="if(event.target.closest('.notif-pop'))return;window.open('${txLink}','_blank','noopener,noreferrer')"`;
         return `
@@ -8055,12 +8064,14 @@ class SayIt {
     const ok = await this.publish(prefix + addr, null, addr);
     if (btn) btn.disabled = false;
     if (ok) {
+      /* Toggle the .following modifier — don't replace className, which stripped
+         the base class off non-profile buttons (e.g. .explore-follow-btn). */
       if (isFollowing) {
         this.state.following.delete(addr);
-        if (btn) { btn.textContent = 'Follow'; btn.className = 'prof-follow-btn'; }
+        if (btn) { btn.textContent = 'Follow'; btn.classList.remove('following'); }
       } else {
         this.state.following.add(addr);
-        if (btn) { btn.textContent = 'Following'; btn.className = 'prof-following-btn'; }
+        if (btn) { btn.textContent = 'Following'; btn.classList.add('following'); }
       }
       this._showFollowingCount();
       /* A follow/unfollow changes follower lists — drop cached scans so the
@@ -8071,17 +8082,17 @@ class SayIt {
          visible follow buttons for this address. */
       setTimeout(() => {
         this.renderWhoToFollow?.();
-        document.querySelectorAll(`[data-follow-addr="${addr}"]`).forEach(b => {
+        document.querySelectorAll(`[data-follow-addr="${addr}"], [data-explore-follow="${addr}"]`).forEach(b => {
           const following = this.state.following.has(addr);
           b.textContent = following ? 'Following' : 'Follow';
-          b.className   = following ? 'prof-following-btn following' : 'prof-follow-btn';
+          b.classList.toggle('following', following);
         });
       }, 1200);
     } else {
-      /* Revert on failure — restore original text/class */
+      /* Revert on failure — restore original text/state */
       if (btn) {
         btn.textContent = isFollowing ? 'Following' : 'Follow';
-        btn.className   = isFollowing ? 'prof-following-btn' : 'prof-follow-btn';
+        btn.classList.toggle('following', isFollowing);
       }
     }
     } finally {
@@ -10231,6 +10242,9 @@ class SayIt {
       const icon = btn?.querySelector('.act-icon');
       const heartFull  = this.icon('ic-heart-full');
       const heartEmpty = this.icon('ic-heart-empty');
+      /* Optimistic like count — bump the .act-count immediately, revert on fail. */
+      const countEl = btn?.querySelector('.act-count');
+      const bump = d => { if (!countEl) return; const c = (parseInt(countEl.textContent, 10) || 0) + d; countEl.textContent = c > 0 ? String(c) : ''; };
       const destination = post.to || this.state.channel;
       if (this.state.likes.has(hash)) {
         /* Toggle off — publish UNLIKE so the change persists across sessions.
@@ -10238,11 +10252,13 @@ class SayIt {
         this.state.likes.delete(hash);
         if (btn)  btn.classList.remove('liked');
         if (icon) icon.innerHTML = heartEmpty;
+        bump(-1);
         const ok = await this.publish(UNLIKE_PREFIX + hash, null, destination);
         if (!ok) {
           this.state.likes.add(hash);
           if (btn)  btn.classList.add('liked');
           if (icon) icon.innerHTML = heartFull;
+          bump(1);
         } else {
           utils.toast('Like removed on-chain');
         }
@@ -10250,11 +10266,13 @@ class SayIt {
         this.state.likes.add(hash);
         if (btn)  btn.classList.add('liked');
         if (icon) icon.innerHTML = heartFull;
+        bump(1);
         const ok = await this.publish(LIKE_PREFIX + hash, null, destination);
         if (!ok) {
           this.state.likes.delete(hash);
           if (btn)  btn.classList.remove('liked');
           if (icon) icon.innerHTML = heartEmpty;
+          bump(-1);
         } else {
           utils.toast('Liked on-chain');
         }
