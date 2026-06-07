@@ -2808,7 +2808,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260607-95';
+const SW_CACHE_VER = '20260607-96';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -5100,7 +5100,7 @@ class SayIt {
             </div>`;
         }
         const prof = this.state.profCache[n.from];
-        const pic  = utils.safe(prof?.picUrl || 'image1.jpeg');
+        const pic  = utils.safe(utils.safeUrl(prof?.picUrl) || 'image1.jpeg');
         const name = prof?.username ? utils.safe(prof.username) : this.trunc(n.from);
         const label = labels[n.type] || 'interacted with you';
         this.fetchOtherProfile(n.from);
@@ -5522,7 +5522,7 @@ class SayIt {
     return ranked.map(([addr, count]) => {
       const c = this.state.profCache[addr];
       const name = c?.username ? utils.safe(c.username) : this.trunc(addr);
-      const pic  = utils.safe(c?.picUrl || 'image1.jpeg');
+      const pic  = utils.safe(utils.safeUrl(c?.picUrl) || 'image1.jpeg');
       const meta = c?.bio ? utils.safe(c.bio.slice(0, 80)) : `${count} post${count > 1 ? 's' : ''} in feed`;
       const isFollowing = this.state.following.has(addr);
       const followBtn = (me && addr !== me)
@@ -5563,7 +5563,7 @@ class SayIt {
       const c = this.state.profCache[addr];
       const hist = (this.state.channelHistory || []).find(h => h.address?.toLowerCase() === addr);
       const name = c?.username ? utils.safe(c.username) : utils.safe(hist?.label || this.trunc(addr));
-      const pic  = utils.safe(c?.picUrl || hist?.picUrl || 'image1.jpeg');
+      const pic  = utils.safe(utils.safeUrl(c?.picUrl || hist?.picUrl) || 'image1.jpeg');
       const meta = count > 0 ? `${count} post${count > 1 ? 's' : ''} in feed` : utils.safe(this.trunc(addr));
       return `<div class="explore-row" role="button" tabindex="0" data-explore-channel="${utils.safe(addr)}">
         <img src="${pic}" class="explore-avatar" onerror="this.src='image1.jpeg'" alt="">
@@ -5630,6 +5630,9 @@ class SayIt {
 
   goBookmarks() {
     if (!this.signer) { utils.toast('Connect wallet to view Bookmarks'); return; }
+    /* Reset the per-session "tried and failed" set on each open so a transient
+       network blip doesn't permanently mark a bookmark as unloadable. */
+    this._bkFetchAttempted = new Set();
     this._updateTitle('Bookmarks');
     this._setRoute('/bookmarks');
     this.setNav('nav-bookmarks', null);
@@ -6340,7 +6343,7 @@ class SayIt {
     return muted.map(addr => {
       const prof = this.state.profCache[addr];
       const name = prof?.username ? utils.safe(prof.username) : this.trunc(addr);
-      const pic  = utils.safe(prof?.picUrl || 'image1.jpeg');
+      const pic  = utils.safe(utils.safeUrl(prof?.picUrl) || 'image1.jpeg');
       return `
         <div class="settings-row" style="align-items:center" data-muted-addr="${utils.safe(addr)}">
           <div style="display:flex;align-items:center;gap:12px;flex:1;min-width:0">
@@ -8007,7 +8010,7 @@ class SayIt {
   _renderFollowRow(addr) {
     const c           = this.state.profCache[addr] || {};
     const name        = c.username ? utils.safe(c.username) : this.trunc(addr);
-    const pic         = utils.safe(c.picUrl || 'image1.jpeg');
+    const pic         = utils.safe(utils.safeUrl(c.picUrl) || 'image1.jpeg');
     const isFollowing = this.state.following.has(addr);
     const isSelf      = addr === this.state.signerAddr?.toLowerCase();
     const followBtn   = (!isSelf && this.signer)
@@ -10624,7 +10627,7 @@ class SayIt {
     /* Build a full quoted card in the modal */
     const c       = this.state.profCache[post.reporter];
     const name    = c?.username ? utils.safe(c.username) : this.trunc(post.reporter);
-    const pic     = utils.safe(c?.picUrl || 'image1.jpeg');
+    const pic     = utils.safe(utils.safeUrl(c?.picUrl) || 'image1.jpeg');
     const preview = utils.safe(post.display.slice(0, 200) + (post.display.length > 200 ? '…' : ''));
     const relT    = this.relTime(post.timestamp);
     this.g('repost-quote').innerHTML = `
@@ -10952,7 +10955,7 @@ class SayIt {
         </div>
         <div class="thread-reply-to">Replying to <span>@${utils.safe(replyingToName)}</span></div>
         <div class="thread-compose">
-          <img src="${utils.safe(this.state.profile.picUrl || 'image1.jpeg')}"
+          <img src="${utils.safe(utils.safeUrl(this.state.profile.picUrl) || 'image1.jpeg')}"
             class="compose-avatar" onerror="this.src='image1.jpeg'">
           <div style="flex:1">
             <textarea class="auto-textarea" id="thread-page-input"
@@ -11686,7 +11689,8 @@ class SayIt {
   _updateChannelSubtitle() {
     const sub = this.g('cb-header-sub');
     if (!sub) return;
-    if (this.state.mode !== 'custom') { sub.textContent = ''; return; }
+    /* Both channel views ('custom') and My Channel ('self') show the banner. */
+    if (this.state.mode !== 'custom' && this.state.mode !== 'self') { sub.textContent = ''; return; }
     const feed = this.g('feed');
     const count = feed ? feed.querySelectorAll('.post-item, .post-placeholder').length : 0;
     sub.textContent = count > 0 ? `${count} post${count !== 1 ? 's' : ''}` : '';
@@ -11733,7 +11737,7 @@ class SayIt {
             if (placeholder) {
               const c2   = this.state.profCache[orig.reporter] || {};
               const name = c2.username ? utils.safe(c2.username) : this.trunc(orig.reporter);
-              const pic  = utils.safe(c2.picUrl || 'image1.jpeg');
+              const pic  = utils.safe(utils.safeUrl(c2.picUrl) || 'image1.jpeg');
               const body = utils.safe(orig.display.slice(0, 200) + (orig.display.length > 200 ? '…' : ''));
               placeholder.className = 'repost-card';
               placeholder.removeAttribute('data-fetch-quote');
@@ -11801,7 +11805,7 @@ class SayIt {
       : queued.content;
     el.innerHTML = `
       <div style="padding:12px 16px;display:flex;gap:10px;align-items:flex-start">
-        <img src="${utils.safe(this.state.profile.picUrl || 'image1.jpeg')}" style="width:40px;height:40px;border-radius:50%;flex-shrink:0;object-fit:cover" onerror="this.src='image1.jpeg'">
+        <img src="${utils.safe(utils.safeUrl(this.state.profile.picUrl) || 'image1.jpeg')}" style="width:40px;height:40px;border-radius:50%;flex-shrink:0;object-fit:cover" onerror="this.src='image1.jpeg'">
         <div style="flex:1;min-width:0">
           <div style="font-size:13px;color:var(--primary-lt);margin-bottom:4px">
             ⌛ Publishing… <span style="color:var(--muted);font-size:12px">(saved offline)</span>
@@ -12494,7 +12498,7 @@ class SayIt {
     const isFollowing = this.state.following.has(address);
     const name = prof.username ? utils.safe(prof.username) : this.trunc(address);
     const handle = '@' + this.trunc(address);
-    const pic = utils.safe(prof.picUrl || 'image1.jpeg');
+    const pic = utils.safe(utils.safeUrl(prof.picUrl) || 'image1.jpeg');
     const bio = prof.bio ? utils.safe(prof.bio) : '';
     const hasProfile = !!prof.username;
     const verifiedSvg = hasProfile
@@ -12879,7 +12883,7 @@ class SayIt {
       ? list.members.map(addr => {
           const prof = this.state.profCache[addr];
           const name = prof?.username ? utils.safe(prof.username) : this.trunc(addr);
-          const pic  = utils.safe(prof?.picUrl || 'image1.jpeg');
+          const pic  = utils.safe(utils.safeUrl(prof?.picUrl) || 'image1.jpeg');
           return `<div class="settings-row" style="align-items:center">
             <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">
               <img src="${pic}" onerror="this.src='image1.jpeg'" style="width:32px;height:32px;border-radius:50%;object-fit:cover;flex-shrink:0">
