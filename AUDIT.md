@@ -22,9 +22,9 @@ Effort: S/M/L. Status: `[ ]` todo · `[x]` done · `[~]` partial · `[-]` skippe
 ## P1 — Important (UI/UX + high-value features/settings)
 
 - [ ] **Theme setting (Dark / Dim / Light)** — `[data-theme]` CSS-var overrides; persist `s.theme`. *(M · settings)*
-- [ ] **Content/feed filters** — hide reposts/replies/polls/binary txs, applied in `renderFeed()`. *(M · settings)*
+- [x] **Content/feed filters** — Settings → Content & Feed: hide reposts/replies/polls/non-text, applied in renderFeed. — hide reposts/replies/polls/binary txs, applied in `renderFeed()`. *(M · settings)*
 - [ ] **Export / Import app data** — back up mutes/lists/communities/history/settings to JSON. *(M · settings)*
-- [ ] **JSON-RPC node URL setting** — expose `s.rpcUrl`; null `_readProvider` on save. *(S · settings)*
+- [x] **JSON-RPC node URL setting** — added to API Configuration; nulls _readProvider on save. — expose `s.rpcUrl`; null `_readProvider` on save. *(S · settings)*
 - [ ] **Mobile header search is a dead button** — channel/profile search focus a hidden sidebar input on phones; route narrow viewports to inline search. *(M · mobile)*
 - [x] **Bottom nav ignores safe-area insets** — added `viewport-fit=cover` + `env(safe-area-inset-bottom)` to mobile-nav/fab/connect. — add `viewport-fit=cover` + `env(safe-area-inset-bottom)`. *(S · mobile)*
 - [x] **Long error toasts clipped on mobile** — toast now wraps (`white-space:normal`). — allow wrapping (`white-space:normal`). *(S · mobile)*
