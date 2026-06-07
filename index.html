@@ -2822,7 +2822,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260607-97';
+const SW_CACHE_VER = '20260607-98';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -5071,6 +5071,15 @@ class SayIt {
   /* Render notifications with the active tab filter. Tabs: All, Mentions
      (replies + reposts + messages — things addressed at you), Likes
      (likes + follows). Filters the cached this._notifs in place. */
+  /* Per-type notification opt-outs (Settings → Notifications). Returns false
+     when the user has muted this notification's category. vote/pollend share
+     one "poll" category. */
+  _notifEnabled(type) {
+    const cat  = (type === 'vote' || type === 'pollend') ? 'poll' : type;
+    const mute = this._getSettings().notifMute || {};
+    return !mute[cat];
+  }
+
   _renderNotifs() {
     const all = this._notifs || [];
     const tab = this._notifTab || 'all';
@@ -5080,13 +5089,15 @@ class SayIt {
       repost:'reposted your post', message:'sent you a message',
       vote:'voted on your poll', pollend:'',
     };
+    /* Tabs partition All cleanly: Likes = plain likes; Mentions = everything
+       else (replies, reposts, messages, poll votes/ends, follows). No type is
+       orphaned to "All"-only. */
     const inTab = (n) => {
-      if (tab === 'all') return true;
-      if (tab === 'mentions') return n.type === 'reply' || n.type === 'repost' || n.type === 'message' || n.type === 'vote';
-      if (tab === 'likes') return n.type === 'like';
-      return true;
+      if (tab === 'likes')    return n.type === 'like';
+      if (tab === 'mentions') return n.type !== 'like';
+      return true; /* all */
     };
-    const filtered = all.filter(inTab);
+    const filtered = all.filter(n => this._notifEnabled(n.type)).filter(inTab);
     const tabBar = `
       <div class="notif-tabs">
         <button class="notif-tab ${tab==='all'?'active':''}" data-notif-tab="all">All</button>
@@ -6255,6 +6266,26 @@ class SayIt {
           </div>`).join('')}
       </div>
 
+      <!-- Notifications -->
+      <div class="settings-section">
+        <div class="settings-section-title">Notifications</div>
+        ${[
+          ['set-notif-like',    'like',    'Likes',         'Someone likes your post'],
+          ['set-notif-reply',   'reply',   'Replies',       'Someone replies to you'],
+          ['set-notif-repost',  'repost',  'Reposts',       'Someone reposts your post'],
+          ['set-notif-follow',  'follow',  'Follows',       'Someone follows you'],
+          ['set-notif-message', 'message', 'Messages',      'Someone sends you a message'],
+          ['set-notif-poll',    'poll',    'Poll activity', 'Votes on your polls &amp; polls ending'],
+        ].map(([id, cat, title, desc]) => `
+          <div class="settings-row">
+            <div class="settings-row-label"><strong>${title}</strong><span>${desc}</span></div>
+            <label class="settings-switch">
+              <input type="checkbox" id="${id}" data-notif-mute="${cat}" ${!(s.notifMute||{})[cat] ? 'checked' : ''}>
+              <span class="settings-switch-slider"></span>
+            </label>
+          </div>`).join('')}
+      </div>
+
       <!-- Cache -->
       <div class="settings-section">
         <div class="settings-section-title">Cache &amp; Storage</div>
@@ -6464,6 +6495,18 @@ class SayIt {
         const s = this._getSettings();
         s[filterKeys[cb.id]] = cb.checked;
         this._saveSettings(s);
+      });
+    });
+    /* Per-type notification opt-outs — checked = show. Re-filter the open
+       notifications view in place (cached, no rescan) and refresh the badge. */
+    document.querySelectorAll('[data-notif-mute]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const s = this._getSettings();
+        s.notifMute = s.notifMute || {};
+        s.notifMute[cb.dataset.notifMute] = !cb.checked;
+        this._saveSettings(s);
+        if (this.state.mode === 'notifications') this._renderNotifs();
+        this.checkNotifBadge();
       });
     });
     /* Test API — mirrors runtime: tries primary, falls back to backup */
@@ -6905,14 +6948,17 @@ class SayIt {
           if (text.startsWith(UNBOOKMARK_PREFIX)) return false;
           if (text.startsWith(UNLIKE_PREFIX)) return false;
           if (text.startsWith(UNFOLLOW_PREFIX)) return false;
-          return text.length > 0;
+          if (!text.length) return false;
+          /* Inbound txs are follows (sent to the target) or messages; honor the
+             per-type opt-outs so a muted category doesn't inflate the badge. */
+          return this._notifEnabled(text.startsWith(FOLLOW_PREFIX) ? 'follow' : 'message');
         } catch { return false; }
       }).length;
       /* Likes/replies/reposts on my posts (gathered from feed scans). Disjoint
          from the inbound set above (those are channel txs), so no double-count. */
       try {
         const eng = await this._engagementNotifs();
-        count += eng.filter(e => new Date(e.timestamp).getTime() > lastCheck).length;
+        count += eng.filter(e => new Date(e.timestamp).getTime() > lastCheck && this._notifEnabled(e.type)).length;
       } catch { /* engagement is best-effort */ }
       this.setNotifBadge(count);
     } catch { /* silent */ }
