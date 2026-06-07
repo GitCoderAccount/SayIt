@@ -69,7 +69,7 @@ Effort: S/M/L. Status: `[ ]` todo · `[x]` done · `[~]` partial · `[-]` skippe
 - [ ] Search-index partial-prune corruption (prune by whole-post groups) *(M · correctness)*
 - [ ] Robustness batch (`_scanFollowers` target check, history-open address guard, `pruneIfStale` promise, gas-estimate fallback) *(M · correctness/wallet)*
 - [~] Parser defense-in-depth — NFT metadata `image` now routed `resolveIPFS`→`safeUrl` (blocks `javascript:`/`data:`); reaction targets hex-validated in `parseTxs` (like/unlike→64-hex, follow/unfollow→40-hex; malformed control txs dropped). Inline-onclick→delegated-listener conversion deferred — broad, and args are already `utils.safe`-escaped so there's no XSS gap. *(S · security)*
-- [ ] Misc dead-code cleanup (dead `.explore-search-wrap` CSS, `has-custom-cover`, redundant `feed-tabs` hide, NFT sub-form reset, `alt`, new-posts-banner `aria-live`, emoji-picker z-index) *(S · polish)*
+- [x] Misc dead-code cleanup — removed dead `.explore-search-wrap` CSS + the never-added `has-custom-cover` remove() + a duplicate `feed-tabs` hide in `goOfficialChannel`; `showEditForm` now fully resets the NFT sub-form (contract/token-id, not just status); added `alt=""` to avatar imgs that lacked it; `aria-live="polite"` on the new-posts banner; emoji-picker `z-index` 400→600 so it sits above modals. *(S · polish)*
 
 ---
 _Security note: the dedicated security pass found no exploitable XSS — escaping via `safe`/`safeUrl`/`cssUrlValue` is applied at the sinks that matter, and the SW cache key is sanitized._
