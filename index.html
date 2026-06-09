@@ -4584,20 +4584,19 @@ class SayIt {
       results.forEach((res, j) => {
         if (res.status !== 'fulfilled') return;
         const addr = batch[j];
-        const txList = Array.isArray(res.value[0]) ? res.value.flat() : res.value;
+        // Robust flatten: pages array may be nested in some API responses
+        let txList = res.value || [];
+        if (Array.isArray(txList) && txList.length > 0 && Array.isArray(txList[0])) {
+          txList = txList.flat();
+        }
         txList.forEach(tx => {
           const hash = tx.hash?.toLowerCase();
           if (!hash || known.has(hash)) return;
           if (!tx.input || tx.input === '0x') return;
-          /* Canonical parse — single source of truth for poll/vote/
-             repost/reply handling (mode 'main' so it sits in the home feed). */
           const parsed = this._parsePostTx(tx, { mode: 'main' });
           if (!parsed) return;
-          /* Only the followed user's OWN posts to an allowed channel — not txs
-             where they're merely the recipient (authored by someone else), and
-             not their posts to unrelated channels. _parsePostTx attributes by
-             tx.from, so guard both. */
-          if (parsed.reporter !== addr) return;
+          // Extra guard: ensure belongs to this addr (defensive)
+          if (parsed.reporter?.toLowerCase() !== addr.toLowerCase()) return;
           if (parsed.to && parsed.to !== MAIN_CHANNEL && parsed.to !== addr) return;
           known.add(hash);
           newPosts.push(parsed);
