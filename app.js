@@ -6,7 +6,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260610-128';
+const SW_CACHE_VER = '20260610-129';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -243,7 +243,7 @@ const utils = {
         const safeR = utils.safe(resolved);
         const safeRaw = utils.safe(raw);
         imgHtml += `<img src="${safeR}" class="post-img-thumb" alt="image"
-          loading="lazy" onerror="this.style.display='none'"
+          loading="lazy" data-fallback="hide"
           data-href="${safeR}" title="Right-click to copy URL"
           data-raw-url="${safeRaw}">`;
         mediaCount++;
@@ -253,9 +253,9 @@ const utils = {
         imgHtml += `<div class="post-vid-wrap">
           <video src="${safeR}" class="post-vid-thumb"
             autoplay muted loop playsinline preload="auto"
-            onerror="this.closest('.post-vid-wrap').style.display='none'"></video>
+            data-fallback="hide-wrap"></video>
           <button class="vid-unmute-btn" title="Tap to unmute"
-            onclick="event.stopPropagation();const v=this.previousElementSibling;v.muted=!v.muted;this.textContent=v.muted?'🔇':'🔊'">🔇</button>
+            >🔇</button>
         </div>`;
         mediaCount++;
       } else if (mtype === 'youtube') {
@@ -269,7 +269,7 @@ const utils = {
           imgHtml += `<div class="post-vid-wrap post-yt-facade" data-yt-id="${safeVid}">
             <img src="https://i.ytimg.com/vi/${safeVid}/hqdefault.jpg"
               class="post-yt-thumb" alt="YouTube video" loading="lazy"
-              onerror="this.src='https://i.ytimg.com/vi/${safeVid}/default.jpg'">
+              data-fallback-src="https://i.ytimg.com/vi/${safeVid}/default.jpg">
             <div class="post-yt-play">
               <svg viewBox="0 0 68 48" width="68" height="48">
                 <path d="M66.52 7.74c-.78-2.93-2.49-5.41-5.42-6.19C55.79.13 34 0 34 0S12.21.13 6.9 1.55c-2.93.78-4.63 3.26-5.42 6.19C.06 13.05 0 24 0 24s.06 10.95 1.48 16.26c.78 2.93 2.49 5.41 5.42 6.19C12.21 47.87 34 48 34 48s21.79-.13 27.1-1.55c2.93-.78 4.64-3.26 5.42-6.19C67.94 34.95 68 24 68 24s-.06-10.95-1.48-16.26z" fill="#f00"/>
@@ -289,7 +289,7 @@ const utils = {
           imgHtml += `<div class="post-vid-wrap post-yt-facade post-vimeo-facade" data-vimeo-id="${safeVid}">
             <img src="https://vumbnail.com/${safeVid}.jpg"
               class="post-yt-thumb" alt="Vimeo video" loading="lazy"
-              onerror="this.style.display='none'">
+              data-fallback="hide">
             <div class="post-yt-play post-vimeo-play">
               <svg viewBox="0 0 68 48" width="68" height="48">
                 <rect width="68" height="48" rx="8" fill="#1AB7EA" opacity="0.9"/>
@@ -307,7 +307,7 @@ const utils = {
           const href = `https://x.com/${tw.handle}/status/${tw.id}`;
           const safeHandle = utils.safe(tw.handle);
           embedHtml += `<a class="x-embed-card" href="${utils.safe(href)}"
-              target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">
+              target="_blank" rel="noopener noreferrer">
             <span class="x-embed-hdr">
               <svg class="x-embed-logo" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
               <span class="x-embed-title">Post on X</span>
@@ -343,7 +343,7 @@ const utils = {
         } else {
           const display = raw.length > 50 ? raw.slice(0, 47) + '…' : raw;
           result += `<a href="${utils.safe(resolved)}" target="_blank" rel="noopener noreferrer"
-            class="post-link" onclick="event.stopPropagation()">${utils.safe(display)}</a>`;
+            class="post-link">${utils.safe(display)}</a>`;
         }
       }
     }
@@ -1115,6 +1115,26 @@ class SayIt {
 
     /* ── Top-level nav: logo, wallet, post buttons ─────────────────── */
     this._initVideoAutoWire();
+    /* Unmute toggle for feed videos (was an inline handler; CSP-strict). */
+    document.addEventListener('click', e => {
+      const btn = e.target.closest('.vid-unmute-btn');
+      if (!btn) return;
+      e.stopPropagation();
+      const v = btn.parentElement?.querySelector('video');
+      if (v) { v.muted = !v.muted; btn.textContent = v.muted ? '🔇' : '🔊'; }
+    }, true);
+    /* Resource-error fallbacks (was inline onerror=; CSP-strict). 'error'
+       doesn't bubble — capture phase catches every img/video on the page.
+       data-fallback-src swaps the source once; data-fallback hides. */
+    document.addEventListener('error', e => {
+      const el = e.target;
+      if (!el || !el.tagName || (el.tagName !== 'IMG' && el.tagName !== 'VIDEO')) return;
+      const fbSrc = el.dataset?.fallbackSrc;
+      if (fbSrc && !el._fbDone) { el._fbDone = true; el.src = fbSrc; return; }
+      const fb = el.dataset?.fallback;
+      if (fb === 'hide' || fbSrc) el.style.display = 'none';
+      else if (fb === 'hide-wrap') { const w = el.closest('.post-vid-wrap'); if (w) w.style.display = 'none'; }
+    }, true);
     g('logo-wrap').onclick     = () => this.goHome();
     /* Wave / PulseChain pinned rows are wired via inline onclick in the
        HTML (so they survive renderTrending's outerHTML rebuild). Wave opens
@@ -1554,6 +1574,10 @@ class SayIt {
       if (e.target.closest('.post-yt-facade, .post-embed-playing, video.post-vid-thumb, .vid-unmute-btn')) return;
       const el = e.target.closest('[data-act]');
       if (!el) return;
+      /* A link inside an actionable element is a link first (timestamps,
+         embeds, websites) — unless the action host IS the link itself. */
+      const link = e.target.closest('a[href]');
+      if (link && link !== el) return;
       const arg  = el.dataset.actArg  || '';
       const arg2 = el.dataset.actArg2 || '';
       const isHash = /^0x[a-f0-9]{64}$/i.test(arg);
@@ -1609,6 +1633,25 @@ class SayIt {
           break;
         case 'search-trend':
           this._searchTrend(arg);
+          break;
+        case 'load-more':
+          this.fetchPosts(false);
+          break;
+        case 'nav-back':
+          this._navBack();
+          break;
+        case 'focus-search':
+          this._focusSearch();
+          break;
+        case 'channel-search':
+          this._channelSearch();
+          break;
+        case 'show-disclaimer':
+          e.preventDefault();
+          this.showDisclaimer(true);
+          break;
+        case 'switch-chain':
+          this._switchToPulse();
           break;
       }
     }, true);
@@ -1859,6 +1902,10 @@ class SayIt {
   }
 
   onFeedClick(e, inModal) {
+    /* Links handle themselves (external timestamps/cards open their href;
+       in-app #/ links use the router) — never also fire the row action.
+       Replaces the per-link inline stopPropagation handlers (CSP-strict). */
+    if (e.target.closest('a[href]')) return;
     /* YouTube/Vimeo click-to-play facade → swap the thumbnail for the real
        player iframe (autoplay on). Handled before post routing so it doesn't
        open the thread. Iframe is built via DOM APIs (no HTML-string nesting). */
@@ -2621,7 +2668,7 @@ class SayIt {
         return `
           <div class="notif-item" role="button" tabindex="0" data-from="${utils.safe(n.from)}" ${clickAttr}>
             <div class="notif-icon-wrap">${icon}</div>
-            <img src="${pic}" class="notif-avatar notif-pop" alt="" data-pop-addr="${utils.safe(n.from)}" onerror="this.src='image1.jpeg'">
+            <img src="${pic}" class="notif-avatar notif-pop" alt="" data-pop-addr="${utils.safe(n.from)}" data-fallback-src="image1.jpeg">
             <div class="notif-body">
               <span class="notif-name notif-pop" data-pop-addr="${utils.safe(n.from)}">${name}</span>
               <span class="notif-label"> ${label}</span>
@@ -3063,7 +3110,7 @@ class SayIt {
         ? `<button class="explore-follow-btn${isFollowing ? ' following' : ''}" data-explore-follow="${utils.safe(addr)}">${isFollowing ? 'Following' : 'Follow'}</button>`
         : '';
       return `<div class="explore-row explore-person" role="button" tabindex="0" data-explore-profile="${utils.safe(addr)}">
-        <img src="${pic}" class="explore-avatar" data-pop-addr="${utils.safe(addr)}" onerror="this.src='image1.jpeg'" alt="">
+        <img src="${pic}" class="explore-avatar" data-pop-addr="${utils.safe(addr)}" data-fallback-src="image1.jpeg" alt="">
         <div class="explore-content">
           <div class="explore-name" data-pop-addr="${utils.safe(addr)}">${name}</div>
           <div class="explore-meta">${meta}</div>
@@ -3100,7 +3147,7 @@ class SayIt {
       const pic  = utils.safe(utils.safeUrl(c?.picUrl || hist?.picUrl) || 'image1.jpeg');
       const meta = count > 0 ? `${count} post${count > 1 ? 's' : ''} in feed` : utils.safe(this.trunc(addr));
       return `<div class="explore-row" role="button" tabindex="0" data-explore-channel="${utils.safe(addr)}">
-        <img src="${pic}" class="explore-avatar" onerror="this.src='image1.jpeg'" alt="">
+        <img src="${pic}" class="explore-avatar" data-fallback-src="image1.jpeg" alt="">
         <div class="explore-content">
           <div class="explore-name">${name}</div>
           <div class="explore-meta">${meta}</div>
@@ -3751,7 +3798,7 @@ class SayIt {
     const row = e => {
       const left = e.special
         ? `<div class="ch-pin-icon">${e.icon}</div>`
-        : `<img src="${utils.safe(e.pic)}" class="ch-hist-avatar" alt="" onerror="this.src='image1.jpeg'">`;
+        : `<img src="${utils.safe(e.pic)}" class="ch-hist-avatar" alt="" data-fallback-src="image1.jpeg">`;
       const right = e.unread
         ? (e.count ? `<span class="ch-hist-count">${e.count > 99 ? '99+' : e.count}</span>` : `<span class="ch-unread-dot"></span>`)
         : '';
@@ -4161,7 +4208,7 @@ class SayIt {
       return `
         <div class="settings-row" style="align-items:center" data-muted-addr="${utils.safe(addr)}">
           <div style="display:flex;align-items:center;gap:12px;flex:1;min-width:0">
-            <img src="${pic}" alt="" onerror="this.src='image1.jpeg'"
+            <img src="${pic}" alt="" data-fallback-src="image1.jpeg"
               style="width:36px;height:36px;border-radius:50%;object-fit:cover;flex-shrink:0">
             <div style="min-width:0">
               <div style="font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${name}</div>
@@ -4594,7 +4641,7 @@ class SayIt {
   _tokenMetaHTML(token, isVerified, verified) {
     const link = (url, label) => {
       const u = utils.safeUrl(url || '');
-      return u ? `<a href="${utils.safe(u)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${utils.safe(label)}</a>` : '';
+      return u ? `<a href="${utils.safe(u)}" target="_blank" rel="noopener noreferrer">${utils.safe(label)}</a>` : '';
     };
     const parts = [ isVerified
       ? '<span class="cb-token-badge cb-verified-badge">✓ Verified</span>'
@@ -4882,7 +4929,7 @@ class SayIt {
     if (!btn) return;
     if (this.signer && this.state.signerAddr) {
       const pic = this.state.profile?.picUrl || 'image1.jpeg';
-      btn.innerHTML = `<img src="${utils.safe(pic)}" alt="" class="mn-avatar" onerror="this.src='image1.jpeg'">`;
+      btn.innerHTML = `<img src="${utils.safe(pic)}" alt="" class="mn-avatar" data-fallback-src="image1.jpeg">`;
     } else {
       btn.innerHTML = `<svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 11c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zm0-6C9.239 5 7 7.239 7 10s2.239 5 5 5 5-2.239 5-5-2.239-5-5-5zM5.651 19h12.698c-.337-1.8-1.023-2.891-1.929-3.4-1.285-.736-3.574-1.1-4.42-1.1-.845 0-3.135.364-4.42 1.1-.906.509-1.592 1.6-1.929 3.4z"/></svg>`;
     }
@@ -5568,7 +5615,7 @@ class SayIt {
     const websiteDisplay = websiteHref ? utils.safe(websiteHref.replace(/^https?:\/\//, '')) : '';
     const metaItems = [
       location ? `<span class="prof-meta-item">📍 ${location}</span>` : '',
-      websiteHrefSafe ? `<span class="prof-meta-item">🔗 <a href="${websiteHrefSafe}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${websiteDisplay}</a></span>` : '',
+      websiteHrefSafe ? `<span class="prof-meta-item">🔗 <a href="${websiteHrefSafe}" target="_blank" rel="noopener noreferrer">${websiteDisplay}</a></span>` : '',
       joined   ? `<span class="prof-meta-item">📅 Joined ${utils.safe(joined)}</span>` : '',
     ].filter(Boolean).join('');
 
@@ -5577,7 +5624,7 @@ class SayIt {
       <div class="prof-cover" style="${coverStyle}"></div>
       <div class="prof-avatar-row">
         <img src="${picUrl}" class="prof-page-avatar" id="prof-page-avatar"
-          alt="" onerror="this.src='image1.jpeg'">
+          alt="" data-fallback-src="image1.jpeg">
         <div class="prof-actions">
           <button class="prof-edit-btn" title="Share profile" aria-label="Share profile" style="padding:6px 10px"
             data-act="share-profile" data-act-arg="${utils.safe(address)}">
@@ -5943,7 +5990,7 @@ class SayIt {
         data-act="open-profile" data-act-arg="${utils.safe(addr)}" data-act-arg2="${isSelf ? '1' : ''}">
         <img class="follow-list-avatar" alt="" src="${pic}" data-pop-addr="${utils.safe(addr)}"
           style="width:40px;height:40px;border-radius:50%;object-fit:cover;flex-shrink:0"
-          onerror="this.src='image1.jpeg'" loading="lazy">
+          data-fallback-src="image1.jpeg" loading="lazy">
         <div style="flex:1;min-width:0">
           <div class="follow-list-name" data-pop-addr="${utils.safe(addr)}" style="font-weight:700;font-size:15px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${name}</div>
           <div style="font-size:13px;color:var(--muted)">@${utils.safe(this.trunc(addr))}</div>
@@ -6349,7 +6396,7 @@ class SayIt {
         feedEl.innerHTML = `<div class="prof-media-grid">${
           imgUrls.slice(0,60).map(({ url, txHash }) =>
             `<img src="${utils.safe(url)}" class="prof-media-thumb" loading="lazy"
-              onerror="this.style.display='none'"
+              data-fallback="hide"
               data-act="open-tx" data-act-arg="${utils.safe(txHash)}" style="cursor:pointer">`
           ).join('')
         }</div>`;
@@ -6737,7 +6784,7 @@ class SayIt {
       if (pages >= MAX_PAGES && this.state.hasMore && myToken === this._fetchToken) {
         loadingEl.innerHTML =
           `<button class="settings-btn" style="margin:8px auto;display:block" ` +
-          `onclick="pulse.fetchPosts(false)">Load more from chain</button>`;
+          `data-act="load-more">Load more from chain</button>`;
         loadingEl.style.display = 'block';
         return;
       }
@@ -6995,7 +7042,7 @@ class SayIt {
       if (unique.length >= 3) break;
     }
     avatarsEl.innerHTML = unique.map(u =>
-      `<img src="${utils.safe(u.pic)}" alt="" onerror="this.src='image1.jpeg'">`
+      `<img src="${utils.safe(u.pic)}" alt="" data-fallback-src="image1.jpeg">`
     ).join('');
     textEl.textContent = `Show ${n} post${n > 1 ? 's' : ''}`;
     btn.classList.add('visible');
@@ -7698,13 +7745,13 @@ class SayIt {
       const safeV = utils.safe(utils.safeUrl(vidUrl.startsWith('ipfs://') ? utils.resolveIPFS(vidUrl) : vidUrl) || '');
       if (safeV) mediaHtml = `<div class="post-vid-wrap repost-card-vidwrap">
         <video src="${safeV}" class="post-vid-thumb" autoplay muted loop playsinline preload="metadata"
-          onerror="this.closest('.post-vid-wrap').style.display='none'"></video>
+          data-fallback="hide-wrap"></video>
       </div>`;
     } else if (ytVid) {
       const sv = utils.safe(ytVid);
       mediaHtml = `<div class="post-vid-wrap post-yt-facade repost-card-vidwrap" data-yt-id="${sv}">
         <img src="https://i.ytimg.com/vi/${sv}/hqdefault.jpg" class="post-yt-thumb" alt="YouTube video" loading="lazy"
-          onerror="this.src='https://i.ytimg.com/vi/${sv}/default.jpg'">
+          data-fallback-src="https://i.ytimg.com/vi/${sv}/default.jpg">
         <div class="post-yt-play">
           <svg viewBox="0 0 68 48" width="68" height="48">
             <path d="M66.52 7.74c-.78-2.93-2.49-5.41-5.42-6.19C55.79.13 34 0 34 0S12.21.13 6.9 1.55c-2.93.78-4.63 3.26-5.42 6.19C.06 13.05 0 24 0 24s.06 10.95 1.48 16.26c.78 2.93 2.49 5.41 5.42 6.19C12.21 47.87 34 48 34 48s21.79-.13 27.1-1.55c2.93-.78 4.64-3.26 5.42-6.19C67.94 34.95 68 24 68 24s-.06-10.95-1.48-16.26z" fill="#f00"/>
@@ -7719,11 +7766,11 @@ class SayIt {
         </div>
       </div>`;
     } else if (imgs.length) {
-      mediaHtml = `<img class="repost-card-thumb" src="${utils.safe(imgs[0])}" alt="" loading="lazy" onerror="this.style.display='none'">`;
+      mediaHtml = `<img class="repost-card-thumb" src="${utils.safe(imgs[0])}" alt="" loading="lazy" data-fallback="hide">`;
     }
     return `
       <div class="repost-card-hdr">
-        <img src="${pic}" class="repost-card-avatar" alt="" onerror="this.src='image1.jpeg'">
+        <img src="${pic}" class="repost-card-avatar" alt="" data-fallback-src="image1.jpeg">
         <span class="repost-card-name">${name}</span>
         <span style="color:var(--muted);font-size:13px;margin-left:4px">· ${this.relTime(orig.timestamp)}</span>
       </div>
@@ -7855,7 +7902,7 @@ class SayIt {
       <div class="post-hdr">
         <a class="post-avatar-link" href="#/profile/${utils.safe(post.reporter)}"
           aria-label="View profile" tabindex="-1"><img src="${utils.safe(picUrl)}" class="post-avatar" alt=""
-          loading="lazy" onerror="this.src='image1.jpeg'"></a>
+          loading="lazy" data-fallback-src="image1.jpeg"></a>
         <button class="post-menu-btn" data-action="menu" title="More options"
           aria-label="More options" aria-haspopup="menu" aria-expanded="false">${this.icon('ic-menu')}</button>
         <div class="post-col">
@@ -7869,7 +7916,7 @@ class SayIt {
             <a href="https://otter.pulsechain.com/tx/${utils.safe(post.txHash)}"
               target="_blank" rel="noopener noreferrer" class="post-time" title="${utils.safe(fullDate)}"
               data-ts="${utils.safe(post.timestamp)}"
-              onclick="event.stopPropagation()">${utils.safe(relT)}</a>
+             >${utils.safe(relT)}</a>
             ${dirBadge}
           </div>
           ${toLabel}${replyBadge}
@@ -8789,7 +8836,7 @@ class SayIt {
     this.g('repost-quote').innerHTML = `
       <div class="quote-card-preview">
         <div class="repost-card-hdr">
-          <img src="${pic}" class="repost-card-avatar" alt="" onerror="this.src='image1.jpeg'">
+          <img src="${pic}" class="repost-card-avatar" alt="" data-fallback-src="image1.jpeg">
           <span class="repost-card-name">${name}</span>
           <span style="color:var(--muted);font-size:13px;margin-left:4px">· ${relT}</span>
         </div>
@@ -9094,7 +9141,7 @@ class SayIt {
       <div class="hero-hdr">
         <a class="post-avatar-link" href="#/profile/${utils.safe(post.reporter)}"
           aria-label="View profile" tabindex="-1"><img src="${utils.safe(picUrl)}" class="post-avatar" alt=""
-          loading="lazy" onerror="this.src='image1.jpeg'"></a>
+          loading="lazy" data-fallback-src="image1.jpeg"></a>
         <div class="hero-id">
           <span class="hero-name-row"><a class="post-name" href="#/profile/${utils.safe(post.reporter)}">${displayName}</a>${verifiedBadge}</span>
           <span class="hero-handle" role="button" tabindex="0" data-addr="${utils.safe(post.reporter)}"
@@ -9111,7 +9158,7 @@ class SayIt {
       <div class="note-slot" data-note-host="${utils.safe(post.txHash)}">${this._noteHTML(post)}</div>
       <a class="hero-time" href="https://otter.pulsechain.com/tx/${utils.safe(post.txHash)}"
         target="_blank" rel="noopener noreferrer" title="View transaction on explorer"
-        onclick="event.stopPropagation()">${utils.safe(timeLine)}</a>
+       >${utils.safe(timeLine)}</a>
       ${this._postActionsHTML(post, replyMap, null, null, null)}`;
   }
 
@@ -9168,7 +9215,7 @@ class SayIt {
         <div class="thread-reply-to">Replying to <span>@${utils.safe(replyingToName)}</span></div>
         <div class="thread-compose">
           <img src="${utils.safe(utils.safeUrl(this.state.profile.picUrl) || 'image1.jpeg')}"
-            class="compose-avatar" alt="" onerror="this.src='image1.jpeg'">
+            class="compose-avatar" alt="" data-fallback-src="image1.jpeg">
           <div style="flex:1">
             <textarea class="auto-textarea" id="thread-page-input"
               placeholder="Post your reply…" style="min-height:54px"></textarea>
@@ -9365,11 +9412,14 @@ class SayIt {
       <img src="${utils.safe(resolved)}" alt="preview" style="
         max-width:100%; max-height:220px; border-radius:12px;
         object-fit:contain; display:block; margin:0 auto;
-        border:1px solid var(--border);"
-        onerror="this.replaceWith(Object.assign(document.createElement('p'),{
-          textContent:'⚠ Could not load preview — the URL will still post',
-          style:'color:var(--muted);font-size:13px;text-align:center;padding:12px'
-        }))">`;
+        border:1px solid var(--border);">`;
+    /* CSP-strict error handling: swap the broken preview for a note. */
+    preview.querySelector('img')?.addEventListener('error', function () {
+      this.replaceWith(Object.assign(document.createElement('p'), {
+        textContent: '⚠ Could not load preview — the URL will still post',
+        style: 'color:var(--muted);font-size:13px;text-align:center;padding:12px',
+      }));
+    }, { once: true });
   }
 
   _attachMedia() {
@@ -9655,15 +9705,14 @@ class SayIt {
      opts: { title, subtitle, back: bool, searchAddr, noBack: bool } */
   _makePageHeader(opts = {}) {
     const backBtn = opts.noBack ? '' : `
-      <button class="page-header-back" onclick="pulse._navBack()"
+      <button class="page-header-back" data-act="nav-back"
         aria-label="Back">
         <svg viewBox="0 0 24 24" width="20" height="20">
           <path fill="currentColor" d="M7.414 13l5.043 5.04-1.414 1.42L3.586 12l7.457-7.46 1.414 1.42L7.414 11H21v2H7.414z"/>
         </svg>
       </button>`;
     const searchBtn = opts.searchAddr ? `
-      <button class="page-header-action" title="Search posts"
-        onclick="pulse._focusSearch()">
+      <button class="page-header-action" title="Search posts" data-act="focus-search">
         <svg viewBox="0 0 24 24" width="20" height="20">
           <path fill="currentColor" d="M10.25 3.75c-3.59 0-6.5 2.91-6.5 6.5s2.91 6.5 6.5 6.5c1.795 0 3.419-.726 4.596-1.904 1.178-1.177 1.904-2.801 1.904-4.596 0-3.59-2.91-6.5-6.5-6.5zm-8.5 6.5c0-4.694 3.806-8.5 8.5-8.5s8.5 3.806 8.5 8.5c0 1.986-.682 3.815-1.814 5.272l4.771 4.771-1.414 1.414-4.771-4.771A8.456 8.456 0 0110.25 18.75c-4.694 0-8.5-3.806-8.5-8.5z"/>
         </svg>
@@ -9993,7 +10042,7 @@ class SayIt {
       : queued.content;
     el.innerHTML = `
       <div style="padding:12px 16px;display:flex;gap:10px;align-items:flex-start">
-        <img src="${utils.safe(utils.safeUrl(this.state.profile.picUrl) || 'image1.jpeg')}" style="width:40px;height:40px;border-radius:50%;flex-shrink:0;object-fit:cover" onerror="this.src='image1.jpeg'">
+        <img src="${utils.safe(utils.safeUrl(this.state.profile.picUrl) || 'image1.jpeg')}" style="width:40px;height:40px;border-radius:50%;flex-shrink:0;object-fit:cover" data-fallback-src="image1.jpeg">
         <div style="flex:1;min-width:0">
           <div style="font-size:13px;color:var(--primary-lt);margin-bottom:4px">
             ⌛ Publishing… <span style="color:var(--muted);font-size:12px">(saved offline)</span>
@@ -10268,7 +10317,7 @@ class SayIt {
             </div>
           </div>
           ${thumb ? `<img src="${utils.safe(thumb)}" class="news-thumb"
-            alt="" loading="lazy" onerror="this.style.display='none'">` : ''}
+            alt="" loading="lazy" data-fallback="hide">` : ''}
         </div>`;
     }).join('');
   }
@@ -10372,7 +10421,7 @@ class SayIt {
       const name = c?.username ? utils.safe(c.username) : this.trunc(addr);
       const pic  = c?.picUrl || 'image1.jpeg';
       return `<div class="sb-card-row" role="button" tabindex="0" style="cursor:pointer" data-act="open-profile" data-act-arg="${utils.safe(addr)}">
-        <img src="${utils.safe(pic)}" class="w2f-avatar" data-pop-addr="${utils.safe(addr)}" onerror="this.src='image1.jpeg'"
+        <img src="${utils.safe(pic)}" class="w2f-avatar" data-pop-addr="${utils.safe(addr)}" data-fallback-src="image1.jpeg"
           alt="" style="width:40px;height:40px;border-radius:50%;margin-right:10px;flex-shrink:0">
         <div style="flex:1;min-width:0">
           <span class="trend-name" data-pop-addr="${utils.safe(addr)}" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</span>
@@ -10704,7 +10753,7 @@ class SayIt {
 
     return `
       <div class="pp-header">
-        <img src="${pic}" class="pp-avatar" alt="" onerror="this.src='image1.jpeg'">
+        <img src="${pic}" class="pp-avatar" alt="" data-fallback-src="image1.jpeg">
         ${followBtn}
       </div>
       <div class="pp-name">${name}${verifiedSvg ? `<span class="verified-icon">${verifiedSvg}</span>` : ''}</div>
@@ -11077,7 +11126,7 @@ class SayIt {
           const pic  = utils.safe(utils.safeUrl(prof?.picUrl) || 'image1.jpeg');
           return `<div class="settings-row" style="align-items:center">
             <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">
-              <img src="${pic}" onerror="this.src='image1.jpeg'" style="width:32px;height:32px;border-radius:50%;object-fit:cover;flex-shrink:0">
+              <img src="${pic}" data-fallback-src="image1.jpeg" style="width:32px;height:32px;border-radius:50%;object-fit:cover;flex-shrink:0">
               <div style="min-width:0">
                 <div style="font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${name}</div>
                 <div style="font-size:12px;color:var(--muted)">@${utils.safe(this.trunc(addr))}</div>
@@ -11638,7 +11687,7 @@ class SayIt {
       html += people.map(pp => {
         const name = pp.username ? utils.safe(pp.username) : this.trunc(pp.addr);
         return `<div class="search-dd-item" role="option" data-search-person="${utils.safe(pp.addr)}">
-          <img src="${utils.safe(pp.picUrl)}" alt="" onerror="this.src='image1.jpeg'">
+          <img src="${utils.safe(pp.picUrl)}" alt="" data-fallback-src="image1.jpeg">
           <div class="search-dd-body">
             <div class="search-dd-name">${name}</div>
             <div class="search-dd-sub">@${utils.safe(this.trunc(pp.addr))}</div>

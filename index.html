@@ -21,25 +21,17 @@
 <link rel="manifest" href="./manifest.json">
 <link rel="apple-touch-icon" href="./image1.jpeg">
 <meta name="theme-color" content="#7c4dff">
-<!-- Interim CSP. What it buys today: blocks loading attacker-controlled
-     external scripts, eval(), plugins, <base> hijacks, form exfil, and
-     arbitrary iframes. script-src must keep 'unsafe-inline' until the
-     inline onclick/onerror handlers are converted to delegated listeners
-     (tracked in AUDIT.md) — at that point drop it for real XSS containment.
+<!-- STRICT CSP: no inline script of any kind executes — every handler is
+     a delegated listener and all code loads from 'self' (boot.js, app.js)
+     or the pinned cdnjs ethers build. Injected markup therefore cannot run
+     script even if it somehow got past the escaping + ingestion validation.
+     style-src keeps 'unsafe-inline' (style attributes; low risk).
      img/media/connect stay open by design: user media may live on any host
      (IPFS, Arweave, any gateway) and the explorer/RPC endpoints are
      user-configurable in Settings. frame-ancestors can't be set via a meta
      tag (header-only, and GitHub Pages can't send custom headers). -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * data: blob:; connect-src *; frame-src https://www.youtube-nocookie.com https://player.vimeo.com; object-src 'none'; base-uri 'self'; form-action 'none'; worker-src 'self'; manifest-src 'self'">
-<script>/* Apply saved appearance prefs before first paint to avoid a flash of the wrong
-   colors / size / motion. Theme, forced reduce-motion, and display zoom. */
-try {
-  const _s = JSON.parse(localStorage.getItem('sayitSettings') || '{}');
-  const _de = document.documentElement;
-  if (_s.theme === 'dim' || _s.theme === 'light') _de.setAttribute('data-theme', _s.theme);
-  if (_s.reduceMotion) _de.classList.add('force-reduce-motion');
-  if (_s.displayZoom && String(_s.displayZoom) !== '1') _de.style.zoom = _s.displayZoom;
-} catch (e) {}</script>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * data: blob:; connect-src *; frame-src https://www.youtube-nocookie.com https://player.vimeo.com; object-src 'none'; base-uri 'self'; form-action 'none'; worker-src 'self'; manifest-src 'self'">
+<script src="boot.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.15.0/ethers.umd.min.js" integrity="sha384-OwtfwhPoP4aGLIw192UbPWjNbSkb7AllEbIhEJ01Yp8MxhNLLNUMA+DSjh6Zct05" crossorigin="anonymous"></script>
 <style>
 /* ── Variables ──────────────────────────────────────────────────────────── */
@@ -2485,7 +2477,7 @@ html.force-reduce-motion *, html.force-reduce-motion *::before, html.force-reduc
 
     <div id="channel-banner">
       <div class="page-header cb-header">
-        <button class="page-header-back" onclick="pulse._navBack()" aria-label="Back">
+        <button class="page-header-back" data-act="nav-back" aria-label="Back">
           <svg viewBox="0 0 24 24" width="20" height="20">
             <path fill="currentColor" d="M7.414 13l5.043 5.04-1.414 1.42L3.586 12l7.457-7.46 1.414 1.42L7.414 11H21v2H7.414z"/>
           </svg>
@@ -2495,7 +2487,7 @@ html.force-reduce-motion *, html.force-reduce-motion *::before, html.force-reduc
           <div class="page-header-subtitle" id="cb-header-sub">Channel</div>
         </div>
         <button class="page-header-action" id="cb-search-btn" title="Search this channel"
-          aria-label="Search this channel" onclick="pulse._channelSearch()">
+          aria-label="Search this channel" data-act="channel-search">
           <svg viewBox="0 0 24 24" width="20" height="20">
             <path fill="currentColor" d="M10.25 3.75c-3.59 0-6.5 2.91-6.5 6.5s2.91 6.5 6.5 6.5c1.795 0 3.419-.726 4.596-1.904 1.178-1.177 1.904-2.801 1.904-4.596 0-3.59-2.91-6.5-6.5-6.5zm-8.5 6.5c0-4.694 3.806-8.5 8.5-8.5s8.5 3.806 8.5 8.5c0 1.986-.682 3.815-1.814 5.272l4.771 4.771-1.414 1.414-4.771-4.771A8.456 8.456 0 0110.25 18.75c-4.694 0-8.5-3.806-8.5-8.5z"/>
           </svg>
@@ -2503,7 +2495,7 @@ html.force-reduce-motion *, html.force-reduce-motion *::before, html.force-reduc
       </div>
       <div class="cb-cover"></div>
       <div class="cb-avatar-row">
-        <img id="cb-avatar" src="image1.jpeg" alt="" onerror="this.src='image1.jpeg'">
+        <img id="cb-avatar" src="image1.jpeg" alt="" data-fallback-src="image1.jpeg">
         <div class="cb-actions">
           <button id="cb-token-edit-btn" class="prof-edit-btn" style="display:none">Set token profile</button>
           <button id="cb-profile-btn" class="prof-edit-btn" style="display:none">View profile</button>
@@ -2661,7 +2653,7 @@ html.force-reduce-motion *, html.force-reduce-motion *::before, html.force-reduc
         <a href="https://github.com/GitCoderAccount/SayIt"
           target="_blank" rel="noopener noreferrer">GitHub</a>
         <a href="#" id="footer-disclaimer"
-          onclick="event.preventDefault();pulse.showDisclaimer(true);">Disclaimer</a>
+          data-act="show-disclaimer">Disclaimer</a>
         <a href="https://x.com/SayItDeFi"
           target="_blank" rel="noopener noreferrer">
           <svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align:middle;margin-right:2px"><path fill="currentColor" d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.253 5.622 5.912-5.622zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
@@ -2754,7 +2746,7 @@ html.force-reduce-motion *, html.force-reduce-motion *::before, html.force-reduc
 <div id="ptr-pill">↓ Release to refresh</div>
 <div id="wrong-chain-bar" role="alert">
   <span>⚠️ Wrong network — switch to PulseChain to post</span>
-  <button id="wrong-chain-switch" onclick="pulse._switchToPulse()">Switch</button>
+  <button id="wrong-chain-switch" data-act="switch-chain">Switch</button>
 </div>
 <div id="loading-overlay" role="status" aria-live="assertive"><div class="spinner"></div><span id="loading-label">Publishing…</span></div>
 <div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
