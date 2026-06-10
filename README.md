@@ -6,8 +6,6 @@
 
 **Uncensorable social media, built entirely on the PulseChain blockchain.** — [sayitdefi.com](https://sayitdefi.com) · [@SayItDeFi](https://x.com/SayItDeFi)
 
-![Say It DeFi — home feed](docs/screenshot.png)
-
 Say It DeFi is a decentralized social platform where every post, reply, like, follow, poll, profile, and community note lives on-chain. There is no central server storing your content, no database that can be wiped, and no company that can delete your account or silence your voice. If your wallet can sign a transaction, you can speak — and what you say is permanent, public, and owned by no one but the network itself.
 
 This repository hosts the **front-end**: a single, self-contained web application that reads the social graph directly from the blockchain and lets you write to it with your own wallet. The front-end is just a window. The data is the chain.
@@ -48,7 +46,7 @@ Because all of this is just blockchain data, anyone can build their own interfac
 ### Discovery
 - **For You and Following feeds** to switch between the whole network and the accounts you follow. The Following feed shows each followed account's own posts wherever they posted them — main timeline, their channel, token channels, or replies — fetched efficiently per-account so even accounts buried under heavy incoming engagement surface correctly.
 - **Explore** and a **trending** panel that highlights active hashtags on the network.
-- **Search** people (by display name **or** address), hashtags, and full post text. Paste a complete **0x address** and you'll get a direct jump to that account's **profile** or its **channel** — your choice.
+- **Search** people (by display name **or** address), hashtags, and full post text. Paste a complete **0x address** for a direct jump to that account's **profile** or **channel**, or paste a **transaction hash** to open that post as a thread — Enter jumps straight there.
 - **Profile hovercards** — hover any name or avatar (in the feed, followers lists, or the who-to-follow panel) for a quick profile preview without leaving the page.
 - **Today's News** and **Latest Polls** side panels surfacing the most active recent content.
 - **Who to follow** suggestions derived from active accounts in your current feed.
@@ -72,6 +70,7 @@ Every **token contract** is a channel where holders can talk about it — and it
 - **Communities** — follow address-scoped community channels.
 - **Hybrid on-chain sync** — Lists and Communities work instantly and locally by default, and can be **published on-chain** as a single snapshot transaction so they travel with you across devices and are publicly portable. A matching **restore** reads your latest snapshot back. Returning on a fresh device auto-restores them in the background.
 - **Bookmarks** — save posts to revisit later.
+- **Analytics** (More → Analytics) — local network stats computed from your own cached slice of the chain: posts per day, most active authors, trending terms, and totals. No server, no tracking.
 
 ### Notifications
 - A unified notifications view with **All / Mentions / Likes** tabs.
@@ -166,6 +165,8 @@ Most settings are adjustable in-app under **Settings**, including:
 - The block explorer **API endpoint** (and an optional backup endpoint).
 - **Scan depth** — how many pages of chain history to read when building feeds and follower lists (set to unlimited for the deepest history, at the cost of slower scans).
 - **Feed post cap** and local cache pruning, plus buttons to clear the post cache, channel history, and offline queue.
+- **Deep sync** — opt-in, resumable archive of the main feed's full history into your browser; search, threads, and analytics then work from your complete local copy. Export the archive as a **posts snapshot** to share or restore on another device (imports are strictly validated).
+- **Themes** — Dark, Dim, and Light, applied before first paint.
 - **Export / Import** your settings, mutes, lists and communities as a JSON backup — and a one-click **Reset to defaults** for all settings.
 
 ---
@@ -180,6 +181,10 @@ Say It DeFi is a front-end to a public, permissionless network. Please understan
 - Nothing in the app is financial, legal, or investment advice.
 
 By using the interface, you acknowledge that the creators and operators are not liable for content posted or actions taken on the underlying decentralized network.
+
+### Original, independent software
+
+This application was **built from scratch** as free, open-source software. It is not affiliated with, endorsed by, or derived from any other platform or company. Any resemblance to other social applications is purely coincidental and limited to familiar user-interface conventions (timelines, replies, reposts) that are common across the industry. The entire source code is public in this repository — it may be freely inspected, shared, forked, and built upon.
 
 ---
 
