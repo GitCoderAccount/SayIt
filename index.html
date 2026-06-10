@@ -2852,7 +2852,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260610-116';
+const SW_CACHE_VER = '20260610-117';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -5893,7 +5893,7 @@ class SayIt {
        posts aren't in current state.posts. The _bkLoadToken guards against
        two rapid Bookmarks clicks racing to write feed.innerHTML. */
     this.g('feed').innerHTML = bkHeader +
-      `<div class="placeholder-view"><span class="ph-icon">🔖</span><h2>Loading bookmarks…</h2><p>Pulling from your local cache.</p></div>`;
+      `<div class="placeholder-view"><div class="spinner" aria-hidden="true" style="margin:0 auto 14px"></div><h2>Loading bookmarks…</h2><p>Pulling from your local cache.</p></div>`;
     this._bkLoadToken = (this._bkLoadToken || 0) + 1;
     this._loadBookmarksFromCache(bkHeader, this._bkLoadToken);
   }
@@ -5969,7 +5969,7 @@ class SayIt {
         loading.className = 'placeholder-view';
         loading.style.cssText = 'padding:24px 16px';
         loading.innerHTML = `<p style="font-size:13px;color:var(--muted)">
-          Loading ${toFetch.length} more bookmark${toFetch.length > 1 ? 's' : ''} from chain…
+          <span class="spinner sp-sm" aria-hidden="true"></span>Loading ${toFetch.length} more bookmark${toFetch.length > 1 ? 's' : ''} from chain…
         </p>`;
         this.g('feed').appendChild(loading);
         this._fetchMissingBookmarks(toFetch, bkHeader, myToken);
@@ -8979,7 +8979,7 @@ class SayIt {
     if (!ethers.isAddress(contractAddr)) { status.textContent = '✗ Invalid contract'; return; }
     if (!tokenIdRaw || isNaN(tokenIdRaw))       { status.textContent = '✗ Invalid token ID'; return; }
     if (!this.signer)                            { status.textContent = '✗ Connect wallet first'; return; }
-    status.textContent = '⟳ Fetching…';
+    status.innerHTML = '<span class="spinner sp-sm" aria-hidden="true"></span>Fetching…';
     try {
       const contract = new ethers.Contract(contractAddr, ERC721_ABI, this.signer.provider);
       let owner;
@@ -9684,6 +9684,7 @@ class SayIt {
          hits / genuinely empty channel), not always "be the first to post". */
       let icon = '📡', title, sub;
       if (this.state.loading) {
+        icon = '<div class="spinner" aria-hidden="true" style="margin:0 auto"></div>';
         title = 'Scanning the chain…';
         sub   = `Checked ${this.state.nextPage - 1} page(s) so far`;
       } else if (this.state.activeTag) {
@@ -10131,7 +10132,7 @@ class SayIt {
     const qid = utils.safe(post.repostOf);
     this._fetchQuotedPost(post.repostOf, post.to || this.state.channel);
     return `<div class="repost-card repost-card-missing" data-fetch-quote="${qid}" id="qc-${qid.slice(2,8)}">
-      <svg viewBox="0 0 24 24" width="14" height="14" style="flex-shrink:0"><path fill="currentColor" d="M4.5 3.88l4.432 4.14-1.364 1.46L5.5 7.55V16c0 1.1.896 2 2 2H13v2H7.5c-2.209 0-4-1.79-4-4V7.55L1.432 9.48.068 8.02 4.5 3.88zM16.5 6H11V4h5.5c2.209 0 4 1.79 4 4v8.45l2.068-1.93 1.364 1.46L19.5 20.12l-4.432-4.14 1.364-1.46 2.068 1.93V8c0-1.1-.896-2-2-2z"/></svg>
+      <span class="spinner sp-sm" aria-hidden="true"></span>
       <span>Loading quoted post…</span>
     </div>`;
   }
