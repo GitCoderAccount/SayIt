@@ -2087,6 +2087,24 @@ body.mode-settings #mobile-fab { display:none; }
 }
 .repost-card-name { font-size:13px; font-weight:700; }
 .repost-card-body { font-size:14px; color:var(--text); line-height:1.5; word-break:break-word; }
+/* X-style focal post on the thread page */
+.thread-orig-item .hero-hdr { display:flex; align-items:center; gap:10px; }
+.hero-id { display:flex; flex-direction:column; min-width:0; flex:1; align-items:flex-start; }
+.hero-id .post-name { font-size:16px; max-width:100%; }
+.hero-handle { color:var(--muted); font-size:14px; cursor:pointer; }
+.hero-handle:hover { text-decoration:underline; }
+.hero-body {
+  font-size:17px; line-height:1.55; margin-top:12px; color:var(--text);
+  word-break:break-word; white-space:pre-wrap;
+}
+.hero-time {
+  display:block; color:var(--muted); font-size:14px; margin-top:14px;
+  padding-bottom:12px; border-bottom:1px solid var(--border);
+  text-decoration:none;
+}
+.hero-time:hover { text-decoration:underline; }
+.thread-orig-item .post-actions { margin-top:2px; }
+
 /* Compact media preview inside quote cards (image thumb / video chip). */
 .repost-card-thumb {
   display:block; max-height:140px; max-width:100%;
@@ -2880,7 +2898,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260610-118';
+const SW_CACHE_VER = '20260610-119';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -10198,6 +10216,48 @@ class SayIt {
     };
   }
 
+  /* Standard action bar (reply / repost / like / views / bookmark / share).
+     Shared by the feed's postHTML and the thread hero so the markup — and
+     the data-action contract the feed delegation depends on — never
+     drifts between them. */
+  _postActionsHTML(post, replyMap, likeMap, repostMap, engagerMap) {
+    const rc  = replyMap  ? (replyMap.get(post.txHash)  || 0) : 0;
+    const lc  = likeMap   ? (likeMap.get(post.txHash)   || 0) : 0;
+    const rpc = repostMap ? (repostMap.get(post.txHash) || 0) : 0;
+    const rcLabel  = rc  > 0 ? String(rc)  : '';
+    const lcLabel  = lc  > 0 ? String(lc)  : '';
+    const rpcLabel = rpc > 0 ? String(rpc) : '';
+    const isLiked      = this.state.likes.has(post.txHash);
+    const isBookmarked = this.state.bookmarks.has(post.txHash);
+    const engagementHTML = this._postEngagementHTML(post, engagerMap);
+    return `
+          <div class="post-actions">
+            <div class="post-actions-left">
+            <button class="act-btn act-reply" data-action="reply" title="Reply" aria-label="Reply to this post">
+              <span class="act-icon">${this.icon('ic-reply')}</span>
+              <span class="act-count">${rcLabel}</span>
+            </button>
+            <button class="act-btn act-repost" data-action="repost" title="Repost or Quote" aria-label="Repost or quote">
+              <span class="act-icon">${this.icon('ic-repost')}</span>
+              <span class="act-count">${rpcLabel}</span>
+            </button>
+            <button class="act-btn act-like ${isLiked ? 'liked' : ''}" data-action="like" title="${isLiked ? 'Unlike' : 'Like'}" aria-label="${isLiked ? 'Unlike this post' : 'Like this post'}" aria-pressed="${isLiked ? 'true' : 'false'}">
+              <span class="act-icon">${this.icon(isLiked ? 'ic-heart-full' : 'ic-heart-empty')}</span>
+              <span class="act-count">${lcLabel}</span>
+            </button>
+            ${engagementHTML}
+            </div><!-- /.post-actions-left -->
+            <div class="post-actions-right">
+            <button class="act-btn act-bookmark ${isBookmarked ? 'bookmarked' : ''}" data-action="bookmark" title="${isBookmarked ? 'Remove bookmark' : 'Bookmark'}" aria-label="${isBookmarked ? 'Remove bookmark' : 'Bookmark this post'}" aria-pressed="${isBookmarked ? 'true' : 'false'}">
+              <span class="act-icon">${this.icon(isBookmarked ? 'ic-bookmark-full' : 'ic-bookmark-empty')}</span>
+            </button>
+            <button class="act-btn act-share" data-action="share" title="Share" aria-label="Share this post">
+              <span class="act-icon">${this.icon('ic-share')}</span>
+            </button>
+            </div><!-- /.post-actions-right -->
+          </div><!-- /.post-actions -->`;
+  }
+
   postHTML(post, inModal, replyMap, likeMap, repostMap, engagerMap = null) {
     const expanded = this.state.expanded.has(post.txHash);
     /* Profile + verified badge (own profile vs. cached other-user profile) */
@@ -10223,18 +10283,8 @@ class SayIt {
     /* Repost / quote card + badges */
     const repostCard = this._postRepostCard(post);
     const { dirBadge, toLabel, replyBadge } = this._postBadges(post);
-    /* Engagement counts */
-    const rc  = replyMap  ? (replyMap.get(post.txHash)  || 0) : 0;
-    const lc  = likeMap   ? (likeMap.get(post.txHash)   || 0) : 0;
-    const rpc = repostMap ? (repostMap.get(post.txHash) || 0) : 0;
-    const rcLabel  = rc  > 0 ? String(rc)  : '';
-    const lcLabel  = lc  > 0 ? String(lc)  : '';
-    const rpcLabel = rpc > 0 ? String(rpc) : '';
     const fullDate = new Date(post.timestamp).toLocaleString();
     const relT     = this.relTime(post.timestamp);
-    const isLiked      = this.state.likes.has(post.txHash);
-    const isBookmarked = this.state.bookmarks.has(post.txHash);
-    const engagementHTML = this._postEngagementHTML(post, engagerMap);
 
     return `
       <div class="post-hdr">
@@ -10269,31 +10319,7 @@ class SayIt {
           ${needsMore ? `<button class="read-more-btn" data-action="expand">Show more ↓</button>` : ''}
           ${canCollapse ? `<button class="read-more-btn" data-action="expand">Show less ↑</button>` : ''}
           ${imgHtml ? `<div class="post-images">${imgHtml}</div>` : ''}
-          <div class="post-actions">
-            <div class="post-actions-left">
-            <button class="act-btn act-reply" data-action="reply" title="Reply" aria-label="Reply to this post">
-              <span class="act-icon">${this.icon('ic-reply')}</span>
-              <span class="act-count">${rcLabel}</span>
-            </button>
-            <button class="act-btn act-repost" data-action="repost" title="Repost or Quote" aria-label="Repost or quote">
-              <span class="act-icon">${this.icon('ic-repost')}</span>
-              <span class="act-count">${rpcLabel}</span>
-            </button>
-            <button class="act-btn act-like ${isLiked ? 'liked' : ''}" data-action="like" title="${isLiked ? 'Unlike' : 'Like'}" aria-label="${isLiked ? 'Unlike this post' : 'Like this post'}" aria-pressed="${isLiked ? 'true' : 'false'}">
-              <span class="act-icon">${this.icon(isLiked ? 'ic-heart-full' : 'ic-heart-empty')}</span>
-              <span class="act-count">${lcLabel}</span>
-            </button>
-            ${engagementHTML}
-            </div><!-- /.post-actions-left -->
-            <div class="post-actions-right">
-            <button class="act-btn act-bookmark ${isBookmarked ? 'bookmarked' : ''}" data-action="bookmark" title="${isBookmarked ? 'Remove bookmark' : 'Bookmark'}" aria-label="${isBookmarked ? 'Remove bookmark' : 'Bookmark this post'}" aria-pressed="${isBookmarked ? 'true' : 'false'}">
-              <span class="act-icon">${this.icon(isBookmarked ? 'ic-bookmark-full' : 'ic-bookmark-empty')}</span>
-            </button>
-            <button class="act-btn act-share" data-action="share" title="Share" aria-label="Share this post">
-              <span class="act-icon">${this.icon('ic-share')}</span>
-            </button>
-            </div><!-- /.post-actions-right -->
-          </div><!-- /.post-actions -->
+          ${this._postActionsHTML(post, replyMap, likeMap, repostMap, engagerMap)}
         </div>
       </div>`;
   }
@@ -11475,13 +11501,50 @@ class SayIt {
     } else this.goHome();
   }
 
+  /* X-style focal-post layout for the thread page: avatar with stacked
+     name/handle in the header row, full-width large body below, complete
+     timestamp line, then the standard action bar. Action buttons carry the
+     same data-action attributes, so the feed delegation handles them. */
+  _threadHeroHTML(post, replyMap) {
+    const { picUrl, displayName, verifiedBadge } = this._postProfileFields(post);
+    const { text: bodyHtml, images: imgHtml, embeds: embedHtml } = utils.linkify(post.display, post.display);
+    const repostCard = this._postRepostCard(post);
+    const d = new Date(post.timestamp);
+    const timeLine = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+      + ' · ' + d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      + (post.blockNumber ? ` · Block #${post.blockNumber}` : '');
+    return `
+      <div class="hero-hdr">
+        <a class="post-avatar-link" href="#/profile/${utils.safe(post.reporter)}"
+          aria-label="View profile" tabindex="-1"><img src="${utils.safe(picUrl)}" class="post-avatar" alt=""
+          loading="lazy" onerror="this.src='image1.jpeg'"></a>
+        <div class="hero-id">
+          <a class="post-name" href="#/profile/${utils.safe(post.reporter)}">${displayName}</a>${verifiedBadge}
+          <span class="hero-handle" role="button" tabindex="0" data-addr="${utils.safe(post.reporter)}"
+            title="Click to copy address">@${this.trunc(post.reporter)}</span>
+        </div>
+        <button class="post-menu-btn" data-action="menu" title="More options"
+          aria-label="More options" aria-haspopup="menu" aria-expanded="false">${this.icon('ic-menu')}</button>
+      </div>
+      <div class="hero-body">${bodyHtml}</div>
+      ${post.poll ? this._pollHTML(post) : ''}
+      ${repostCard}
+      ${embedHtml || ''}
+      ${imgHtml ? `<div class="post-images">${imgHtml}</div>` : ''}
+      <div class="note-slot" data-note-host="${utils.safe(post.txHash)}">${this._noteHTML(post)}</div>
+      <a class="hero-time" href="https://otter.pulsechain.com/tx/${utils.safe(post.txHash)}"
+        target="_blank" rel="noopener noreferrer" title="View transaction on explorer"
+        onclick="event.stopPropagation()">${utils.safe(timeLine)}</a>
+      ${this._postActionsHTML(post, replyMap, null, null, null)}`;
+  }
+
   _renderThreadPage(post) {
     const replyMap = new Map();
     this.state.posts.forEach(p => {
       if (p.parentTx) replyMap.set(p.parentTx, (replyMap.get(p.parentTx) || 0) + 1);
     });
     this._postMap.set(post.txHash, post);
-    const origHTML = this.postHTML(post, true, replyMap, null);
+    const origHTML = this._threadHeroHTML(post, replyMap);
 
     /* Ancestor posts above the focal post — resolved by _fetchThreadAncestors
        and kept in state, so this re-render (e.g. after posting a reply) keeps
