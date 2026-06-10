@@ -6,7 +6,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260610-127';
+const SW_CACHE_VER = '20260610-128';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -520,6 +520,21 @@ class Cache {
       req.onerror   = () => rej(req.error);
     });
   }
+  /* Row counts per store — powers the Settings storage overview. */
+  async storeCounts() {
+    await this._ready;
+    const names = ['posts', 'profiles', 'channels', 'search_index', 'pending_posts'];
+    const out = {};
+    await Promise.all(names.map(n => new Promise(res => {
+      try {
+        const req = this._db.transaction(n, 'readonly').objectStore(n).count();
+        req.onsuccess = () => { out[n] = req.result; res(); };
+        req.onerror   = () => { out[n] = 0; res(); };
+      } catch { out[n] = 0; res(); }
+    })));
+    return out;
+  }
+
   /* O(1) single-post lookup by primary key. */
   async getPost(hash) {
     await this._ready;
@@ -969,6 +984,12 @@ class SayIt {
     const _pruneDays = parseInt(this._getSettings().pruneAgeDays, 10) || 7;
     /* Housekeeping — never block boot on it. */
     this.cache.pruneIfStale(_pruneDays).catch(err => console.warn('Prune failed', err));
+    /* Deep-sync auto-resume: quietly pick up an interrupted archive once
+       the app has settled (never competes with first paint). */
+    setTimeout(() => {
+      const ds = this._deepSyncState();
+      if (ds.lastPage > 0 && !ds.done && navigator.onLine && !this._deepSyncing) this.toggleDeepSync();
+    }, 8000);
     /* Migrate muted list from localStorage to IDB if needed */
     try {
       const idbMuted = await this.cache.getMuted();
@@ -4021,6 +4042,14 @@ class SayIt {
             ).join('')}
           </select>
         </div>
+        <div class="settings-row" style="flex-direction:column;align-items:stretch;gap:8px">
+          <div class="settings-row-label">
+            <strong>Storage</strong>
+            <span id="storage-usage-label">Calculating…</span>
+          </div>
+          <div class="storage-bar"><div class="storage-bar-fill" id="storage-bar-fill"></div></div>
+          <div id="storage-counts" style="font-size:13px;color:var(--muted)"></div>
+        </div>
         <div class="settings-row">
           <div class="settings-row-label">
             <strong>Deep sync</strong>
@@ -4333,6 +4362,21 @@ class SayIt {
       const dss = g('deep-sync-status');
       if (dss) dss.textContent = this._deepSyncStatusText(st, this._deepSyncing);
     }
+    /* Storage overview — best-effort, fills in as the async calls land. */
+    (async () => {
+      try {
+        const est  = (navigator.storage && navigator.storage.estimate) ? await navigator.storage.estimate() : {};
+        const used = est.usage || 0, quota = est.quota || 0;
+        const fmt  = b => b > 1e9 ? (b / 1e9).toFixed(2) + ' GB' : b > 1e6 ? (b / 1e6).toFixed(1) + ' MB' : Math.round(b / 1e3) + ' KB';
+        const lbl  = g('storage-usage-label');
+        if (lbl) lbl.textContent = quota ? `${fmt(used)} used of ~${fmt(quota)} available to this site` : 'Storage estimate unavailable in this browser';
+        const fill = g('storage-bar-fill');
+        if (fill && quota) fill.style.width = Math.min(100, (used / quota) * 100).toFixed(2) + '%';
+        const c  = await this.cache.storeCounts();
+        const sc = g('storage-counts');
+        if (sc) sc.textContent = `${(c.posts || 0).toLocaleString()} posts · ${(c.profiles || 0).toLocaleString()} profiles · ${(c.channels || 0).toLocaleString()} channels · ${(c.search_index || 0).toLocaleString()} search rows · ${(c.pending_posts || 0).toLocaleString()} queued`;
+      } catch { /* overview is informational only */ }
+    })();
     g('set-export-posts')?.addEventListener('click', () => this._exportPostsSnapshot());
     g('set-import-posts')?.addEventListener('click', () => g('set-import-posts-file')?.click());
     g('set-import-posts-file')?.addEventListener('change', e => {
