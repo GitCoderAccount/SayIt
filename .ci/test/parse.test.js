@@ -100,6 +100,17 @@ test('non-feed payloads are excluded: profile, bookmarks (self), notes, token pr
   assert.strictEqual(posts.length, 0);
 });
 
+test('non-self bookmark/profile control txs are dropped, not shown as raw posts', () => {
+  /* Before parser unification these leaked into feeds as raw "BOOKMARK:0x…"
+     text posts (they're protocol-violating control txs sent to a channel). */
+  const txs = [
+    makeTx(`BOOKMARK:${HASH64}`),                  /* to = main channel */
+    makeTx('PROFILE_DATA:{"username":"x"}'),       /* to = main channel */
+  ];
+  const { posts } = feedParse(txs);
+  assert.strictEqual(posts.length, 0);
+});
+
 test('txs not addressed to the current channel are excluded in main mode', () => {
   const onChannel  = makeTx('visible');
   const offChannel = makeTx('hidden', { to: ADDR40 });
