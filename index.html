@@ -835,7 +835,10 @@ nav { flex:1; padding:4px 0; }
   border-radius:9999px; transition:background 0.2s, border-color 0.2s;
 }
 .explore-search-bar:focus-within { background:var(--bg-dark); border-color:var(--primary); }
-.explore-search-bar .search-icon { font-size:15px; color:var(--muted); flex-shrink:0; }
+/* Icon sits inline in the flex bar (override the absolute positioning the
+   sidebar .search-icon rule sets — without this it escapes the bar and
+   floats at the page's left edge). */
+.explore-search-bar .search-icon { position:static; transform:none; font-size:15px; color:var(--muted); flex-shrink:0; }
 .xp-search-input {
   flex:1; min-width:0; background:transparent; border:0; outline:none;
   color:var(--text); font-size:15px; padding:2px 0;
@@ -1254,6 +1257,8 @@ nav { flex:1; padding:4px 0; }
   transition:background 0.2s, transform 0.15s;
 }
 #mobile-fab:hover { background:var(--primary-lt); transform:scale(1.05); }
+/* No composing from Settings — and the FAB overlapped its action buttons. */
+body.mode-settings #mobile-fab { display:none; }
 #mobile-connect {
   display:none; position:fixed; bottom:calc(84px + env(safe-area-inset-bottom)); right:16px; z-index:91;
   padding:13px 22px; border:none; border-radius:9999px;
@@ -1573,6 +1578,14 @@ nav { flex:1; padding:4px 0; }
   #app  { max-width:100%; }
   .modal { padding:16px; }
   #toast { bottom:76px; }
+  /* Compose toolbar: the right group (draft hint + char ring + divider +
+     expand + Post) overflowed narrow viewports, clipping the Post button.
+     The expand control is desktop-oriented (inline compose already fills a
+     phone screen); drop it and its divider, tighten the gap, and let the
+     draft hint truncate instead of pushing the row wider. */
+  .compose-right { gap:6px; min-width:0; }
+  .compose-right .cmp-divider, .compose-right .expand-btn { display:none; }
+  .draft-saved-hint { max-width:70px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   /* No forced banner on mobile — the JS shows it only on channel/profile
      views and hides it on the main feed. */
 }
@@ -2132,6 +2145,10 @@ nav { flex:1; padding:4px 0; }
 .prof-handle {
   font-size:15px; color:var(--muted); font-family:monospace;
   margin-top:2px; cursor:pointer; display:inline-block;
+  /* Truncate the 42-char address on narrow screens instead of overflowing
+     the viewport (click-to-copy still copies the full address). */
+  max-width:100%; overflow:hidden; text-overflow:ellipsis;
+  white-space:nowrap; vertical-align:bottom;
 }
 .prof-handle:hover { text-decoration:underline; color:var(--primary-lt); }
 .prof-bio {
@@ -5957,6 +5974,9 @@ class SayIt {
     this._updateTitle('Settings');
     this._setRoute('/settings');
     this.setNav(null, null);
+    /* Hide the mobile compose FAB here — it has no purpose on Settings and
+       overlapped the API-settings action buttons on phones. */
+    document.body.classList.add('mode-settings');
     this.state.mode = 'settings';
     this.g('compose-area').style.display   = 'none';
     this.g('channel-banner').style.display = 'none';
@@ -6703,6 +6723,9 @@ class SayIt {
     this._navToken++;   /* invalidate any in-flight view render */
     this.hideProfilePopup?.();
     this._threadBackOverride = false;
+    /* Per-view body marker — views that need view-scoped CSS (e.g. hiding
+       the compose FAB on Settings) re-add their class after calling setNav. */
+    document.body.classList.remove('mode-settings');
     this._profileScanCache = {}; /* clear stale profile scan data on navigation */
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.mn-btn').forEach(b => b.classList.remove('active'));
@@ -9965,13 +9988,18 @@ class SayIt {
        much shorter preview so they don't dominate the feed (still expandable). */
     const nonText = this._isLikelyBinary(post.display);
     const previewLimit = nonText ? 140 : MAX_PREVIEW;
+    /* Binary payloads: never show the raw bytes in the collapsed feed view —
+       the mojibake under the warning label reads as a rendering bug. Show
+       the label alone; "Show more" still expands to the raw payload. */
+    const hideBinary = nonText && !inModal && !expanded;
     /* Body text + image extraction. Always run linkify on full text so
        media below the preview cap still renders in the feed. */
-    const textToRender = (!inModal && !expanded && post.display.length > previewLimit)
-      ? post.display.slice(0, previewLimit) + '…'
-      : post.display;
+    const textToRender = hideBinary ? ''
+      : (!inModal && !expanded && post.display.length > previewLimit)
+        ? post.display.slice(0, previewLimit) + '…'
+        : post.display;
     const { text: bodyHtml, images: imgHtml, embeds: embedHtml } = utils.linkify(textToRender, post.display);
-    const isLong     = !inModal && post.display.length > previewLimit;
+    const isLong     = !inModal && (nonText || post.display.length > previewLimit);
     const needsMore  = isLong && !expanded;
     const canCollapse = isLong && expanded;
     /* Repost / quote card + badges */
