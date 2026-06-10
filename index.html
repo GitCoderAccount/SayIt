@@ -2087,6 +2087,18 @@ body.mode-settings #mobile-fab { display:none; }
 }
 .repost-card-name { font-size:13px; font-weight:700; }
 .repost-card-body { font-size:14px; color:var(--text); line-height:1.5; word-break:break-word; }
+/* Privacy-strict embed facades: neutral local card, no third-party fetch */
+.yt-facade-private {
+  aspect-ratio:16/9; display:flex; align-items:center; justify-content:center;
+  background:var(--bg-mid); border:1px solid var(--border);
+}
+.post-yt-private-label {
+  display:flex; flex-direction:column; align-items:center; gap:6px;
+  color:var(--text); font-weight:700; font-size:16px;
+}
+.post-yt-private-label span { color:var(--muted); font-weight:400; font-size:12px; }
+.prof-media-private { background:var(--bg-mid); border:1px solid var(--border); aspect-ratio:1; }
+
 /* Explore section titles + hero thumbs */
 .explore-section-title {
   padding:14px 16px 6px; font-size:17px; font-weight:800; color:var(--text);

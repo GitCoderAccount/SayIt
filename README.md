@@ -182,6 +182,10 @@ Say It DeFi is a front-end to a public, permissionless network. Please understan
 
 By using the interface, you acknowledge that the creators and operators are not liable for content posted or actions taken on the underlying decentralized network.
 
+### Privacy
+
+This interface sets **no cookies** and uses **no analytics, telemetry, or tracking services** of any kind. The in-app Analytics page is computed entirely inside your browser from your own local cache — nothing is sent anywhere. All stored data (post cache, settings, archives) lives in your browser only and can be wiped from Settings at any time. As with any website, your IP address is technically visible to the infrastructure that serves bytes to you: the static host, the block-explorer API endpoint **you** configure, and the hosts of media **you** choose to view — none of which is operated by, or reports to, this project. Embedded YouTube/Vimeo previews are disabled by default; nothing contacts those services until you explicitly tap a video card.
+
 ### Original, independent software
 
 This application was **built from scratch** as free, open-source software. It is not affiliated with, endorsed by, or derived from any other platform or company. Any resemblance to other social applications is purely coincidental and limited to familiar user-interface conventions (timelines, replies, reposts) that are common across the industry. The entire source code is public in this repository — it may be freely inspected, shared, forked, and built upon.
