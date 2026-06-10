@@ -14,16 +14,49 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Extract inline app script
+      - name: Extract inline scripts
         run: node .ci/extract-inline-script.js index.html .ci/app.extracted.js
 
       - name: Syntax check (node --check)
         run: |
           node --check .ci/app.extracted.js
+          node --check .ci/head.extracted.js
           node --check sw.js
 
       - name: ESLint (catches undefined references, etc.)
+        # --no-ignore is load-bearing: ESLint 8 silently skips files inside
+        # dot-directories (like .ci/) by default — without it this step
+        # passes without linting the app code at all.
         run: >
           npx --yes eslint@8.57.1
-          --no-eslintrc --config .ci/eslintrc.json
-          .ci/app.extracted.js sw.js
+          --no-eslintrc --no-ignore --config .ci/eslintrc.json
+          .ci/app.extracted.js .ci/head.extracted.js sw.js
+
+      - name: Protocol unit tests
+        run: node --test .ci/test/*.test.js
+
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Playwright
+        run: |
+          pip install playwright
+          playwright install --with-deps chromium
+
+      - name: Boot smoke test
+        run: python3 .ci/smoke.py /tmp/smoke.png
+
+      - name: Upload screenshot on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-screenshot
+          path: /tmp/smoke.png
+          if-no-files-found: ignore

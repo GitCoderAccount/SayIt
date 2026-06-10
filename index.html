@@ -21,6 +21,16 @@
 <link rel="manifest" href="./manifest.json">
 <link rel="apple-touch-icon" href="./image1.jpeg">
 <meta name="theme-color" content="#7c4dff">
+<!-- Interim CSP. What it buys today: blocks loading attacker-controlled
+     external scripts, eval(), plugins, <base> hijacks, form exfil, and
+     arbitrary iframes. script-src must keep 'unsafe-inline' until the
+     inline onclick/onerror handlers are converted to delegated listeners
+     (tracked in AUDIT.md) — at that point drop it for real XSS containment.
+     img/media/connect stay open by design: user media may live on any host
+     (IPFS, Arweave, any gateway) and the explorer/RPC endpoints are
+     user-configurable in Settings. frame-ancestors can't be set via a meta
+     tag (header-only, and GitHub Pages can't send custom headers). -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * data: blob:; connect-src *; frame-src https://www.youtube-nocookie.com https://player.vimeo.com; object-src 'none'; base-uri 'self'; form-action 'none'; worker-src 'self'; manifest-src 'self'">
 <script>/* Apply saved appearance prefs before first paint to avoid a flash of the wrong
    colors / size / motion. Theme, forced reduce-motion, and display zoom. */
 try {
@@ -30,7 +40,7 @@ try {
   if (_s.reduceMotion) _de.classList.add('force-reduce-motion');
   if (_s.displayZoom && String(_s.displayZoom) !== '1') _de.style.zoom = _s.displayZoom;
 } catch (e) {}</script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js" integrity="sha384-Htz1SE4Sl5aitpvFgr2j0sfsGUIuSXI6t8hEyrlQ93zflEF3a29bH2AvkUROUw7J" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.15.0/ethers.umd.min.js" integrity="sha384-OwtfwhPoP4aGLIw192UbPWjNbSkb7AllEbIhEJ01Yp8MxhNLLNUMA+DSjh6Zct05" crossorigin="anonymous"></script>
 <style>
 /* ── Variables ──────────────────────────────────────────────────────────── */
 :root {
@@ -825,7 +835,10 @@ nav { flex:1; padding:4px 0; }
   border-radius:9999px; transition:background 0.2s, border-color 0.2s;
 }
 .explore-search-bar:focus-within { background:var(--bg-dark); border-color:var(--primary); }
-.explore-search-bar .search-icon { font-size:15px; color:var(--muted); flex-shrink:0; }
+/* Icon sits inline in the flex bar (override the absolute positioning the
+   sidebar .search-icon rule sets — without this it escapes the bar and
+   floats at the page's left edge). */
+.explore-search-bar .search-icon { position:static; transform:none; font-size:15px; color:var(--muted); flex-shrink:0; }
 .xp-search-input {
   flex:1; min-width:0; background:transparent; border:0; outline:none;
   color:var(--text); font-size:15px; padding:2px 0;
@@ -1244,6 +1257,8 @@ nav { flex:1; padding:4px 0; }
   transition:background 0.2s, transform 0.15s;
 }
 #mobile-fab:hover { background:var(--primary-lt); transform:scale(1.05); }
+/* No composing from Settings — and the FAB overlapped its action buttons. */
+body.mode-settings #mobile-fab { display:none; }
 #mobile-connect {
   display:none; position:fixed; bottom:calc(84px + env(safe-area-inset-bottom)); right:16px; z-index:91;
   padding:13px 22px; border:none; border-radius:9999px;
@@ -1563,6 +1578,14 @@ nav { flex:1; padding:4px 0; }
   #app  { max-width:100%; }
   .modal { padding:16px; }
   #toast { bottom:76px; }
+  /* Compose toolbar: the right group (draft hint + char ring + divider +
+     expand + Post) overflowed narrow viewports, clipping the Post button.
+     The expand control is desktop-oriented (inline compose already fills a
+     phone screen); drop it and its divider, tighten the gap, and let the
+     draft hint truncate instead of pushing the row wider. */
+  .compose-right { gap:6px; min-width:0; }
+  .compose-right .cmp-divider, .compose-right .expand-btn { display:none; }
+  .draft-saved-hint { max-width:70px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   /* No forced banner on mobile — the JS shows it only on channel/profile
      views and hides it on the main feed. */
 }
@@ -2122,6 +2145,10 @@ nav { flex:1; padding:4px 0; }
 .prof-handle {
   font-size:15px; color:var(--muted); font-family:monospace;
   margin-top:2px; cursor:pointer; display:inline-block;
+  /* Truncate the 42-char address on narrow screens instead of overflowing
+     the viewport (click-to-copy still copies the full address). */
+  max-width:100%; overflow:hidden; text-overflow:ellipsis;
+  white-space:nowrap; vertical-align:bottom;
 }
 .prof-handle:hover { text-decoration:underline; color:var(--primary-lt); }
 .prof-bio {
@@ -2806,7 +2833,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260607-107';
+const SW_CACHE_VER = '20260609-108';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -2902,6 +2929,32 @@ const utils = {
   loading(show, label = 'Publishing…') {
     document.getElementById('loading-overlay').classList.toggle('on', show);
     document.getElementById('loading-label').textContent = label;
+  },
+  /* ── Explorer-response validation (ingestion gate) ──────────────────────
+     The block explorer API is an input, not an oracle: the endpoint is
+     user-configurable and network-supplied, so a malicious or compromised
+     explorer must not be able to inject scriptable values. tx.hash/from/to
+     end up interpolated into inline-handler JS-string contexts where
+     HTML-entity escaping is decoded away before the JS engine runs — their
+     only real protection is strict shape validation here. Malformed numeric
+     fields are stripped (not dropped) so downstream Number()/Date fallbacks
+     engage instead of producing NaN. */
+  isTxShape(tx) {
+    if (!tx || typeof tx !== 'object') return false;
+    if (!/^0x[0-9a-f]{64}$/i.test(tx.hash  || '')) return false;
+    if (!/^0x[0-9a-f]{40}$/i.test(tx.from  || '')) return false;
+    /* tx.to is null/'' for contract creation — allow; otherwise strict. */
+    if (tx.to != null && tx.to !== '' && !/^0x[0-9a-f]{40}$/i.test(tx.to)) return false;
+    return true;
+  },
+  _stripBadNumerics(tx) {
+    if (tx.timeStamp   != null && !/^\d+$/.test(String(tx.timeStamp)))   delete tx.timeStamp;
+    if (tx.blockNumber != null && !/^\d+$/.test(String(tx.blockNumber))) delete tx.blockNumber;
+    return tx;
+  },
+  sanitizeTxs(list) {
+    if (!Array.isArray(list)) return [];
+    return list.filter(tx => this.isTxShape(tx)).map(tx => this._stripBadNumerics(tx));
   },
   safe(str) {
     /* Escapes for BOTH text and attribute contexts. The old textContent→
@@ -4533,7 +4586,12 @@ class SayIt {
     /* 200 followed addresses — generous cap for the parallel fetch strategy */
     const addrs = [...this.state.following].slice(0, 200);
     if (!addrs.length) return;
-    const known = new Set(this._postHashSet || this.state.posts.map(p => p.txHash));
+    /* Skip only posts that already RENDER in the Following view (current
+       state.posts + the extra store). NOT _postHashSet — that set keeps every
+       hash ever loaded, including posts long since capped out of state.posts,
+       which made their authors silently vanish from the Following feed over
+       a long session. */
+    const known = new Set(this.state.posts.map(p => p.txHash));
     if (this._followingExtra) for (const h of this._followingExtra.keys()) known.add(h);
     let newPosts = [];
     /* Fetch pages from each followed address, 5 addresses at a time.
@@ -4569,6 +4627,11 @@ class SayIt {
       const batch = addrs.slice(i, i + BATCH);
       const results = await Promise.allSettled(
         batch.map(async addr => {
+          /* Sent-only fetch first: guarantees the account's own latest posts
+             even when received engagement floods their mixed txlist. */
+          const sent = await this._apiFetchSentTxs(addr);
+          if (sent) return sent;
+          /* Fallback: compat txlist pages (endpoint without a v2 API). */
           const pages = [];
           for (let pg = 1; pg <= pagesPerAddr; pg++) {
             try {
@@ -4595,9 +4658,14 @@ class SayIt {
           if (!tx.input || tx.input === '0x') return;
           const parsed = this._parsePostTx(tx, { mode: 'main' });
           if (!parsed) return;
-          // Extra guard: ensure belongs to this addr (defensive)
+          /* Only the followed account's OWN posts — their txlist also contains
+             received txs authored by others. But any destination channel is
+             fine: a followed account's posts and replies belong in Following
+             wherever they posted them (matches X). The old to===main-or-self
+             restriction silently dropped their posts to other channels and
+             inboxes, which was a root cause of "Following shows only one
+             account". Content filters still apply at render. */
           if (parsed.reporter?.toLowerCase() !== addr.toLowerCase()) return;
-          if (parsed.to && parsed.to !== MAIN_CHANNEL && parsed.to !== addr) return;
           known.add(hash);
           newPosts.push(parsed);
         });
@@ -4760,7 +4828,7 @@ class SayIt {
           const voter = tx.from?.toLowerCase();
           if (!voter || voter === me) continue; /* skip my own votes */
           let text;
-          try { text = ethers.utils.toUtf8String(tx.input).trim(); }
+          try { text = ethers.toUtf8String(tx.input).trim(); }
           catch { continue; }
           if (!text.startsWith(VOTE_PREFIX)) continue;
           const m = text.match(/^VOTE:(0x[a-f0-9]{64}):(\d+)/i);
@@ -4984,7 +5052,7 @@ class SayIt {
           if (to !== this.state.signerAddr || from === this.state.signerAddr) return;
           if (!tx.input || tx.input === '0x') return;
           try {
-            const text = ethers.utils.toUtf8String(tx.input).trim();
+            const text = ethers.toUtf8String(tx.input).trim();
             if (text.startsWith(PROFILE_PREFIX)) return;
             if (text.startsWith(BOOKMARK_PREFIX) || text.startsWith(UNBOOKMARK_PREFIX)) return;
             if (text.startsWith(UNLIKE_PREFIX)) return;
@@ -5231,7 +5299,7 @@ class SayIt {
 
   async goCustom() {
     const raw = this.g('custom-input').value.trim().toLowerCase();
-    if (!ethers.utils.isAddress(raw)) { utils.toast('Invalid address'); return; }
+    if (!ethers.isAddress(raw)) { utils.toast('Invalid address'); return; }
     this._setRoute('/channel/' + raw);
     this.setNav(null, null);
     this.state.mode    = 'custom';
@@ -5906,6 +5974,9 @@ class SayIt {
     this._updateTitle('Settings');
     this._setRoute('/settings');
     this.setNav(null, null);
+    /* Hide the mobile compose FAB here — it has no purpose on Settings and
+       overlapped the API-settings action buttons on phones. */
+    document.body.classList.add('mode-settings');
     this.state.mode = 'settings';
     this.g('compose-area').style.display   = 'none';
     this.g('channel-banner').style.display = 'none';
@@ -5977,7 +6048,7 @@ class SayIt {
           const partner = (from === this.state.signerAddr) ? to : from;
           if (!partner || partner === this.state.signerAddr || partner === MAIN_CHANNEL) return;
           try {
-            const text = ethers.utils.toUtf8String(tx.input).trim();
+            const text = ethers.toUtf8String(tx.input).trim();
             if (text.startsWith(PROFILE_PREFIX)) return;
             if (text.startsWith(LIKE_PREFIX) || text.startsWith(UNLIKE_PREFIX)) return;
             if (text.startsWith(BOOKMARK_PREFIX) || text.startsWith(UNBOOKMARK_PREFIX)) return;
@@ -6187,7 +6258,7 @@ class SayIt {
   _openChannelFromInput() {
     const val = this.g('ch-new-input')?.value.trim().toLowerCase();
     if (!val) return;
-    if (!ethers.utils.isAddress(val)) { utils.toast('Invalid address'); return; }
+    if (!ethers.isAddress(val)) { utils.toast('Invalid address'); return; }
     this.g('custom-input').value = val;
     this.goCustom();
   }
@@ -6652,6 +6723,9 @@ class SayIt {
     this._navToken++;   /* invalidate any in-flight view render */
     this.hideProfilePopup?.();
     this._threadBackOverride = false;
+    /* Per-view body marker — views that need view-scoped CSS (e.g. hiding
+       the compose FAB on Settings) re-add their class after calling setNav. */
+    document.body.classList.remove('mode-settings');
     this._profileScanCache = {}; /* clear stale profile scan data on navigation */
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.mn-btn').forEach(b => b.classList.remove('active'));
@@ -6853,7 +6927,7 @@ class SayIt {
   _getReadProvider() {
     if (!this._readProvider) {
       const s = this._getSettings();
-      this._readProvider = new ethers.providers.JsonRpcProvider(
+      this._readProvider = new ethers.JsonRpcProvider(
         s.rpcUrl || 'https://rpc.pulsechain.com', PULSE_CHAIN_ID);
     }
     return this._readProvider;
@@ -6913,7 +6987,7 @@ class SayIt {
             for (const tx of raw) {
               if (tx.from?.toLowerCase() !== editor || !tx.input || tx.input === '0x') continue;
               let text;
-              try { text = ethers.utils.toUtf8String(tx.input).trim(); } catch { continue; }
+              try { text = ethers.toUtf8String(tx.input).trim(); } catch { continue; }
               if (!text.startsWith(TOKEN_PROFILE_PREFIX)) continue;
               const m = text.match(/^PROFILE_FOR:(0x[a-f0-9]{40})\n\n([\s\S]+)$/i);
               if (!m || m[1].toLowerCase() !== key) continue;
@@ -6968,9 +7042,9 @@ class SayIt {
     const token = (address || '').toLowerCase();
     const body  = `${TOKEN_PROFILE_PREFIX}${token}\n\n${JSON.stringify(data)}`;
     try {
-      const d   = ethers.utils.hexlify(ethers.utils.toUtf8Bytes(body));
+      const d   = ethers.hexlify(ethers.toUtf8Bytes(body));
       let   gas = await this.signer.estimateGas({ to: token, value: '0', data: d });
-      gas       = gas.mul(130).div(100);
+      gas       = (gas * 130n) / 100n /* v6: estimateGas returns bigint */;
       const tx  = await this.signer.sendTransaction({ to: token, value: '0', data: d, gasLimit: gas });
       utils.toast('Publishing token profile… confirming on-chain');
       await tx.wait();
@@ -7002,7 +7076,7 @@ class SayIt {
         if (!tx.input || tx.input === '0x') return false;
         if (Number(tx.timeStamp) * 1000 <= lastCheck) return false;
         try {
-          const text = ethers.utils.toUtf8String(tx.input).trim();
+          const text = ethers.toUtf8String(tx.input).trim();
           if (text.startsWith(PROFILE_PREFIX)) return false;
           if (text.startsWith(BOOKMARK_PREFIX)) return false;
           if (text.startsWith(UNBOOKMARK_PREFIX)) return false;
@@ -7066,8 +7140,11 @@ class SayIt {
       this._wrongChain = !onPulse;
       this._reflectChainState();
       if (onPulse) {
-        /* Back on PulseChain — refresh the signer on a provider that sees it. */
-        try { this.signer = new ethers.providers.Web3Provider(eth).getSigner(); } catch {}
+        /* Back on PulseChain — refresh the signer on a provider that sees it.
+           (v6: getSigner is async; this handler is sync, so chain the promise.) */
+        new ethers.BrowserProvider(eth).getSigner()
+          .then(s => { this.signer = s; })
+          .catch(() => {});
       } else {
         /* Don't disconnect — keep the session. Posting is guarded by
            _ensureOnPulseForTx, which offers to switch back on demand. */
@@ -7092,7 +7169,7 @@ class SayIt {
     const eth = this._getEthereum();
     if (!eth) return;
     try {
-      const prov = new ethers.providers.Web3Provider(eth);
+      const prov = new ethers.BrowserProvider(eth);
       const accs = await prov.listAccounts();
       if (accs.length && utils.safeLS.get('sayitConnected') === '1') {
         /* Don't auto-reconnect on the wrong network. connect() switches the
@@ -7103,8 +7180,9 @@ class SayIt {
            leave an active signer on the wrong chain, and the next post/like
            would fire a tx there (wasted gas; never appears in-app). Stay
            disconnected; the user can click Connect, which runs the switch. */
-        if ((await prov.getNetwork()).chainId !== PULSE_CHAIN_ID) return;
-        this.signer = prov.getSigner();
+        /* v6: chainId is a bigint — compare as Number. */
+        if (Number((await prov.getNetwork()).chainId) !== PULSE_CHAIN_ID) return;
+        this.signer = await prov.getSigner();
         this.state.signerAddr = (await this.signer.getAddress()).toLowerCase();
         this._registerWalletListeners();
         await this.afterConnect();
@@ -7161,7 +7239,7 @@ class SayIt {
     try { await this._ensurePulseChain(eth); } catch { /* handled below */ }
     chainId = await this._readChainWithRetry(eth);
     if (chainId === PULSE_CHAIN_ID) {
-      this.signer = new ethers.providers.Web3Provider(eth).getSigner();
+      this.signer = await new ethers.BrowserProvider(eth).getSigner();
       this._wrongChain = false;
       this._reflectChainState();
       return true;
@@ -7231,7 +7309,7 @@ class SayIt {
     }
     this._connecting = true;
     try {
-      const prov = new ethers.providers.Web3Provider(eth);
+      const prov = new ethers.BrowserProvider(eth);
       /* Request accounts FIRST. Mobile wallets (MetaMask/Rabby) often won't
          honor a network switch until the dApp is actually connected, and doing
          it first avoids the switch-then-connect ordering that made mobile
@@ -7249,8 +7327,8 @@ class SayIt {
         }
       }
       /* Fresh provider so the signer/network reflect the (just-switched) chain. */
-      const liveProv = new ethers.providers.Web3Provider(eth);
-      this.signer = liveProv.getSigner();
+      const liveProv = new ethers.BrowserProvider(eth);
+      this.signer = await liveProv.getSigner();
       this.state.signerAddr = (await this.signer.getAddress()).toLowerCase();
       this._wrongChain = false;
       this._reflectChainState();
@@ -7354,7 +7432,7 @@ class SayIt {
           if (from !== this.state.signerAddr) return; /* only my sent txs */
           if (!tx.input || tx.input === '0x') return;
           try {
-            const text = ethers.utils.toUtf8String(tx.input).trim();
+            const text = ethers.toUtf8String(tx.input).trim();
             /* UNLIKE check before LIKE (defensive ordering — neither
                startsWith would clash but readability matters). */
             if (text.startsWith(UNLIKE_PREFIX)) {
@@ -7426,7 +7504,7 @@ class SayIt {
           if (tx.from?.toLowerCase() !== this.state.signerAddr) continue;
           if (tx.to?.toLowerCase()   !== this.state.signerAddr) continue;
           try {
-            const text = ethers.utils.toUtf8String(tx.input).trim();
+            const text = ethers.toUtf8String(tx.input).trim();
             if (!text.startsWith(PROFILE_PREFIX)) continue;
             const data = JSON.parse(text.slice(PROFILE_PREFIX.length).trim());
             this.applyProfile(data);
@@ -7528,7 +7606,7 @@ class SayIt {
             if (tx.from?.toLowerCase() !== address ||
                 tx.to?.toLowerCase()   !== address) continue;
             try {
-              const text = ethers.utils.toUtf8String(tx.input).trim();
+              const text = ethers.toUtf8String(tx.input).trim();
               if (!text.startsWith(PROFILE_PREFIX)) continue;
               const data = JSON.parse(text.slice(PROFILE_PREFIX.length).trim());
               this.state.profCache[address] = {
@@ -8038,7 +8116,7 @@ class SayIt {
             const order = (Number(tx.blockNumber) || 0) * 100000
                         + (Number(tx.transactionIndex) || 0);
             try {
-              const text = ethers.utils.toUtf8String(tx.input).trim();
+              const text = ethers.toUtf8String(tx.input).trim();
               let tgt = null, action = null;
               if (text.startsWith(FOLLOW_PREFIX)) {
                 tgt = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase(); action = 'follow';
@@ -8135,7 +8213,7 @@ class SayIt {
           const order = (Number(tx.blockNumber) || 0) * 100000
                       + (Number(tx.transactionIndex) || 0);
           try {
-            const text = ethers.utils.toUtf8String(tx.input).trim();
+            const text = ethers.toUtf8String(tx.input).trim();
             let action = null;
             if (text.startsWith(FOLLOW_PREFIX)) {
               const target = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
@@ -8301,7 +8379,7 @@ class SayIt {
           const order = (Number(tx.blockNumber) || 0) * 100000
                       + (Number(tx.transactionIndex) || 0);
           try {
-            const text = ethers.utils.toUtf8String(tx.input).trim();
+            const text = ethers.toUtf8String(tx.input).trim();
             let tgt = null, action = null;
             if (text.startsWith(FOLLOW_PREFIX)) {
               tgt = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase(); action = 'follow';
@@ -8372,7 +8450,7 @@ class SayIt {
           const order = (Number(tx.blockNumber) || 0) * 100000
                       + (Number(tx.transactionIndex) || 0);
           try {
-            const text = ethers.utils.toUtf8String(tx.input).trim();
+            const text = ethers.toUtf8String(tx.input).trim();
             let action = null;
             if (text.startsWith(FOLLOW_PREFIX)) {
               const target = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
@@ -8511,9 +8589,21 @@ class SayIt {
         const cacheKey = `${address}_${_limit}`;
         let raw = this._profileScanCache[cacheKey];
         if (!raw) {
-          /* Initial paint: scan only a few pages so posts appear immediately;
-             deeper history streams in via fetchProfileMore (scroll / fill). */
-          raw = await this._scanProfilePages(address, PROFILE_INIT_PAGES);
+          /* Initial paint: a sent-only fetch (guarantees the profile's own
+             latest posts even when received engagement floods the mixed
+             txlist pages) merged with a shallow page scan; deeper history
+             streams in via fetchProfileMore (scroll / fill). */
+          const [sent, paged] = await Promise.all([
+            this._apiFetchSentTxs(address),
+            this._scanProfilePages(address, PROFILE_INIT_PAGES),
+          ]);
+          if (sent?.length) {
+            const seen = new Set(sent.map(t => t.hash.toLowerCase()));
+            raw = [...sent, ...(paged || []).filter(t => !seen.has(t.hash?.toLowerCase()))];
+            raw.sort((a, b) => Number(b.timeStamp || 0) - Number(a.timeStamp || 0));
+          } else {
+            raw = paged;
+          }
           /* Cache for 60s — covers all tab switching */
           this._profileScanCache[cacheKey] = raw;
           setTimeout(() => { delete this._profileScanCache[cacheKey]; }, 60_000);
@@ -8763,7 +8853,7 @@ class SayIt {
     const contractAddr = this.g('nft-contract').value.trim().toLowerCase();
     const tokenIdRaw   = this.g('nft-token-id').value.trim();
     const status       = this.g('nft-status');
-    if (!ethers.utils.isAddress(contractAddr)) { status.textContent = '✗ Invalid contract'; return; }
+    if (!ethers.isAddress(contractAddr)) { status.textContent = '✗ Invalid contract'; return; }
     if (!tokenIdRaw || isNaN(tokenIdRaw))       { status.textContent = '✗ Invalid token ID'; return; }
     if (!this.signer)                            { status.textContent = '✗ Connect wallet first'; return; }
     status.textContent = '⟳ Fetching…';
@@ -8829,7 +8919,9 @@ class SayIt {
         if (res.ok) {
           try {
             const data = await res.json();
-            return (data.status === '1' && Array.isArray(data.result)) ? data.result : [];
+            /* Ingestion gate: drop malformed txs so no explorer-supplied
+               value can reach a render path unvalidated. */
+            return (data.status === '1' && Array.isArray(data.result)) ? utils.sanitizeTxs(data.result) : [];
           } catch (err) {
             lastErr = err; /* malformed JSON — retry */
             continue;
@@ -8852,6 +8944,45 @@ class SayIt {
       }
       throw err;
     }
+  }
+
+  /* Fetch only an address's SENT transactions via the Blockscout v2 API
+     (filter=from), newest first. The etherscan-compat txlist mixes sent and
+     received txs, and a popular account's received engagement (every like/
+     follow/reply lands as a tx TO them) buries their own posts beyond any
+     reasonable page window — the root cause of Following feeds and profiles
+     showing only some accounts. One filtered request covers an account's
+     last 50 posts regardless of how much engagement they receive.
+     Returns a sanitized etherscan-shaped array, or null when the configured
+     endpoint doesn't speak v2 (caller falls back to the compat txlist). */
+  async _apiFetchSentTxs(addr) {
+    if (!/^0x[0-9a-f]{40}$/i.test(addr || '')) return null;
+    const s = this._getSettings();
+    const base = (s.apiUrl || 'https://api.scan.pulsechain.com/api').replace(/\/api\/?$/, '');
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 15000);
+      let res;
+      try {
+        res = await fetch(`${base}/api/v2/addresses/${addr}/transactions?filter=from`,
+          { signal: ctrl.signal });
+      } finally { clearTimeout(timer); }
+      if (!res.ok) return null;
+      const d = await res.json();
+      if (!Array.isArray(d?.items)) return null;
+      /* Map the v2 shape onto the etherscan-compat shape every parser
+         expects, then through the standard ingestion gate. */
+      return utils.sanitizeTxs(d.items.map(it => ({
+        hash:  it.hash,
+        from:  it.from?.hash,
+        to:    it.to?.hash ?? null,
+        input: it.raw_input,
+        timeStamp: it.timestamp
+          ? String(Math.floor(new Date(it.timestamp).getTime() / 1000)) : undefined,
+        blockNumber: it.block_number ?? it.block ?? undefined,
+        transactionIndex: it.position ?? undefined,
+      })));
+    } catch { return null; }
   }
 
   queryAddr() {
@@ -8947,7 +9078,7 @@ class SayIt {
     if (!hash) return null;
     if (!tx.input || tx.input === '0x') return null;
     let text;
-    try { text = ethers.utils.toUtf8String(tx.input).trim(); }
+    try { text = ethers.toUtf8String(tx.input).trim(); }
     catch { return null; }
     if (!text) return null;
     /* Non-post payloads that never render as feed items. */
@@ -9005,7 +9136,7 @@ class SayIt {
       const from = tx.from?.toLowerCase();
       const to   = tx.to?.toLowerCase();
       let raw;
-      try { raw = ethers.utils.toUtf8String(tx.input).trim(); }
+      try { raw = ethers.toUtf8String(tx.input).trim(); }
       catch { return acc; }
       if (!raw) return acc;
 
@@ -9861,13 +9992,18 @@ class SayIt {
        much shorter preview so they don't dominate the feed (still expandable). */
     const nonText = this._isLikelyBinary(post.display);
     const previewLimit = nonText ? 140 : MAX_PREVIEW;
+    /* Binary payloads: never show the raw bytes in the collapsed feed view —
+       the mojibake under the warning label reads as a rendering bug. Show
+       the label alone; "Show more" still expands to the raw payload. */
+    const hideBinary = nonText && !inModal && !expanded;
     /* Body text + image extraction. Always run linkify on full text so
        media below the preview cap still renders in the feed. */
-    const textToRender = (!inModal && !expanded && post.display.length > previewLimit)
-      ? post.display.slice(0, previewLimit) + '…'
-      : post.display;
+    const textToRender = hideBinary ? ''
+      : (!inModal && !expanded && post.display.length > previewLimit)
+        ? post.display.slice(0, previewLimit) + '…'
+        : post.display;
     const { text: bodyHtml, images: imgHtml, embeds: embedHtml } = utils.linkify(textToRender, post.display);
-    const isLong     = !inModal && post.display.length > previewLimit;
+    const isLong     = !inModal && (nonText || post.display.length > previewLimit);
     const needsMore  = isLong && !expanded;
     const canCollapse = isLong && expanded;
     /* Repost / quote card + badges */
@@ -10073,7 +10209,7 @@ class SayIt {
         for (const tx of raw) {
           if (!tx.input || tx.input === '0x') continue;
           let text;
-          try { text = ethers.utils.toUtf8String(tx.input).trim(); }
+          try { text = ethers.toUtf8String(tx.input).trim(); }
           catch { continue; }
           if (!text.startsWith(VOTE_PREFIX)) continue;
           const m = text.match(/^VOTE:(0x[a-f0-9]{64}):(\d+)/i);
@@ -10167,9 +10303,9 @@ class SayIt {
     const channel = post.to || post.channel || this.state.channel;
     const body = `${VOTE_PREFIX}${pollHash}:${optIdx}`;
     try {
-      const data  = ethers.utils.hexlify(ethers.utils.toUtf8Bytes(body));
+      const data  = ethers.hexlify(ethers.toUtf8Bytes(body));
       let gas     = await this.signer.estimateGas({ to: channel, value: '0', data });
-      gas         = gas.mul(130).div(100);
+      gas         = (gas * 130n) / 100n /* v6: estimateGas returns bigint */;
       const tx    = await this.signer.sendTransaction({ to: channel, value: '0', data, gasLimit: gas });
       utils.toast('Vote submitted ✓ confirming on-chain…');
       await tx.wait();
@@ -10224,9 +10360,9 @@ class SayIt {
      card — the X model. Notes are gathered with ONE channel scan per render
      (throttled 60s), not per-post, so the cost matches a single poll tally. */
   async _sendTagged(channel, body) {
-    const data = ethers.utils.hexlify(ethers.utils.toUtf8Bytes(body));
+    const data = ethers.hexlify(ethers.toUtf8Bytes(body));
     let gas = await this.signer.estimateGas({ to: channel, value: '0', data });
-    gas = gas.mul(130).div(100);
+    gas = (gas * 130n) / 100n /* v6: estimateGas returns bigint */;
     return this.signer.sendTransaction({ to: channel, value: '0', data, gasLimit: gas });
   }
 
@@ -10251,7 +10387,7 @@ class SayIt {
         for (const tx of raw) {
           if (!tx.input || tx.input === '0x') continue;
           let text;
-          try { text = ethers.utils.toUtf8String(tx.input).trim(); } catch { continue; }
+          try { text = ethers.toUtf8String(tx.input).trim(); } catch { continue; }
           if (text.startsWith(NOTE_PREFIX)) {
             const m = text.match(/^NOTE:(0x[a-f0-9]{64})\n\n([\s\S]+)$/i);
             if (!m) continue;
@@ -10490,15 +10626,15 @@ class SayIt {
        covers the confirmation step; after that the user can keep using
        the app while the tx mines. Toasts report the outcome. */
     try {
-      const bytes   = ethers.utils.toUtf8Bytes(body);
-      const data    = ethers.utils.hexlify(bytes);
+      const bytes   = ethers.toUtf8Bytes(body);
+      const data    = ethers.hexlify(bytes);
       const txReq   = { to, value: '0', data };
       let   gas     = await this.signer.estimateGas(txReq);
-      gas           = gas.mul(130).div(100);
+      gas           = (gas * 130n) / 100n /* v6: estimateGas returns bigint */;
       const tx      = await this.signer.sendTransaction({ ...txReq, gasLimit: gas });
       utils.toast('Submitting to chain… you can keep browsing');
       const receipt = await tx.wait();
-      const hash    = receipt.transactionHash.toLowerCase();
+      const hash    = receipt.hash.toLowerCase(); /* v6: transactionHash → hash */
       /* Only insert an optimistic feed row for genuine feed content (plain
          post, reply, repost/quote, poll). Exclude every non-feed prefix —
          VOTE/NOTERATE/PROFILE_FOR/NOTE/LC_SYNC were missing, so those showed
@@ -10999,6 +11135,9 @@ class SayIt {
      deep-links had stopped resolving.) Falls back to the JSON-RPC node,
      enriched with the block timestamp, if v2 is unreachable. */
   async _fetchTxByHash(hash) {
+    /* Guard: hash is interpolated into the request URL below — never send
+       a malformed value to the explorer (and short-circuit junk lookups). */
+    if (!/^0x[0-9a-f]{64}$/i.test(hash || '')) return null;
     const s = this._getSettings();
     const base = (s.apiUrl || 'https://api.scan.pulsechain.com/api').replace(/\/api\/?$/, '');
     let txLike = null;
@@ -11040,6 +11179,10 @@ class SayIt {
       } catch { /* give up below */ }
     }
     if (!txLike) return null;
+    /* Same ingestion gate as apiFetch — single-tx lookups must not bypass
+       the explorer-shape validation. */
+    if (!utils.isTxShape(txLike)) return null;
+    utils._stripBadNumerics(txLike);
     const parsed = this._parsePostTx(txLike, { mode: 'main' });
     if (parsed) this._postMap.set(hash, parsed);
     return parsed;
@@ -11269,7 +11412,7 @@ class SayIt {
         raw.forEach(tx => {
           if (!tx.input || tx.input === '0x') return;
           try {
-            const text = ethers.utils.toUtf8String(tx.input).trim();
+            const text = ethers.toUtf8String(tx.input).trim();
             const m    = text.match(/^REPLY_TO:(0x[a-f0-9]{64})\n\n/i);
             if (!m || m[1].toLowerCase() !== targetHash) return;
             const display = text.slice(m[0].length).trim();
@@ -11937,7 +12080,7 @@ class SayIt {
           if (tx.hash?.toLowerCase() !== hash) continue;
           if (!tx.input || tx.input === '0x') break;
           try {
-            const text = ethers.utils.toUtf8String(tx.input).trim();
+            const text = ethers.toUtf8String(tx.input).trim();
             if (text.startsWith(PROFILE_PREFIX)) break;
             const m = text.match(/^REPLY_TO:(0x[a-f0-9]{64})\n\n/i);
             const display = m ? text.slice(m[0].length).trim() : text;
@@ -12915,9 +13058,9 @@ class SayIt {
        tx will simply fail at estimateGas, which we surface below. */
     try {
       const to    = this.state.signerAddr; /* self-tx */
-      const data  = ethers.utils.hexlify(ethers.utils.toUtf8Bytes(body));
+      const data  = ethers.hexlify(ethers.toUtf8Bytes(body));
       let gas     = await this.signer.estimateGas({ to, value: '0', data });
-      gas         = gas.mul(130).div(100);
+      gas         = (gas * 130n) / 100n /* v6: estimateGas returns bigint */;
       const tx    = await this.signer.sendTransaction({ to, value: '0', data, gasLimit: gas });
       utils.toast('Publishing lists on-chain… you can keep browsing');
       await tx.wait();
@@ -12946,7 +13089,7 @@ class SayIt {
           if (tx.from?.toLowerCase() !== this.state.signerAddr) continue;
           if (!tx.input || tx.input === '0x') continue;
           let text;
-          try { text = ethers.utils.toUtf8String(tx.input).trim(); }
+          try { text = ethers.toUtf8String(tx.input).trim(); }
           catch { continue; }
           if (!text.startsWith(LC_SYNC_PREFIX)) continue;
           try { snapshot = JSON.parse(text.slice(LC_SYNC_PREFIX.length)); break outer; }
@@ -12987,7 +13130,7 @@ class SayIt {
           if (tx.from?.toLowerCase() !== this.state.signerAddr) continue;
           if (!tx.input || tx.input === '0x') continue;
           let text;
-          try { text = ethers.utils.toUtf8String(tx.input).trim(); }
+          try { text = ethers.toUtf8String(tx.input).trim(); }
           catch { continue; }
           if (!text.startsWith(LC_SYNC_PREFIX)) continue;
           try { snapshot = JSON.parse(text.slice(LC_SYNC_PREFIX.length)); break outer; }
@@ -13147,7 +13290,7 @@ class SayIt {
     const g = id => document.getElementById(id);
     g('add-member-btn').onclick = () => {
       const a = g('add-member-addr').value.trim().toLowerCase();
-      if (!ethers.utils.isAddress(a)) { utils.toast('Invalid address'); return; }
+      if (!ethers.isAddress(a)) { utils.toast('Invalid address'); return; }
       if (list.members.includes(a)) { utils.toast('Already in this list'); return; }
       list.members.push(a);
       this._saveLists();
@@ -13360,7 +13503,7 @@ class SayIt {
       const name = g('new-comm-name')?.value.trim();
       const addr = g('new-comm-addr')?.value.trim().toLowerCase();
       if (!name) { utils.toast('Enter a community name'); return; }
-      if (!ethers.utils.isAddress(addr)) { utils.toast('Invalid channel address'); return; }
+      if (!ethers.isAddress(addr)) { utils.toast('Invalid channel address'); return; }
       if (this.state.communities.some(c => c.address === addr)) {
         utils.toast('That community already exists'); return;
       }

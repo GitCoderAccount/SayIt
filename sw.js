@@ -27,7 +27,7 @@ const STATIC_ASSETS = [
   './image1.png',
   './title_icon.png',
   /* Ethers.js from CDN — cache it so the app works offline after first load */
-  'https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/ethers/6.15.0/ethers.umd.min.js',
 ];
 
 /* Domains whose requests should NEVER be cached */
@@ -46,7 +46,7 @@ const MAX_CACHE_BYTES = 5 * 1024 * 1024; /* 5 MB */
 /* Allowed cross-origin host prefixes for static cache. Tight match so a
    future ethers version bump doesn't accidentally cache a different lib. */
 const STATIC_CDN_PATHS = [
-  'https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/',
+  'https://cdnjs.cloudflare.com/ajax/libs/ethers/6.15.0/',
 ];
 
 let currentCacheName = CACHE_NAME_PREFIX + 'v1'; /* overwritten by CACHE_VER message */
