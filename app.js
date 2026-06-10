@@ -6,7 +6,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260610-126';
+const SW_CACHE_VER = '20260610-127';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -9052,7 +9052,7 @@ class SayIt {
           aria-label="View profile" tabindex="-1"><img src="${utils.safe(picUrl)}" class="post-avatar" alt=""
           loading="lazy" onerror="this.src='image1.jpeg'"></a>
         <div class="hero-id">
-          <a class="post-name" href="#/profile/${utils.safe(post.reporter)}">${displayName}</a>${verifiedBadge}
+          <span class="hero-name-row"><a class="post-name" href="#/profile/${utils.safe(post.reporter)}">${displayName}</a>${verifiedBadge}</span>
           <span class="hero-handle" role="button" tabindex="0" data-addr="${utils.safe(post.reporter)}"
             title="Click to copy address">@${this.trunc(post.reporter)}</span>
         </div>

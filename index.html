@@ -2114,6 +2114,15 @@ body.mode-settings #mobile-fab { display:none; }
 
 /* X-style focal post on the thread page */
 .thread-orig-item .hero-hdr { display:flex; align-items:center; gap:10px; }
+.hero-name-row { display:flex; align-items:center; gap:4px; min-width:0; }
+/* Menu lives inline in the hero header (the feed's absolute/hover-hidden
+   positioning left it invisible here). */
+.thread-orig-item .hero-hdr .post-menu-btn { position:static; opacity:0.6; margin-left:auto; flex-shrink:0; }
+/* Actions spread evenly across the post width, X-style (cap like X). */
+.thread-orig-item .post-actions { justify-content:flex-start; }
+.thread-orig-item .post-actions-left { flex:1; display:flex; justify-content:space-between; max-width:425px; }
+/* Compact right-aligned Reply pill. */
+.thread-compose-bar #thread-page-reply-btn { flex:0 0 auto; width:auto; margin-left:auto; font-size:14px; }
 .hero-id { display:flex; flex-direction:column; min-width:0; flex:1; align-items:flex-start; }
 .hero-id .post-name { font-size:16px; max-width:100%; }
 .hero-handle { color:var(--muted); font-size:14px; cursor:pointer; }
