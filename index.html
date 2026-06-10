@@ -56,7 +56,7 @@ try {
   --bg-card:     #16181c;
   --border:      #2f3336;
   --text:        #e7e9ea;
-  --muted:       #71767b;
+  --muted:       #7d838a; /* 5.5:1 on #000 — comfortable WCAG AA margin (was #71767b at 4.58:1, technically passing but borderline at small sizes) */
   --green:       #00ba7c;
   --like:        #f91880;
   --neon:        0 0 8px rgba(124,77,255,0.5),0 0 20px rgba(124,77,255,0.15);
@@ -2842,7 +2842,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260610-110';
+const SW_CACHE_VER = '20260610-111';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -3344,8 +3344,10 @@ class Cache {
       tx.oncomplete = () => {
         /* Index for search in ONE batched IDB transaction instead of N.
            Was: 100 posts = 100 transactions = ~1s of overhead. */
-        this.indexPostsBatch(posts).catch(() => {}).then(() => {
-          this.pruneSearchIndex().catch(() => {});
+        /* Search indexing is best-effort, but log failures — a persistently
+           failing index silently degrades full-text search to in-memory only. */
+        this.indexPostsBatch(posts).catch(err => console.warn('Search indexing failed', err)).then(() => {
+          this.pruneSearchIndex().catch(err => console.warn('Search-index prune failed', err));
         });
         res();
       };
@@ -6487,6 +6489,13 @@ class SayIt {
           <button class="settings-btn" id="set-import">Import</button>
           <input type="file" id="set-import-file" accept="application/json,.json" style="display:none">
         </div>
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Reset settings</strong>
+            <span>Restore every setting to its default (API endpoints, appearance, filters, scan depth). Cached posts, mutes, lists &amp; communities are kept.</span>
+          </div>
+          <button class="settings-btn danger" id="set-reset-defaults">Reset to defaults</button>
+        </div>
       </div>
 
       <!-- About -->
@@ -6594,6 +6603,16 @@ class SayIt {
       const f = e.target.files?.[0];
       if (f) this._importData(f);
       e.target.value = '';
+    });
+    /* Reset every setting to defaults. Same reload pattern as import — a
+       clean boot re-applies appearance and re-reads defaults everywhere,
+       with no half-applied state. Only SETTINGS_KEY is touched: cached
+       posts, mutes, lists and communities are intentionally preserved. */
+    g('set-reset-defaults')?.addEventListener('click', () => {
+      if (!confirm('Reset all settings to their defaults? Cached posts, mutes, lists & communities are kept.')) return;
+      localStorage.removeItem(SETTINGS_KEY);
+      utils.toast('Settings reset — reloading…');
+      setTimeout(() => location.reload(), 1000);
     });
     /* Theme — apply immediately on change. */
     g('set-theme')?.addEventListener('change', () => {
@@ -12211,7 +12230,7 @@ class SayIt {
     try {
       let pending;
       try { pending = await this.cache.getPendingPosts(); }
-      catch { return; }
+      catch (err) { console.warn('Offline queue unreadable — retry skipped', err); return; }
       if (!pending.length) return;
       for (const queued of pending) {
         /* Skip if not from this wallet (different account logged in) */
