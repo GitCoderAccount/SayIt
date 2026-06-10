@@ -9,6 +9,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: SW_CACHE_VER bump guard
+        # A changed index.html without a version bump means every returning
+        # visitor's service worker keeps serving the previous build.
+        run: |
+          if git diff --name-only HEAD^ HEAD | grep -q '^index.html$'; then
+            OLD=$(git show HEAD^:index.html | grep -o "SW_CACHE_VER = '[^']*'" | head -1 || true)
+            NEW=$(grep -o "SW_CACHE_VER = '[^']*'" index.html | head -1)
+            if [ "$OLD" = "$NEW" ]; then
+              echo "::error::index.html changed but SW_CACHE_VER was not bumped"
+              exit 1
+            fi
+          fi
 
       - uses: actions/setup-node@v4
         with:

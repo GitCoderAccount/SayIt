@@ -2898,7 +2898,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260610-119';
+const SW_CACHE_VER = '20260610-120';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -4272,11 +4272,26 @@ class SayIt {
         items[idx].classList.add('active');
         items[idx].scrollIntoView({ block: 'nearest' });
       } else if (e.key === 'Enter') {
-        /* If an item is highlighted, activate it; otherwise let the normal
-           full-text search proceed (don't preventDefault). */
+        /* If an item is highlighted, activate it. Otherwise: a pasted tx
+           hash or address jumps straight to the post / profile (no need to
+           arrow down to the dropdown row first). Anything else falls
+           through to the normal full-text search (no preventDefault). */
         if (idx >= 0) {
           e.preventDefault();
           items[idx].click();
+        } else {
+          const q = e.target.value.trim().toLowerCase();
+          if (/^0x[a-f0-9]{64}$/.test(q)) {
+            e.preventDefault();
+            this._hideSearchDropdown();
+            this._clearSearch();
+            this.openThreadByHash(q);
+          } else if (/^0x[a-f0-9]{40}$/.test(q)) {
+            e.preventDefault();
+            this._hideSearchDropdown();
+            this._clearSearch();
+            this.goProfilePage(q, q === this.state.signerAddr);
+          }
         }
       }
     });
