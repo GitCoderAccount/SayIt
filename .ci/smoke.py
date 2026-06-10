@@ -23,6 +23,10 @@ Requires: pip install playwright  (and a Chromium, system or `playwright install
 import sys, os, time, http.server, socketserver, threading, functools
 from playwright.sync_api import sync_playwright
 
+# SAYIT_URL: when set (e.g. https://sayitdefi.com), smoke-test that deployed
+# site instead of serving the local checkout — used by the nightly workflow.
+TARGET_URL = os.environ.get('SAYIT_URL', '')
+
 # Repo root = parent of this file's directory (.ci/smoke.py -> repo/).
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PORT = int(os.environ.get('SAYIT_PORT', '8099'))
@@ -48,8 +52,10 @@ class Q(socketserver.TCPServer):
     allow_reuse_address = True
 
 
-httpd = Q(("127.0.0.1", PORT), Handler)
-threading.Thread(target=httpd.serve_forever, daemon=True).start()
+httpd = None
+if not TARGET_URL:
+    httpd = Q(("127.0.0.1", PORT), Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
 
 cerr, warn, perr, rfail = [], [], [], []
 with sync_playwright() as p:
@@ -60,7 +66,7 @@ with sync_playwright() as p:
           else (warn.append(m.text) if m.type == "warning" else None))
     pg.on("pageerror", lambda e: perr.append(str(e)))
     pg.on("requestfailed", lambda r: rfail.append(f"{r.url.split('?')[0]} :: {r.failure}"))
-    pg.goto(f"http://127.0.0.1:{PORT}/index.html", wait_until="domcontentloaded", timeout=30000)
+    pg.goto(TARGET_URL or f"http://127.0.0.1:{PORT}/index.html", wait_until="domcontentloaded", timeout=45000)
     try:
         pg.wait_for_function("() => typeof pulse !== 'undefined'", timeout=20000)
         booted = True
@@ -83,7 +89,7 @@ with sync_playwright() as p:
             time.sleep(2.5)
     pg.screenshot(path=SHOT, full_page=False)
     b.close()
-httpd.shutdown()
+if httpd: httpd.shutdown()
 
 print("=== SMOKE REPORT ===")
 print("app booted (typeof pulse):", booted)
