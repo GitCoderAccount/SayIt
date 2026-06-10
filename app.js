@@ -6,7 +6,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260610-135';
+const SW_CACHE_VER = '20260611-136';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -266,10 +266,12 @@ const utils = {
           /* Thumbnail + play button — iframe loads on click (faster, avoids
              Google tracking before user interaction, and works in feed context
              where autoplay is blocked by browser sandbox). */
-          imgHtml += `<div class="post-vid-wrap post-yt-facade" data-yt-id="${safeVid}">
-            <img src="https://i.ytimg.com/vi/${safeVid}/hqdefault.jpg"
+          const thumbOk = (typeof pulse !== 'undefined') && pulse._embedThumbsAllowed && pulse._embedThumbsAllowed();
+          imgHtml += `<div class="post-vid-wrap post-yt-facade${thumbOk ? '' : ' yt-facade-private'}" data-yt-id="${safeVid}">
+            ${thumbOk ? `<img src="https://i.ytimg.com/vi/${safeVid}/hqdefault.jpg"
               class="post-yt-thumb" alt="YouTube video" loading="lazy"
-              data-fallback-src="https://i.ytimg.com/vi/${safeVid}/default.jpg">
+              data-fallback-src="https://i.ytimg.com/vi/${safeVid}/default.jpg">`
+            : `<div class="post-yt-private-label">▶ YouTube video<span>Tap to load — connects to YouTube</span></div>`}
             <div class="post-yt-play">
               <svg viewBox="0 0 68 48" width="68" height="48">
                 <path d="M66.52 7.74c-.78-2.93-2.49-5.41-5.42-6.19C55.79.13 34 0 34 0S12.21.13 6.9 1.55c-2.93.78-4.63 3.26-5.42 6.19C.06 13.05 0 24 0 24s.06 10.95 1.48 16.26c.78 2.93 2.49 5.41 5.42 6.19C12.21 47.87 34 48 34 48s21.79-.13 27.1-1.55c2.93-.78 4.64-3.26 5.42-6.19C67.94 34.95 68 24 68 24s-.06-10.95-1.48-16.26z" fill="#f00"/>
@@ -1940,6 +1942,12 @@ class SayIt {
   /* Replace a YouTube/Vimeo facade thumbnail with the real autoplaying iframe.
      IDs were validated at render time (ytId: [A-Za-z0-9_-]{11}; vimeoId: \d+)
      and are URL-encoded here as defense in depth. */
+  /* Privacy gate for third-party embed PREVIEWS. Strict (default): no
+     request leaves the browser toward YouTube/Vimeo until the user
+     explicitly clicks a facade — thumbnails are replaced by a neutral
+     local card. Opt-in via Settings → Privacy. */
+  _embedThumbsAllowed() { return this._getSettings().loadEmbedThumbs === true; }
+
   _playFacade(el, muted = false) {
     const yt = el.dataset.ytId, vm = el.dataset.vimeoId;
     let src = '';
@@ -2426,6 +2434,14 @@ class SayIt {
         <p>You are solely responsible for your own actions, your wallet, your
         keys, and anything you post. On-chain transactions cost gas and cannot
         be reversed. Nothing here is financial, legal, or investment advice.</p>
+
+        <p><strong>Privacy.</strong> This interface sets no cookies and runs
+        no analytics or tracking services. Everything it stores (caches,
+        settings, archives) stays in your browser. Embedded video previews
+        are off by default — nothing contacts YouTube/Vimeo until you tap a
+        video. Your IP is visible only to the infrastructure that serves
+        you: the static host, the explorer API you configure, and hosts of
+        media you choose to view.</p>
 
         <p><strong>Original, independent software.</strong> This application
         was built from scratch as free, open-source software. It is not
@@ -4222,6 +4238,34 @@ class SayIt {
         </div>
       </div>
 
+      <!-- Privacy -->
+      <div class="settings-section">
+        <div class="settings-section-title">Privacy</div>
+        <div style="font-size:13px;color:var(--muted);line-height:1.6;padding:4px 0 12px">
+          Say It DeFi sets <strong style="color:var(--text)">no cookies</strong> and uses
+          <strong style="color:var(--text)">no analytics or tracking services</strong> — the Analytics page is computed
+          entirely inside your browser from your own local cache. Everything stored (posts cache, settings,
+          archives) lives on this device only. Your IP address is visible, as with any website, to the
+          infrastructure that serves content: the static host (GitHub Pages), the block-explorer API endpoint
+          you configure, and the hosts of any media you choose to view. Playing an embedded video connects you
+          to YouTube/Vimeo and is subject to their cookies — which is why embed previews are off by default.
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label"><strong>Load embed thumbnails</strong><span>Fetch YouTube/Vimeo preview images (connects to their servers as you scroll). Off = neutral cards; nothing contacts them until you tap.</span></div>
+          <label class="settings-switch">
+            <input type="checkbox" id="set-embed-thumbs" ${s.loadEmbedThumbs === true ? 'checked' : ''}>
+            <span class="settings-switch-slider"></span>
+          </label>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label"><strong>Autoplay video embeds</strong><span>Start embeds muted when ¾ visible (requires thumbnails; loads the player without a tap)</span></div>
+          <label class="settings-switch">
+            <input type="checkbox" id="set-autoplay-embeds" ${s.autoplayEmbeds === true ? 'checked' : ''}>
+            <span class="settings-switch-slider"></span>
+          </label>
+        </div>
+      </div>
+
       <!-- Media -->
       <div class="settings-section">
         <div class="settings-section-title">Media</div>
@@ -4229,13 +4273,6 @@ class SayIt {
           <div class="settings-row-label"><strong>Autoplay videos</strong><span>Play video files automatically (muted) as they scroll into view</span></div>
           <label class="settings-switch">
             <input type="checkbox" id="set-autoplay" ${s.autoplayMedia === false ? '' : 'checked'}>
-            <span class="settings-switch-slider"></span>
-          </label>
-        </div>
-        <div class="settings-row">
-          <div class="settings-row-label"><strong>Autoplay video embeds</strong><span>Start YouTube/Vimeo cards muted when mostly on screen (¾ visible); they stop when scrolled away</span></div>
-          <label class="settings-switch">
-            <input type="checkbox" id="set-autoplay-embeds" ${s.autoplayEmbeds === false ? '' : 'checked'}>
             <span class="settings-switch-slider"></span>
           </label>
         </div>
@@ -4525,6 +4562,13 @@ class SayIt {
     });
     /* Autoplay videos — applies on the next render; re-wire the current feed
        so the change takes effect immediately. */
+    g('set-embed-thumbs')?.addEventListener('change', () => {
+      const s = this._getSettings();
+      s.loadEmbedThumbs = g('set-embed-thumbs').checked;
+      this._saveSettings(s);
+      /* Facade markup differs per mode — re-render the feed. */
+      if (!this._selfManagedModes.has(this.state.mode)) this.renderFeed();
+    });
     g('set-autoplay-embeds')?.addEventListener('change', () => {
       const s = this._getSettings();
       s.autoplayEmbeds = g('set-autoplay-embeds').checked;
@@ -7836,7 +7880,9 @@ class SayIt {
           }
           if (!el.classList.contains('post-yt-facade')) return;
           const s2 = this._getSettings();
-          if (s2.dataSaver || s2.autoplayEmbeds === false) return;
+          /* Auto-embedding loads Google/Vimeo iframes without a click —
+             OPT-IN only, and never while strict embed privacy is on. */
+          if (s2.dataSaver || s2.autoplayEmbeds !== true || s2.loadEmbedThumbs !== true) return;
           if (entry.intersectionRatio >= 0.75) this._playFacade(el, true);
         });
       }, { threshold: [0.25, 0.75] });
@@ -7992,9 +8038,11 @@ class SayIt {
       </div>`;
     } else if (ytVid) {
       const sv = utils.safe(ytVid);
-      mediaHtml = `<div class="post-vid-wrap post-yt-facade repost-card-vidwrap" data-yt-id="${sv}">
-        <img src="https://i.ytimg.com/vi/${sv}/hqdefault.jpg" class="post-yt-thumb" alt="YouTube video" loading="lazy"
-          data-fallback-src="https://i.ytimg.com/vi/${sv}/default.jpg">
+      const thumbOk = this._embedThumbsAllowed();
+      mediaHtml = `<div class="post-vid-wrap post-yt-facade repost-card-vidwrap${thumbOk ? '' : ' yt-facade-private'}" data-yt-id="${sv}">
+        ${thumbOk ? `<img src="https://i.ytimg.com/vi/${sv}/hqdefault.jpg" class="post-yt-thumb" alt="YouTube video" loading="lazy"
+          data-fallback-src="https://i.ytimg.com/vi/${sv}/default.jpg">`
+        : `<div class="post-yt-private-label">▶ YouTube video<span>Tap to load — connects to YouTube</span></div>`}
         <div class="post-yt-play">
           <svg viewBox="0 0 68 48" width="68" height="48">
             <path d="M66.52 7.74c-.78-2.93-2.49-5.41-5.42-6.19C55.79.13 34 0 34 0S12.21.13 6.9 1.55c-2.93.78-4.63 3.26-5.42 6.19C.06 13.05 0 24 0 24s.06 10.95 1.48 16.26c.78 2.93 2.49 5.41 5.42 6.19C12.21 47.87 34 48 34 48s21.79-.13 27.1-1.55c2.93-.78 4.64-3.26 5.42-6.19C67.94 34.95 68 24 68 24s-.06-10.95-1.48-16.26z" fill="#f00"/>
@@ -10885,6 +10933,9 @@ class SayIt {
         <span class="prof-media-play">▶</span></div>`;
     }
     if (it.type === 'yt') {
+      if (!this._embedThumbsAllowed()) {
+        return `<div class="prof-media-cell prof-media-private" ${open}><span class="prof-media-play">▶</span></div>`;
+      }
       return `<div class="prof-media-cell" ${open}>
         <img src="${utils.safe(it.thumb)}" class="prof-media-thumb" loading="lazy" data-fallback="hide">
         <span class="prof-media-play">▶</span></div>`;
