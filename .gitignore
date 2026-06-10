@@ -1,2 +1,3 @@
-# CI lint artifact (generated from index.html's inline script)
+# CI lint artifacts (generated from index.html's inline scripts)
 .ci/app.extracted.js
+.ci/head.extracted.js
