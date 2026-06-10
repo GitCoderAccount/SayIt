@@ -6,7 +6,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260610-130';
+const SW_CACHE_VER = '20260610-131';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -9230,10 +9230,9 @@ class SayIt {
     const ancestors = this.state.threadAncestors || [];
     let ancestorsHTML = '';
     if (ancestors.length) {
-      ancestorsHTML = `<div style="padding:8px 16px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--border)">↑ ${ancestors.length} ancestor post${ancestors.length > 1 ? 's' : ''}</div>`;
       ancestors.forEach(anc => {
         this._postMap.set(anc.txHash, anc);
-        ancestorsHTML += `<div class="post-item thread-ancestor-item" data-txhash="${utils.safe(anc.txHash)}" style="opacity:0.85;border-bottom:1px solid var(--border)">${this.postHTML(anc, true, null, null)}</div>`;
+        ancestorsHTML += `<div class="post-item thread-ancestor-item" data-txhash="${utils.safe(anc.txHash)}">${this.postHTML(anc, true, null, null)}</div>`;
       });
     }
 
@@ -9253,7 +9252,10 @@ class SayIt {
       repliesHTML += `<div class="post-item thread-reply-item${posClass}" data-txhash="${utils.safe(r.txHash)}">${this.postHTML(r, true, null, null)}</div>`;
     });
 
-    const threadHeader = this._applyPageHeader();
+    /* Keep the header already in the feed — the ancestor fetch re-renders
+       this page and _applyPageHeader() only yields the header once. */
+    const headerEl = this.g('feed').querySelector('.page-header');
+    const threadHeader = headerEl ? headerEl.outerHTML : this._applyPageHeader();
     /* X-canonical thread layout: original post at top, the reply composer
        directly beneath it, then the replies below. */
     const replyingToName = this.state.profCache[post.reporter]?.username

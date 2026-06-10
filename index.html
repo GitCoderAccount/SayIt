@@ -2115,6 +2115,14 @@ body.mode-settings #mobile-fab { display:none; }
 .ana-row-val { color:var(--muted); font-size:14px; }
 .ana-empty { color:var(--muted); font-size:14px; padding:8px 12px; }
 
+/* Ancestor chain above the focal post — connected by a thread line from
+   each ancestor's avatar down to the next row, X-style (no labels). */
+.thread-ancestor-item { position:relative; opacity:0.95; }
+.thread-ancestor-item::after {
+  content:''; position:absolute; left:35px; top:60px; bottom:-2px;
+  width:2px; background:var(--border);
+}
+
 /* X-style focal post on the thread page */
 .thread-orig-item .hero-hdr { display:flex; align-items:center; gap:10px; }
 .hero-name-row { display:flex; align-items:center; gap:4px; min-width:0; }
