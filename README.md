@@ -1,6 +1,12 @@
+<p align="center">
+  <img src="image1.png" alt="Say It DeFi logo" width="120">
+</p>
+
 # Say It DeFi
 
-**Uncensorable social media, built entirely on the PulseChain blockchain.** — [sayitdefi.com](https://sayitdefi.com)
+**Uncensorable social media, built entirely on the PulseChain blockchain.** — [sayitdefi.com](https://sayitdefi.com) · [@SayItDeFi](https://x.com/SayItDeFi)
+
+![Say It DeFi — home feed](docs/screenshot.png)
 
 Say It DeFi is a decentralized social platform where every post, reply, like, follow, poll, profile, and community note lives on-chain. There is no central server storing your content, no database that can be wiped, and no company that can delete your account or silence your voice. If your wallet can sign a transaction, you can speak — and what you say is permanent, public, and owned by no one but the network itself.
 
@@ -40,7 +46,7 @@ Because all of this is just blockchain data, anyone can build their own interfac
 - **Real engagement counts** derived from chain data, not from a private server.
 
 ### Discovery
-- **For You and Following feeds** to switch between the whole network and the accounts you follow.
+- **For You and Following feeds** to switch between the whole network and the accounts you follow. The Following feed shows each followed account's own posts wherever they posted them — main timeline, their channel, token channels, or replies — fetched efficiently per-account so even accounts buried under heavy incoming engagement surface correctly.
 - **Explore** and a **trending** panel that highlights active hashtags on the network.
 - **Search** people (by display name **or** address), hashtags, and full post text. Paste a complete **0x address** and you'll get a direct jump to that account's **profile** or its **channel** — your choice.
 - **Profile hovercards** — hover any name or avatar (in the feed, followers lists, or the who-to-follow panel) for a quick profile preview without leaving the page.
@@ -160,6 +166,7 @@ Most settings are adjustable in-app under **Settings**, including:
 - The block explorer **API endpoint** (and an optional backup endpoint).
 - **Scan depth** — how many pages of chain history to read when building feeds and follower lists (set to unlimited for the deepest history, at the cost of slower scans).
 - **Feed post cap** and local cache pruning, plus buttons to clear the post cache, channel history, and offline queue.
+- **Export / Import** your settings, mutes, lists and communities as a JSON backup — and a one-click **Reset to defaults** for all settings.
 
 ---
 
@@ -178,10 +185,12 @@ By using the interface, you acknowledge that the creators and operators are not 
 
 ## Tech notes
 
-- **Single-file front-end** — the entire application is one `index.html` (HTML, CSS, and JavaScript inlined), paired with a service worker (`sw.js`) for PWA caching. No frameworks, no bundler, no build pipeline. The only runtime dependency is ethers.js, loaded from a CDN.
+- **Single-file front-end** — the entire application is one `index.html` (HTML, CSS, and JavaScript inlined), paired with a service worker (`sw.js`) for PWA caching. No frameworks, no bundler, no build pipeline. The only runtime dependency is **ethers.js v6**, loaded from a CDN with a pinned version and SRI integrity hash.
 - **Wallet & chain access** via ethers.js and the browser's injected Web3 provider; read-only contract calls (e.g. token `owner()`) use a public PulseChain RPC.
+- **Trust but verify** — the explorer API is treated as an input, not an oracle: every transaction it returns is shape-validated at ingestion before anything touches a render path, and a Content-Security-Policy restricts what the page can load and where scripts may come from.
 - **Local cache** in IndexedDB (posts, profiles, channels, search index, offline queue) keeps the timeline fast and reduces redundant chain reads.
 - **Resilient reads** — the chain-scanning layer retries with backoff and can fail over to a backup explorer endpoint; storage and external lookups (DexScreener, RPC) degrade gracefully when unavailable.
+- **Tested in CI** — every push runs syntax checks, ESLint, protocol unit tests (every payload prefix incl. malformed and adversarial shapes), and a headless-Chromium boot smoke test that fails the build if the app doesn't start.
 - **Deploys** are just a push to the static host. After changing `index.html`, bump `SW_CACHE_VER` so the service worker invalidates its cache on the next load.
 
 ---
