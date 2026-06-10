@@ -2842,7 +2842,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260610-111';
+const SW_CACHE_VER = '20260610-112';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -4265,6 +4265,82 @@ class SayIt {
 
     window.addEventListener('scroll', utils.throttle(() => this.onScroll(), 100), { passive: true });
 
+    /* ── Central delegated click handler ─────────────────────────────────
+       Replaces every template-interpolated inline onclick. Two security
+       wins: (1) values never enter a JS-string context (where HTML-attr
+       escaping is decoded away before the JS engine evaluates the handler)
+       — they ride in data attributes instead; (2) hash/address arguments
+       are format-validated again right here at the sink.
+       Bound in CAPTURE phase so cases that need to shield an enclosing
+       clickable row (the old event.stopPropagation() contract on buttons
+       inside rows) can stop propagation before row-level bubble handlers
+       fire. Note: stopPropagation from document-capture also suppresses
+       the target's own addEventListener handlers — fine for these
+       elements, whose only behavior lived in the converted inline
+       attribute. Keyboard activation still works: the global keydown
+       delegate dispatches el.click() on role="button" elements. */
+    document.addEventListener('click', e => {
+      const el = e.target.closest('[data-act]');
+      if (!el) return;
+      const arg  = el.dataset.actArg  || '';
+      const arg2 = el.dataset.actArg2 || '';
+      const isHash = /^0x[a-f0-9]{64}$/i.test(arg);
+      const isAddr = /^0x[a-f0-9]{40}$/i.test(arg);
+      switch (el.dataset.act) {
+        case 'open-thread':
+          if (isHash) this.openThreadByHash(arg.toLowerCase());
+          break;
+        case 'notif-open':
+          /* Whole notification row — but the avatar/name inside open the
+             profile popup via their own delegate; let those through. */
+          if (e.target.closest('.notif-pop')) return;
+          if (arg2 === 'tx') {
+            if (isHash) window.open('https://otter.pulsechain.com/tx/' + arg.toLowerCase(), '_blank', 'noopener,noreferrer');
+          } else if (isHash) this.openThreadByHash(arg.toLowerCase());
+          break;
+        case 'open-tx':
+          if (isHash) window.open('https://otter.pulsechain.com/tx/' + arg.toLowerCase(), '_blank', 'noopener,noreferrer');
+          break;
+        case 'share-profile':
+          e.stopPropagation();
+          if (isAddr) this._shareUrl(this._profileUrl(arg), '');
+          break;
+        case 'open-channel':
+          /* Real <a href> — modifier/middle clicks fall through to the
+             browser for open-in-new-tab. */
+          if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button === 1) return;
+          e.preventDefault(); e.stopPropagation();
+          if (isAddr) { this.g('custom-input').value = arg; this.goCustom(); }
+          break;
+        case 'modal-open-channel':
+          e.preventDefault();
+          this._closeGenericModal();
+          if (isAddr) { this.g('custom-input').value = arg; this.goCustom(); }
+          break;
+        case 'follow-toggle':
+          e.stopPropagation();
+          if (isAddr) this.toggleFollow(arg, el);
+          break;
+        case 'follow-toggle-addr':
+          e.stopPropagation();
+          if (isAddr) this.toggleFollowAddr(arg, el);
+          break;
+        case 'open-profile':
+          if (isAddr) this.goProfilePage(arg, arg2 === '1');
+          break;
+        case 'follow-more':
+          this._renderFollowListMore(el, parseInt(arg, 10) || 0);
+          break;
+        case 'open-quote':
+          e.stopPropagation();
+          if (isHash) this._openQuotedPost(arg, /^0x[a-f0-9]{40}$/i.test(arg2) ? arg2 : '');
+          break;
+        case 'search-trend':
+          this._searchTrend(arg);
+          break;
+      }
+    }, true);
+
     document.addEventListener('keydown', e => {
       const active = document.activeElement?.tagName;
       if (active === 'INPUT' || active === 'TEXTAREA') return;
@@ -5211,12 +5287,11 @@ class SayIt {
       body = '<div class="notif-list">' + filtered.map(n => {
         const time = this.relTime(n.timestamp);
         const icon = icons[n.type] || '📩';
-        const txLink = `https://otter.pulsechain.com/tx/${utils.safe(n.txHash)}`;
         /* Poll-ended is a self-notification — render the preview as the
            headline with the poll hash opening the thread, no "from" user. */
         if (n.type === 'pollend') {
           return `
-            <div class="notif-item" role="button" tabindex="0" onclick="pulse.openThreadByHash('${utils.safe(n.target)}')">
+            <div class="notif-item" role="button" tabindex="0" data-act="open-thread" data-act-arg="${utils.safe(n.target)}">
               <div class="notif-icon-wrap">${icon}</div>
               <div class="notif-body">
                 <span class="notif-label">${utils.safe(n.preview)}</span>
@@ -5234,8 +5309,8 @@ class SayIt {
            to the tx on the explorer. */
         const opensThread = n.target && ['vote', 'like', 'reply', 'repost'].includes(n.type);
         const clickAttr = opensThread
-          ? `onclick="if(event.target.closest('.notif-pop'))return;pulse.openThreadByHash('${utils.safe(n.target)}')"`
-          : `onclick="if(event.target.closest('.notif-pop'))return;window.open('${txLink}','_blank','noopener,noreferrer')"`;
+          ? `data-act="notif-open" data-act-arg="${utils.safe(n.target)}"`
+          : `data-act="notif-open" data-act-arg="${utils.safe(n.txHash)}" data-act-arg2="tx"`;
         return `
           <div class="notif-item" role="button" tabindex="0" data-from="${utils.safe(n.from)}" ${clickAttr}>
             <div class="notif-icon-wrap">${icon}</div>
@@ -7930,12 +8005,12 @@ class SayIt {
           alt="" onerror="this.src='image1.jpeg'">
         <div class="prof-actions">
           <button class="prof-edit-btn" title="Share profile" aria-label="Share profile" style="padding:6px 10px"
-            onclick="event.stopPropagation();pulse._shareUrl(pulse._profileUrl('${utils.safe(address)}'),'')">
+            data-act="share-profile" data-act-arg="${utils.safe(address)}">
             <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.48-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>
           </button>
           <a class="prof-edit-btn" title="Open channel / message" aria-label="Open this address's channel" style="padding:6px 10px;display:inline-flex;align-items:center"
             href="#/channel/${utils.safe(address)}"
-            onclick="if(event.metaKey||event.ctrlKey||event.shiftKey||event.altKey||event.button===1)return;event.preventDefault();event.stopPropagation();pulse.g('custom-input').value='${utils.safe(address)}';pulse.goCustom()">
+            data-act="open-channel" data-act-arg="${utils.safe(address)}">
             <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M1.998 5.5c0-1.381 1.119-2.5 2.5-2.5h15c1.381 0 2.5 1.119 2.5 2.5v13c0 1.381-1.119 2.5-2.5 2.5h-15c-1.381 0-2.5-1.119-2.5-2.5v-13zm2.5-.5a.5.5 0 00-.5.5v2.764l8 3.638 8-3.638V5.5a.5.5 0 00-.5-.5h-15zM19.998 10.236l-8 3.636-8-3.636V18.5a.5.5 0 00.5.5h15a.5.5 0 00.5-.5v-8.264z"/></svg>
           </a>
           <button id="prof-token-edit-btn" class="prof-edit-btn" style="display:none">Set token profile</button>
@@ -8278,7 +8353,7 @@ class SayIt {
     const isSelf      = addr === this.state.signerAddr?.toLowerCase();
     const followBtn   = (!isSelf && this.signer)
       ? `<button class="prof-follow-btn${isFollowing ? ' following' : ''}"
-          onclick="event.stopPropagation();pulse.toggleFollow('${utils.safe(addr)}', this)"
+          data-act="follow-toggle" data-act-arg="${utils.safe(addr)}"
           style="padding:6px 16px;font-size:13px">${isFollowing ? 'Following' : 'Follow'}</button>`
       : '';
     const bioLine = c.bio
@@ -8287,7 +8362,7 @@ class SayIt {
     return `
       <div class="post-item follow-list-row" data-follow-addr="${utils.safe(addr)}"
         style="cursor:pointer;display:flex;align-items:center;gap:12px;padding:12px 16px"
-        onclick="pulse.goProfilePage('${utils.safe(addr)}', ${isSelf})">
+        data-act="open-profile" data-act-arg="${utils.safe(addr)}" data-act-arg2="${isSelf ? '1' : ''}">
         <img class="follow-list-avatar" alt="" src="${pic}" data-pop-addr="${utils.safe(addr)}"
           style="width:40px;height:40px;border-radius:50%;object-fit:cover;flex-shrink:0"
           onerror="this.src='image1.jpeg'" loading="lazy">
@@ -8336,7 +8411,7 @@ class SayIt {
       if (hasMore) {
         const remaining = addrs.length - (start + PAGE_SIZE);
         listHTML += `<div style="padding:16px;text-align:center">
-          <button class="btn-ghost" onclick="pulse._renderFollowListMore(this, ${start + PAGE_SIZE})"
+          <button class="btn-ghost" data-act="follow-more" data-act-arg="${start + PAGE_SIZE}"
             style="padding:10px 24px">
             Show ${Math.min(remaining, PAGE_SIZE)} more (${remaining} remaining)
           </button>
@@ -8373,7 +8448,7 @@ class SayIt {
     if (hasMore) {
       const remaining = addrs.length - (nextStart + PAGE_SIZE);
       listHTML += `<div style="padding:16px;text-align:center">
-        <button class="btn-ghost" onclick="pulse._renderFollowListMore(this, ${nextStart + PAGE_SIZE})"
+        <button class="btn-ghost" data-act="follow-more" data-act-arg="${nextStart + PAGE_SIZE}"
           style="padding:10px 24px">
           Show ${Math.min(remaining, PAGE_SIZE)} more (${remaining} remaining)
         </button>
@@ -8697,7 +8772,7 @@ class SayIt {
           imgUrls.slice(0,60).map(({ url, txHash }) =>
             `<img src="${utils.safe(url)}" class="prof-media-thumb" loading="lazy"
               onerror="this.style.display='none'"
-              onclick="window.open('https://otter.pulsechain.com/tx/${utils.safe(txHash)}','_blank','noopener,noreferrer')">`
+              data-act="open-tx" data-act-arg="${utils.safe(txHash)}" style="cursor:pointer">`
           ).join('')
         }</div>`;
         return;
@@ -9968,7 +10043,7 @@ class SayIt {
       const origPic  = origC?.picUrl || 'image1.jpeg';
       const origBody = utils.safe(orig.display.slice(0, 200) + (orig.display.length > 200 ? '…' : ''));
       return `
-        <div class="repost-card" data-open-quote="${utils.safe(post.repostOf)}" onclick="event.stopPropagation();pulse._openQuotedPost('${utils.safe(post.repostOf)}', '${utils.safe(post.to || this.state.channel || '')}')">
+        <div class="repost-card" data-open-quote="${utils.safe(post.repostOf)}" data-act="open-quote" data-act-arg="${utils.safe(post.repostOf)}" data-act-arg2="${utils.safe(post.to || this.state.channel || '')}">
           <div class="repost-card-hdr">
             <img src="${utils.safe(origPic)}" class="repost-card-avatar" alt="" onerror="this.src='image1.jpeg'">
             <span class="repost-card-name">${origName}</span>
@@ -11612,7 +11687,7 @@ class SayIt {
     else if (isMain)  chanVal = 'Main feed';
     else {
       const label = (chanName ? esc(chanName) + ' · ' : '') + esc(this.trunc(chan));
-      chanVal = `<a href="#" style="color:var(--primary-lt)" onclick="event.preventDefault();pulse._closeGenericModal();pulse.g('custom-input').value='${esc(chan)}';pulse.goCustom()">${label} ↗</a>`;
+      chanVal = `<a href="#" style="color:var(--primary-lt)" data-act="modal-open-channel" data-act-arg="${esc(chan)}">${label} ↗</a>`;
     }
     const typeMap = { post:'Post', reply:'Reply', poll:'Poll', repost:'Repost' };
     const authorName = this.state.profCache[post.reporter]?.username;
@@ -12442,7 +12517,7 @@ class SayIt {
         winPct = Math.round((tally.counts[maxIdx] / tally.total) * 100);
       }
       return `
-        <div class="news-row" role="button" tabindex="0" onclick="pulse.openThreadByHash('${utils.safe(p.txHash)}')">
+        <div class="news-row" role="button" tabindex="0" data-act="open-thread" data-act-arg="${utils.safe(p.txHash)}">
           <div class="news-body">
             <div class="news-label">📊 Poll · Final results</div>
             <div class="news-headline">${utils.safe(p.poll.question)}</div>
@@ -12470,7 +12545,7 @@ class SayIt {
       const headline = utils.safe(headlineRaw.slice(0, 140));
       const time = this.relTime(p.timestamp);
       return `
-        <div class="news-row" role="button" tabindex="0" onclick="pulse.openThreadByHash('${utils.safe(p.txHash)}')">
+        <div class="news-row" role="button" tabindex="0" data-act="open-thread" data-act-arg="${utils.safe(p.txHash)}">
           <div class="news-body">
             <div class="news-label">${label}</div>
             <div class="news-headline">${headline}</div>
@@ -12510,7 +12585,7 @@ class SayIt {
     const top = this._computeTrends(5, 200);
 
     const trendHTML = top.map(([term, count]) =>
-      `<div class="sb-card-row" role="button" tabindex="0" onclick="pulse._searchTrend('${utils.safe(term)}')" style="cursor:pointer">
+      `<div class="sb-card-row" role="button" tabindex="0" data-act="search-trend" data-act-arg="${utils.safe(term)}" style="cursor:pointer">
         <div style="flex:1">
           <span class="trend-label">Trending on PulseChain</span>
           <span class="trend-name">${utils.safe(term)}</span>
@@ -12521,7 +12596,7 @@ class SayIt {
 
     /* Fallback when nothing trends yet — keeps the card from looking empty. */
     const fallback = (top.length === 0)
-      ? `<div class="sb-card-row" role="button" tabindex="0" onclick="pulse._searchTrend('PulseChain')" style="cursor:pointer">
+      ? `<div class="sb-card-row" role="button" tabindex="0" data-act="search-trend" data-act-arg="PulseChain" style="cursor:pointer">
           <div style="flex:1">
             <span class="trend-label">Trending on PulseChain</span>
             <span class="trend-name">#PulseChain</span>
@@ -12584,14 +12659,14 @@ class SayIt {
       const c = this.state.profCache[addr];
       const name = c?.username ? utils.safe(c.username) : this.trunc(addr);
       const pic  = c?.picUrl || 'image1.jpeg';
-      return `<div class="sb-card-row" role="button" tabindex="0" style="cursor:pointer" onclick="pulse.goProfilePage('${utils.safe(addr)}', false)">
+      return `<div class="sb-card-row" role="button" tabindex="0" style="cursor:pointer" data-act="open-profile" data-act-arg="${utils.safe(addr)}">
         <img src="${utils.safe(pic)}" class="w2f-avatar" data-pop-addr="${utils.safe(addr)}" onerror="this.src='image1.jpeg'"
           alt="" style="width:40px;height:40px;border-radius:50%;margin-right:10px;flex-shrink:0">
         <div style="flex:1;min-width:0">
           <span class="trend-name" data-pop-addr="${utils.safe(addr)}" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</span>
           <span class="trend-count">${this.trunc(addr)}</span>
         </div>
-        <button class="w2f-follow-btn" onclick="event.stopPropagation();pulse.toggleFollowAddr('${utils.safe(addr)}',this)"
+        <button class="w2f-follow-btn" data-act="follow-toggle-addr" data-act-arg="${utils.safe(addr)}"
           style="padding:6px 14px;border-radius:9999px;background:var(--primary);color:#fff;
                  font-weight:700;font-size:13px;border:0;cursor:pointer;flex-shrink:0">Follow</button>
       </div>`;
