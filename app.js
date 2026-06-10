@@ -6,7 +6,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260610-133';
+const SW_CACHE_VER = '20260610-134';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -2917,6 +2917,8 @@ class SayIt {
           if (ch) { this.g('custom-input').value = ch.dataset.exploreChannel; this.goCustom(); return; }
           const prof = e.target.closest('[data-explore-profile]');
           if (prof) { const a = prof.dataset.exploreProfile; this.goProfilePage(a, a === this.state.signerAddr); return; }
+          const goto = e.target.closest('[data-explore-goto]');
+          if (goto) { this.setExploreTab(goto.dataset.exploreGoto); return; }
         });
       }
       this._wireExploreSearch();
@@ -3113,11 +3115,42 @@ class SayIt {
 
   /* ── Trending tab: ranked terms, each taps through to a search ────────── */
   _exploreTrendingHTML() {
-    const ranked = this._computeTrends(12);
-    if (!ranked.length) {
-      return `<div class="explore-empty">No trends yet — load the feed, then check back.</div>`;
-    }
-    return ranked.map(([term, count], i) =>
+    /* X-style Explore: a "Happening now" hero of high-engagement recent
+       posts (same heuristic as the sidebar news card), the ranked trends,
+       then a short Latest preview linking into the Latest tab. */
+    const cutoff = Date.now() - 24 * 3600 * 1000;
+    const imgRe = /https?:\/\/[^\s<>"{}|\\^[\]`]+\.(jpg|jpeg|png|gif|webp|avif)/i;
+    const score = p => {
+      let sc = 0;
+      const age = (Date.now() - new Date(p.timestamp).getTime()) / 3_600_000;
+      sc += Math.max(0, 24 - age) * 2;
+      if ((p.display || '').match(/#[A-Za-z0-9_]{2,30}/)) sc += 8;
+      if (imgRe.test(p.display || '')) sc += 10;
+      if ((p.display || '').length > 80) sc += 4;
+      return sc;
+    };
+    const hero = this.state.posts
+      .filter(p => (!p.postType || p.postType === 'post') && p.display && p.display.length >= 40
+        && new Date(p.timestamp).getTime() >= cutoff)
+      .map(p => ({ p, sc: score(p) }))
+      .sort((a, b) => b.sc - a.sc).slice(0, 3).map(x => x.p);
+    const heroHtml = hero.map(p => {
+      const author = this.state.profCache[p.reporter];
+      const name = author?.username ? utils.safe(author.username) : this.trunc(p.reporter || '');
+      const text = utils.safe((p.display || '').replace(/https?:\/\/\S+/g, '').trim().slice(0, 110));
+      const im = (p.display || '').match(imgRe);
+      const thumb = im ? utils.safe(utils.safeUrl(im[0]) || '') : '';
+      return `<div class="explore-row" role="button" tabindex="0" data-act="open-thread" data-act-arg="${utils.safe(p.txHash)}">
+        <div class="explore-content">
+          <div class="explore-label">${name} · ${utils.safe(this.relTime(p.timestamp))}</div>
+          <div class="explore-name" style="font-size:15px;font-weight:700">${text}</div>
+        </div>
+        ${thumb ? `<img class="xp-hero-thumb" src="${thumb}" alt="" loading="lazy" data-fallback="hide">` : ''}
+      </div>`;
+    }).join('');
+
+    const ranked = this._computeTrends(10);
+    const trendsHtml = ranked.map(([term, count], i) =>
       `<div class="explore-row" role="button" tabindex="0" data-explore-term="${utils.safe(term)}">
         <div class="explore-rank">${i + 1}</div>
         <div class="explore-content">
@@ -3127,6 +3160,36 @@ class SayIt {
         </div>
         <div class="explore-arrow">→</div>
       </div>`).join('');
+
+    const latest = this.state.posts
+      .filter(p => (!p.postType || p.postType === 'post') && p.display
+        && !this._isLikelyBinary(p.display))
+      .slice(0, 3);
+    const latestHtml = latest.map(p => {
+      const author = this.state.profCache[p.reporter];
+      const name = author?.username ? utils.safe(author.username) : this.trunc(p.reporter || '');
+      /* Clean preview: strip URLs (media renders elsewhere); fall back to a
+         media hint when the post was only a link. */
+      let text = (p.display || '').replace(/(https?:|ipfs:|ar:|arweave:)\S+/g, '').replace(/\s{2,}/g, ' ').trim();
+      if (!text) text = utils.ytId(p.display) ? '▶ Video' : (this._postHasMedia(p.display) ? '🖼 Media post' : p.display.slice(0, 90));
+      return `<div class="explore-row" role="button" tabindex="0" data-act="open-thread" data-act-arg="${utils.safe(p.txHash)}">
+        <div class="explore-content">
+          <div class="explore-label">${name} · ${utils.safe(this.relTime(p.timestamp))}</div>
+          <div class="explore-meta" style="color:var(--text)">${utils.safe(text.slice(0, 90))}</div>
+        </div>
+      </div>`;
+    }).join('');
+
+    if (!heroHtml && !trendsHtml && !latestHtml) {
+      return `<div class="explore-empty">Nothing here yet — load the feed, then check back.</div>`;
+    }
+    return (heroHtml ? `<div class="explore-section-title">Happening now</div>${heroHtml}` : '')
+      + (trendsHtml ? `<div class="explore-section-title">Trends</div>${trendsHtml}` : '')
+      + (latestHtml ? `<div class="explore-section-title">Latest</div>${latestHtml}
+          <div class="explore-row explore-showall" role="button" tabindex="0" data-explore-goto="latest">
+            <div class="explore-content"><div class="explore-name" style="color:var(--primary-lt)">Show all latest posts</div></div>
+            <div class="explore-arrow">→</div>
+          </div>` : '');
   }
 
   /* ── People: who-to-follow, ranked by post activity ───────────────────── */
@@ -3833,6 +3896,7 @@ class SayIt {
       time: ch.lastActivity ? this.relTime(ch.lastActivity) : '',
       unread: this._channelIsUnread(ch, seen),
       following: follow.has((ch.address || '').toLowerCase()),
+      posts: ch.postCount || 0,
     }));
     const have = new Set(history.map(c => (c.address || '').toLowerCase()));
     for (const addr of follow) {
@@ -3854,7 +3918,7 @@ class SayIt {
         : `<img src="${utils.safe(e.pic)}" class="ch-hist-avatar" alt="" data-fallback-src="image1.jpeg">`;
       const right = e.unread
         ? (e.count ? `<span class="ch-hist-count">${e.count > 99 ? '99+' : e.count}</span>` : `<span class="ch-unread-dot"></span>`)
-        : '';
+        : (e.posts ? `<span class="ch-hist-posts">${e.posts > 999 ? '999+' : e.posts}</span>` : '');
       const time = e.time ? `<span class="ch-hist-time">${utils.safe(e.time)}</span>` : '';
       const open = e.special ? `data-ch-special="${e.special}"` : `data-ch-open="${utils.safe(e.addr)}"`;
       return `<div class="ch-history-item${e.unread ? ' ch-item-unread' : ''}" role="button" tabindex="0" ${open}>
