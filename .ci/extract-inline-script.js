@@ -1,50 +1,33 @@
 #!/usr/bin/env node
-/* Extracts the inline <script> blocks from index.html into .js files so
-   ESLint / `node --check` can catch bugs (e.g. references to undefined
-   functions) in the inlined code without a build step.
-
-   - The main app block (opens with a bare `<script>` line) is written to
-     the output path (default .ci/app.extracted.js), padded with blank
-     lines so reported line numbers match index.html.
-   - The head pre-paint block (opens mid-line: `<script>/* ... `) is
-     written alongside it as head.extracted.js, also line-aligned. */
+/* Prepares the lint/test artifacts in .ci/:
+   - app.extracted.js: a copy of app.js (the app code moved out of
+     index.html in the app.js split; the copy keeps every CI/test path
+     stable and line numbers now match app.js exactly).
+   - head.extracted.js: the small inline pre-paint <script> block from
+     index.html's head, line-aligned for diagnostics. */
 const fs = require('fs');
 const path = require('path');
 
 const src = process.argv[2] || 'index.html';
 const out = process.argv[3] || '.ci/app.extracted.js';
 
+const appSrc = path.join(path.dirname(src), 'app.js');
+if (!fs.existsSync(appSrc)) { console.error('app.js not found next to ' + src); process.exit(1); }
+fs.copyFileSync(appSrc, out);
+console.log(`Copied ${appSrc} -> ${out}`);
+
 const lines = fs.readFileSync(src, 'utf8').split('\n');
-
-/* ── Main app block: bare `<script>` line ── */
-const start = lines.findIndex(l => l.trim() === '<script>');
-if (start === -1) { console.error('No bare <script> block found in ' + src); process.exit(1); }
-let end = -1;
-for (let i = start + 1; i < lines.length; i++) {
-  if (lines[i].includes('</script>')) { end = i; break; }
-}
-if (end === -1) { console.error('Unterminated <script> block in ' + src); process.exit(1); }
-
-const result = lines.map((line, i) => (i > start && i < end) ? line : '');
-fs.writeFileSync(out, result.join('\n'));
-console.log(`Extracted lines ${start + 2}-${end} of ${src} -> ${out}`);
-
-/* ── Head pre-paint block: starts mid-line with `<script>` + code, ends
-   mid-line with `</script>`. Match the first such block before the main
-   one that isn't a `<script src=...>` tag. ── */
 const headOut = path.join(path.dirname(out), 'head.extracted.js');
 let headStart = -1;
-for (let i = 0; i < start; i++) {
-  const m = lines[i].match(/<script>(?!<)/);
-  if (m && !lines[i].includes('<script src=')) { headStart = i; break; }
+for (let i = 0; i < lines.length; i++) {
+  if (/<script>(?!<)/.test(lines[i]) && !lines[i].includes('<script src=')) { headStart = i; break; }
 }
 if (headStart === -1) {
-  /* No head block — write an empty placeholder so CI's node --check passes. */
   fs.writeFileSync(headOut, '');
   console.log(`No head <script> block found -> ${headOut} (empty)`);
 } else {
   let headEnd = -1;
-  for (let i = headStart; i < start; i++) {
+  for (let i = headStart; i < lines.length; i++) {
     if (lines[i].includes('</script>')) { headEnd = i; break; }
   }
   if (headEnd === -1) { console.error('Unterminated head <script> block in ' + src); process.exit(1); }

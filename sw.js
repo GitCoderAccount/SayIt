@@ -22,6 +22,7 @@ const CACHE_NAME_PREFIX = 'sayitdefi-';
 const STATIC_ASSETS = [
   './',
   './index.html',
+  './app.js',
   './manifest.json',
   './image1.jpeg',
   './image1.png',
