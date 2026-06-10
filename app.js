@@ -6,7 +6,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260610-125';
+const SW_CACHE_VER = '20260610-126';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -128,6 +128,27 @@ const utils = {
   sanitizeTxs(list) {
     if (!Array.isArray(list)) return [];
     return list.filter(tx => this.isTxShape(tx)).map(tx => this._stripBadNumerics(tx));
+  },
+  /* Extract the 11-char YouTube video id from any common URL form, or the
+     numeric Vimeo id. Shared by linkify's media cards and quote-card
+     previews. Returns null when the URL isn't a video link. */
+  ytId(url) {
+    try {
+      const u = new URL(url);
+      const h = u.hostname.replace(/^www\./, '');
+      if (!/(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com)$/i.test(h)) return null;
+      let id = '';
+      if (h === 'youtu.be')                       id = u.pathname.slice(1).split('/')[0];
+      else if (u.pathname.startsWith('/shorts/')) id = u.pathname.split('/')[2] || '';
+      else if (u.pathname.startsWith('/embed/'))  id = u.pathname.split('/')[2] || '';
+      else if (u.pathname.startsWith('/live/'))   id = u.pathname.split('/')[2] || '';
+      else                                        id = u.searchParams.get('v') || '';
+      return /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
+    } catch { return null; }
+  },
+  vimeoId(url) {
+    const m = String(url).match(/vimeo\.com\/(?:video\/)?(\d+)/i);
+    return m ? m[1] : null;
   },
   safe(str) {
     /* Escapes for BOTH text and attribute contexts. The old textContent→
@@ -1072,6 +1093,7 @@ class SayIt {
     };
 
     /* ── Top-level nav: logo, wallet, post buttons ─────────────────── */
+    this._initVideoAutoWire();
     g('logo-wrap').onclick     = () => this.goHome();
     /* Wave / PulseChain pinned rows are wired via inline onclick in the
        HTML (so they survive renderTrending's outerHTML rebuild). Wave opens
@@ -1505,6 +1527,10 @@ class SayIt {
        attribute. Keyboard activation still works: the global keydown
        delegate dispatches el.click() on role="button" elements. */
     document.addEventListener('click', e => {
+      /* Media elements inside actionable cards (e.g. a YouTube facade in a
+         quote card) handle their own clicks — let them through instead of
+         firing the card's action. */
+      if (e.target.closest('.post-yt-facade, .post-embed-playing, video.post-vid-thumb, .vid-unmute-btn')) return;
       const el = e.target.closest('[data-act]');
       if (!el) return;
       const arg  = el.dataset.actArg  || '';
@@ -1762,12 +1788,18 @@ class SayIt {
   /* Replace a YouTube/Vimeo facade thumbnail with the real autoplaying iframe.
      IDs were validated at render time (ytId: [A-Za-z0-9_-]{11}; vimeoId: \d+)
      and are URL-encoded here as defense in depth. */
-  _playFacade(el) {
+  _playFacade(el, muted = false) {
     const yt = el.dataset.ytId, vm = el.dataset.vimeoId;
     let src = '';
-    if (yt)      src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(yt)}?autoplay=1&rel=0`;
-    else if (vm) src = `https://player.vimeo.com/video/${encodeURIComponent(vm)}?autoplay=1&dnt=1`;
+    if (yt)      src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(yt)}?autoplay=1&rel=0${muted ? '&mute=1&playsinline=1' : ''}`;
+    else if (vm) src = `https://player.vimeo.com/video/${encodeURIComponent(vm)}?autoplay=1&dnt=1${muted ? '&muted=1' : ''}`;
     if (!src) return;
+    /* One playing media at a time — stop everything else first. */
+    this._stopOtherMedia(el);
+    /* Stash the facade so scrolling away can restore it (which is also how
+       an off-screen embed is stopped — iframes can't be paused reliably). */
+    el._facadeHTML = el.innerHTML;
+    el._facadeWasVimeo = el.classList.contains('post-vimeo-facade');
     const frame = document.createElement('iframe');
     frame.src = src;
     frame.className = 'post-yt-frame';
@@ -1781,6 +1813,28 @@ class SayIt {
        otherwise collapse the wrapper to 0 and hide the player). */
     el.classList.remove('post-yt-facade', 'post-vimeo-facade');
     el.classList.add('post-embed-playing');
+  }
+
+  /* Restore a playing embed back to its click-to-play facade. This is the
+     only reliable way to stop a cross-origin iframe. */
+  _revertEmbed(el) {
+    if (!el.classList.contains('post-embed-playing') || el._facadeHTML == null) return;
+    el.innerHTML = el._facadeHTML;
+    el.classList.remove('post-embed-playing');
+    el.classList.add('post-yt-facade');
+    if (el._facadeWasVimeo) el.classList.add('post-vimeo-facade');
+  }
+
+  /* Strict one-playing-media rule (owner requirement): starting ANY media —
+     native video or embed — pauses every other native video and reverts
+     every other playing embed. */
+  _stopOtherMedia(except) {
+    document.querySelectorAll('video.post-vid-thumb').forEach(v => {
+      if (v !== except && !v.paused) v.pause();
+    });
+    document.querySelectorAll('.post-embed-playing').forEach(w => {
+      if (w !== except) this._revertEmbed(w);
+    });
   }
 
   onFeedClick(e, inModal) {
@@ -7422,78 +7476,72 @@ class SayIt {
   }
 
   _wireVideoObserver(container, reset = false) {
-    const videos = container.querySelectorAll('.post-vid-thumb');
-    if (!videos.length && !reset) return;
+    /* MEDIA observer — native <video> posts AND YouTube/Vimeo embeds.
+       Native videos: pause off-screen, autoplay (muted) on-screen when the
+       setting allows. Embeds: a facade entering the viewport auto-converts
+       to a MUTED playing embed (autoplay setting permitting); any embed
+       leaving the viewport reverts to its facade — the only reliable way to
+       stop a cross-origin iframe, and it also stops click-started (sound)
+       embeds once scrolled away. Strict one-playing rule across everything
+       via _stopOtherMedia. */
+    const media = container.querySelectorAll('.post-vid-thumb, .post-yt-facade, .post-embed-playing');
+    if (!media.length && !reset) return;
     const autoplay = this._getSettings().autoplayMedia !== false;
-    /* PERSISTENT observer — created once and shared. The old code rebuilt it
-       (disconnect + new) on every call, but the virtualized feed wires items
-       one at a time, so each newly materialized post silently dropped
-       observation of every other video: off-screen videos kept playing and
-       on-screen ones never auto-played. reset=true (full re-render paths)
-       rebuilds it to release references to recycled DOM nodes.
-       Videos are observed in BOTH autoplay modes: off-screen always pauses
-       (a manually played video must not keep playing once scrolled away);
-       on-screen auto-plays only when the setting allows and the video isn't
-       in manual-controls mode. */
     if (reset && this._vidObserver) { this._vidObserver.disconnect(); this._vidObserver = null; }
     if (!this._vidObserver) {
       this._vidObserver = new IntersectionObserver(entries => {
         entries.forEach(entry => {
-          const vid = entry.target;
+          const el = entry.target;
           if (!entry.isIntersecting) {
-            /* Recycled/detached nodes report non-intersecting on their
-               initial observation — unobserve instead of "pausing" them,
-               which previously raced freshly re-rendered videos. */
-            if (!vid.isConnected) { this._vidObserver.unobserve(vid); return; }
-            vid.pause();
+            if (!el.isConnected) { this._vidObserver.unobserve(el); return; }
+            if (el.tagName === 'VIDEO') el.pause();
+            else if (el.classList.contains('post-embed-playing')) this._revertEmbed(el);
             return;
           }
-          if (this._getSettings().autoplayMedia !== false && !vid.controls) vid.play().catch(() => {});
+          if (this._getSettings().autoplayMedia === false) return;
+          if (el.tagName === 'VIDEO') {
+            if (!el.controls) el.play().catch(() => {});
+          } else if (el.classList.contains('post-yt-facade')) {
+            /* Muted viewport-autoplay, X-style. Click still gives sound. */
+            this._playFacade(el, true);
+          }
         });
-      }, { threshold: 0.3 });
+      }, { threshold: 0.5 });
     }
-    videos.forEach(v => {
-      if (autoplay && v.controls) {
-        /* Setting toggled back on: undo the controls-mode UI. */
-        v.controls = false;
-        const btn = v.parentElement?.querySelector('.vid-unmute-btn');
-        if (btn) btn.style.display = '';
-      } else if (!autoplay) {
-        /* Autoplay opt-out (Settings → Content & Feed): stop the video and
-           expose native controls — the custom unmute button is redundant
-           once controls show. Still observed (off-screen pause applies). */
-        v.removeAttribute('autoplay');
-        v.controls = true;
-        v.pause();
-        const btn = v.parentElement?.querySelector('.vid-unmute-btn');
-        if (btn) btn.style.display = 'none';
+    media.forEach(el => {
+      if (el.tagName === 'VIDEO') {
+        if (autoplay && el.controls) {
+          el.controls = false;
+          const btn = el.parentElement?.querySelector('.vid-unmute-btn');
+          if (btn) btn.style.display = '';
+        } else if (!autoplay) {
+          el.removeAttribute('autoplay');
+          el.controls = true;
+          el.pause();
+          const btn = el.parentElement?.querySelector('.vid-unmute-btn');
+          if (btn) btn.style.display = 'none';
+        }
       }
-      if (!reset && v.dataset.vidObserved === '1') return; /* already watched */
-      v.dataset.vidObserved = '1';
-      this._vidObserver.observe(v);
+      if (!reset && el.dataset.vidObserved === '1') return;
+      el.dataset.vidObserved = '1';
+      this._vidObserver.observe(el);
     });
-    /* Playback exclusivity, X-style. Muted in-feed autoplays may coexist
-       (X parity), but a DELIBERATE play — a video in native-controls mode,
-       or any unmuted video — pauses every other feed video; and unmuting
-       one video mutes the rest so only one ever has sound. Media events
-       don't bubble, so both listeners are capture-phase. Wired once. */
+    /* Strict exclusivity for natives that start by attribute/controls, and
+       single-sound via volumechange. Capture phase: media events don't
+       bubble. Wired once. */
     if (!this._singleVidWired) {
       this._singleVidWired = true;
-      const isFeedVid = v => v && v.tagName === 'VIDEO' && v.classList.contains('post-vid-thumb');
       document.addEventListener('play', e => {
         const v = e.target;
-        if (!isFeedVid(v)) return;
-        if (v.muted && !v.controls) return; /* muted auto-preview — coexists */
-        document.querySelectorAll('video.post-vid-thumb').forEach(o => {
-          if (o !== v && !o.paused) o.pause();
-        });
+        if (!v || v.tagName !== 'VIDEO' || !v.classList.contains('post-vid-thumb')) return;
+        this._stopOtherMedia(v);
       }, true);
       document.addEventListener('volumechange', e => {
         const v = e.target;
-        if (!isFeedVid(v) || v.muted) return;
+        if (!v || v.tagName !== 'VIDEO' || !v.classList.contains('post-vid-thumb') || v.muted) return;
+        this._stopOtherMedia(v);
         document.querySelectorAll('video.post-vid-thumb').forEach(o => {
-          if (o === v) return;
-          if (!o.muted) {
+          if (o !== v && !o.muted) {
             o.muted = true;
             const b = o.parentElement?.querySelector('.vid-unmute-btn');
             if (b) b.textContent = '🔇';
@@ -7502,6 +7550,27 @@ class SayIt {
       }, true);
     }
   }
+
+  /* Auto-wire safety net: a MutationObserver watches the whole page for
+     media added by ANY render path — main feed, profiles, threads,
+     bookmarks, lists, quote cards, future views — and registers it with
+     the media observer. Forgotten per-path wiring was why profile and
+     thread videos never paused off-screen. */
+  _initVideoAutoWire() {
+    if (this._videoAutoWire) return;
+    const SEL = '.post-vid-thumb, .post-yt-facade';
+    this._videoAutoWire = new MutationObserver(muts => {
+      for (const m of muts) {
+        for (const n of m.addedNodes) {
+          if (n.nodeType !== 1) continue;
+          if (n.matches?.(SEL)) { this._wireVideoObserver(n.parentElement || n); continue; }
+          if (n.querySelector?.(SEL)) this._wireVideoObserver(n);
+        }
+      }
+    });
+    this._videoAutoWire.observe(document.body, { childList: true, subtree: true });
+  }
+
 
   /* Resolve display info (avatar, name, verified badge) for a post.
      Pulls from this.state.profile if it's our own post, otherwise from
@@ -7561,19 +7630,53 @@ class SayIt {
     const name = c.username ? utils.safe(c.username) : this.trunc(orig.reporter);
     const pic  = utils.safe(utils.safeUrl(c.picUrl) || 'image1.jpeg');
     const imgs   = this._mediaImageUrls(orig.display);
-    const hasVid = _LK_VID_RE.test(orig.display.split(/\s+/).find(w => _LK_VID_RE.test(w)) || '');
-    /* Strip bare media URLs (images and videos) from the preview text;
-       what remains is the author's own words. */
-    const isMediaUrl = u => this._postHasMedia(u) || _LK_VID_RE.test(u);
+    const words  = orig.display.split(/\s+/);
+    const vidUrl = words.find(w => _LK_VID_RE.test(w) && /^(https?:|ipfs:|ar:|arweave:)/.test(w));
+    let ytVid = null, vmVid = null;
+    for (const w of words) {
+      if (!ytVid) ytVid = utils.ytId(w);
+      if (!vmVid) vmVid = utils.vimeoId(w);
+      if (ytVid || vmVid) break;
+    }
+    /* Strip media + embed URLs from the preview text; what remains is the
+       author's own words. */
+    const isMediaUrl = u => this._postHasMedia(u) || _LK_VID_RE.test(u) || !!utils.ytId(u) || !!utils.vimeoId(u);
     let text = orig.display.replace(_LK_RE, m =>
       (/^(https?:|ipfs:|ar:|arweave:)/.test(m) && isMediaUrl(m)) ? '' : m);
     text = text.replace(/\s{2,}/g, ' ').trim();
     const body = utils.safe(text.slice(0, 200) + (text.length > 200 ? '…' : ''));
-    const mediaHtml = imgs.length
-      ? `<img class="repost-card-thumb" src="${utils.safe(imgs[0])}" alt="" loading="lazy" onerror="this.style.display='none'">`
-      : hasVid
-        ? `<span class="repost-card-media">▶ Video</span>`
-        : '';
+    /* Real media in the card, like the original post: native videos get a
+       muted looping preview; YouTube/Vimeo get the same click-to-play
+       facade the feed uses (the media observer + delegated-click guard
+       treat them identically to feed media). */
+    let mediaHtml = '';
+    if (vidUrl) {
+      const safeV = utils.safe(utils.safeUrl(vidUrl.startsWith('ipfs://') ? utils.resolveIPFS(vidUrl) : vidUrl) || '');
+      if (safeV) mediaHtml = `<div class="post-vid-wrap repost-card-vidwrap">
+        <video src="${safeV}" class="post-vid-thumb" autoplay muted loop playsinline preload="metadata"
+          onerror="this.closest('.post-vid-wrap').style.display='none'"></video>
+      </div>`;
+    } else if (ytVid) {
+      const sv = utils.safe(ytVid);
+      mediaHtml = `<div class="post-vid-wrap post-yt-facade repost-card-vidwrap" data-yt-id="${sv}">
+        <img src="https://i.ytimg.com/vi/${sv}/hqdefault.jpg" class="post-yt-thumb" alt="YouTube video" loading="lazy"
+          onerror="this.src='https://i.ytimg.com/vi/${sv}/default.jpg'">
+        <div class="post-yt-play">
+          <svg viewBox="0 0 68 48" width="68" height="48">
+            <path d="M66.52 7.74c-.78-2.93-2.49-5.41-5.42-6.19C55.79.13 34 0 34 0S12.21.13 6.9 1.55c-2.93.78-4.63 3.26-5.42 6.19C.06 13.05 0 24 0 24s.06 10.95 1.48 16.26c.78 2.93 2.49 5.41 5.42 6.19C12.21 47.87 34 48 34 48s21.79-.13 27.1-1.55c2.93-.78 4.64-3.26 5.42-6.19C67.94 34.95 68 24 68 24s-.06-10.95-1.48-16.26z" fill="#f00"/>
+            <path d="M45 24 27 14v20" fill="#fff"/>
+          </svg>
+        </div>
+      </div>`;
+    } else if (vmVid) {
+      mediaHtml = `<div class="post-vid-wrap post-yt-facade post-vimeo-facade repost-card-vidwrap" data-vimeo-id="${utils.safe(vmVid)}">
+        <div class="post-yt-play" style="position:static;margin:40px auto">
+          <svg viewBox="0 0 68 48" width="68" height="48"><rect width="68" height="48" rx="10" fill="#17a2e6"/><path d="M45 24 27 14v20" fill="#fff"/></svg>
+        </div>
+      </div>`;
+    } else if (imgs.length) {
+      mediaHtml = `<img class="repost-card-thumb" src="${utils.safe(imgs[0])}" alt="" loading="lazy" onerror="this.style.display='none'">`;
+    }
     return `
       <div class="repost-card-hdr">
         <img src="${pic}" class="repost-card-avatar" alt="" onerror="this.src='image1.jpeg'">
