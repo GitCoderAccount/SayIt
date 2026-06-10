@@ -2087,6 +2087,31 @@ body.mode-settings #mobile-fab { display:none; }
 }
 .repost-card-name { font-size:13px; font-weight:700; }
 .repost-card-body { font-size:14px; color:var(--text); line-height:1.5; word-break:break-word; }
+/* Analytics page */
+.ana-page { padding:4px 16px 32px; }
+.ana-note { font-size:13px; color:var(--muted); padding:10px 0 14px; border-bottom:1px solid var(--border); }
+.ana-stats { display:flex; flex-wrap:wrap; gap:10px; padding:16px 0; }
+.ana-stat {
+  flex:1; min-width:100px; background:var(--bg-mid); border:1px solid var(--border);
+  border-radius:14px; padding:14px; text-align:center;
+}
+.ana-num { font-size:22px; font-weight:800; color:var(--text); }
+.ana-label { font-size:12px; color:var(--muted); margin-top:2px; }
+.ana-section { margin-top:18px; }
+.ana-section h3 { font-size:15px; color:var(--text); margin-bottom:10px; }
+.ana-chart { display:flex; align-items:flex-end; gap:4px; height:120px; }
+.ana-bar-col { flex:1; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; height:100%; }
+.ana-bar { width:100%; min-height:2px; background:var(--primary); border-radius:4px 4px 0 0; opacity:0.85; }
+.ana-bar-day { font-size:9px; color:var(--muted); margin-top:4px; }
+.ana-row {
+  display:flex; justify-content:space-between; padding:10px 12px;
+  border-bottom:1px solid var(--border); cursor:pointer; border-radius:8px;
+}
+.ana-row:hover { background:var(--hov-1); }
+.ana-row-name { color:var(--text); font-weight:600; }
+.ana-row-val { color:var(--muted); font-size:14px; }
+.ana-empty { color:var(--muted); font-size:14px; padding:8px 12px; }
+
 /* X-style focal post on the thread page */
 .thread-orig-item .hero-hdr { display:flex; align-items:center; gap:10px; }
 .hero-id { display:flex; flex-direction:column; min-width:0; flex:1; align-items:flex-start; }
@@ -2642,6 +2667,10 @@ html.force-reduce-motion *, html.force-reduce-motion *::before, html.force-reduc
             <span class="more-icon">🔖</span>
             <span class="more-label">Bookmarks</span>
           </button>
+          <button class="more-item" id="more-analytics">
+            <span class="more-icon">📊</span>
+            <span class="more-label">Analytics</span>
+          </button>
           <button class="more-item more-soon" disabled>
             <span class="more-icon">🎬</span>
             <span class="more-label">Creator Studio<span class="soon-tag">soon</span></span>
@@ -2898,7 +2927,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260610-121';
+const SW_CACHE_VER = '20260610-122';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -4034,6 +4063,8 @@ class SayIt {
     if (mcBtn) mcBtn.onclick = () => { this.hideMoreMenu(); this.goCommunities(); };
     const mbBtn = g('more-bookmarks-mn');
     if (mbBtn) mbBtn.onclick = () => { this.hideMoreMenu(); this.goBookmarks(); };
+    const maBtn = g('more-analytics');
+    if (maBtn) maBtn.onclick = () => { this.hideMoreMenu(); this.goAnalytics(); };
 
     document.querySelectorAll('[data-mn]').forEach(b => {
       b.onclick = (ev) => {
@@ -6166,6 +6197,85 @@ class SayIt {
     theme = theme || this._getSettings().theme || 'dark';
     if (theme === 'dim' || theme === 'light') document.documentElement.setAttribute('data-theme', theme);
     else document.documentElement.removeAttribute('data-theme');
+  }
+
+  /* ── Analytics: client-side network stats computed from the local post
+     cache + in-memory engagement maps. No server — the same data any
+     client can derive from the chain. ── */
+  async goAnalytics() {
+    this._updateTitle('Analytics');
+    this._setRoute('/analytics');
+    this.setNav(null, null);
+    this.state.mode = 'analytics';
+    this.g('compose-area').style.display   = 'none';
+    this.g('channel-banner').style.display = 'none';
+    this.g('feed-tabs').style.display      = 'none';
+    this.g('loading-more').style.display   = 'none';
+    this._pendingPageHeader = this._makePageHeader({ title: 'Analytics', noBack: true });
+    const headerHTML = this._applyPageHeader();
+    const feed = this.g('feed');
+    feed.innerHTML = headerHTML + `<div class="prof-empty"><div class="spinner" aria-hidden="true"></div><h3>Crunching the chain…</h3></div>`;
+
+    let posts = [];
+    try { posts = await this.cache.getPosts(() => true); } catch { /* cache empty */ }
+    if (this.state.mode !== 'analytics') return; /* navigated away mid-load */
+    /* Union with the in-memory feed so a fresh session still has data. */
+    const seen = new Set(posts.map(p => p.txHash));
+    this.state.posts.forEach(p => { if (!seen.has(p.txHash)) { posts.push(p); seen.add(p.txHash); } });
+
+    const feedPosts = posts.filter(p => ['post','repost','poll'].includes(p.postType) || p.parentTx);
+    const authors = new Map();
+    const types = { post: 0, reply: 0, repost: 0, poll: 0 };
+    const byDay = new Map();
+    const DAY = 86400000;
+    const today = new Date(); today.setHours(0,0,0,0);
+    for (let i = 13; i >= 0; i--) byDay.set(today.getTime() - i * DAY, 0);
+    feedPosts.forEach(p => {
+      authors.set(p.reporter, (authors.get(p.reporter) || 0) + 1);
+      const t = p.parentTx ? 'reply' : (p.postType in types ? p.postType : 'post');
+      types[t]++;
+      const d = new Date(p.timestamp); d.setHours(0,0,0,0);
+      if (byDay.has(d.getTime())) byDay.set(d.getTime(), byDay.get(d.getTime()) + 1);
+    });
+    const topAuthors = [...authors.entries()].sort((a,b) => b[1]-a[1]).slice(0, 5);
+    const trends = this._computeTrends(5, 500);
+    const maxDay = Math.max(1, ...byDay.values());
+    const fmtDay = ts => new Date(ts).toLocaleDateString('en-US', { month:'short', day:'numeric' });
+
+    const stat = (label, value) => `
+      <div class="ana-stat"><div class="ana-num">${value}</div><div class="ana-label">${label}</div></div>`;
+    const bars = [...byDay.entries()].map(([ts, n]) => `
+      <div class="ana-bar-col" title="${fmtDay(ts)}: ${n} post${n === 1 ? '' : 's'}">
+        <div class="ana-bar" style="height:${Math.round((n / maxDay) * 100)}%"></div>
+        <div class="ana-bar-day">${fmtDay(ts).split(' ')[1]}</div>
+      </div>`).join('');
+    const authorRows = topAuthors.map(([addr, n]) => {
+      const prof = this.state.profCache[addr];
+      const name = prof?.username ? utils.safe(prof.username) : this.trunc(addr);
+      this.fetchOtherProfile(addr);
+      return `<div class="ana-row" role="button" tabindex="0" data-act="open-profile" data-act-arg="${utils.safe(addr)}">
+        <span class="ana-row-name">${name}</span><span class="ana-row-val">${n} posts</span></div>`;
+    }).join('') || '<div class="ana-empty">No author data yet</div>';
+    const tagRows = trends.map(([term, n]) =>
+      `<div class="ana-row" role="button" tabindex="0" data-act="search-trend" data-act-arg="${utils.safe(term)}">
+        <span class="ana-row-name">${utils.safe(term)}</span><span class="ana-row-val">${n}</span></div>`
+    ).join('') || '<div class="ana-empty">No trends yet</div>';
+
+    feed.innerHTML = headerHTML + `
+      <div class="ana-page">
+        <div class="ana-note">Computed locally from your cached slice of the chain — scan more history (scroll feeds, raise scan depth) for deeper numbers.</div>
+        <div class="ana-stats">
+          ${stat('Cached posts', feedPosts.length.toLocaleString())}
+          ${stat('Distinct authors', authors.size.toLocaleString())}
+          ${stat('Replies', types.reply.toLocaleString())}
+          ${stat('Reposts', types.repost.toLocaleString())}
+          ${stat('Polls', types.poll.toLocaleString())}
+        </div>
+        <div class="ana-section"><h3>Posts per day — last 14 days</h3>
+          <div class="ana-chart">${bars}</div></div>
+        <div class="ana-section"><h3>Most active authors</h3>${authorRows}</div>
+        <div class="ana-section"><h3>Trending terms</h3>${tagRows}</div>
+      </div>`;
   }
 
   goSettings() {
@@ -11385,6 +11495,7 @@ class SayIt {
         case 'channels':       this.goChannels(); break;
         case 'settings':       this.goSettings(); break;
         case 'lists':          this.goLists?.(); break;
+        case 'analytics':      this.goAnalytics?.(); break;
         case 'communities':    this.goCommunities?.(); break;
         case 'profile':        /^0x[a-f0-9]{40}$/i.test(arg)
                                  ? this.goProfilePage(arg.toLowerCase(), arg.toLowerCase() === this.state.signerAddr)
@@ -12105,7 +12216,8 @@ class SayIt {
      NOT overwrite them with the standard post list. */
   _selfManagedModes = new Set([
     'notifications', 'profile', 'thread', 'channels',
-    'explore', 'bookmarks', 'settings', 'lists', 'communities', 'followlist'
+    'explore', 'bookmarks', 'settings', 'lists', 'communities', 'followlist',
+    'analytics'
   ]);  /* lists/communities render their own browse UI into #feed */
   /* Modes where pollNew's "Show N posts" banner makes no sense.
      Superset of _selfManagedModes — includes wave/self/custom where
