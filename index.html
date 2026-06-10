@@ -2082,6 +2082,15 @@ body.mode-settings #mobile-fab { display:none; }
 }
 .repost-card-name { font-size:13px; font-weight:700; }
 .repost-card-body { font-size:14px; color:var(--text); line-height:1.5; word-break:break-word; }
+/* Profile media grid: video/yt cells get a play badge overlay. */
+.prof-media-cell { position:relative; display:block; }
+.prof-media-cell .prof-media-thumb { width:100%; height:100%; object-fit:cover; display:block; }
+.prof-media-play {
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  font-size:26px; color:#fff; text-shadow:0 1px 8px rgba(0,0,0,0.8);
+  pointer-events:none;
+}
+
 /* Storage overview bar (Settings → Cache & Storage) */
 .storage-bar {
   height:8px; border-radius:9999px; background:var(--bg-mid);
