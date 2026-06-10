@@ -3869,6 +3869,7 @@ class SayIt {
       if (el) el[event] = fn;
     };
 
+    /* ── Top-level nav: logo, wallet, post buttons ─────────────────── */
     g('logo-wrap').onclick     = () => this.goHome();
     /* Wave / PulseChain pinned rows are wired via inline onclick in the
        HTML (so they survive renderTrending's outerHTML rebuild). Wave opens
@@ -3880,6 +3881,7 @@ class SayIt {
     g('mobile-fab').onclick    = () => this.openComposeModal();
 
     /* Tapping the active tab refreshes feed -- matches X/Twitter */
+    /* ── Feed tabs (For You / Following) ───────────────────────────── */
     g('tab-foryou').onclick = () => {
       if (document.getElementById('tab-foryou').classList.contains('active')) {
         this.refreshFeed(); return;
@@ -3924,6 +3926,7 @@ class SayIt {
       e.preventDefault();
       fn();
     };
+    /* ── Sidebar + mobile nav items ────────────────────────────────── */
     g('nav-home').onclick      = navClick(() => this.goHome());
     g('nav-explore').onclick   = navClick(() => this.goExplore());
     g('nav-notifs').onclick    = navClick(() => this.goNotifications());
@@ -3959,6 +3962,7 @@ class SayIt {
       };
     });
 
+    /* ── Compose box + compose modal ───────────────────────────────── */
     g('compose-text').oninput = () => {
       utils.autoGrow(g('compose-text'));
       utils.updateCharCount(g('compose-text'), null);
@@ -4012,6 +4016,7 @@ class SayIt {
       this.onFeedClick(e, inModal);
     };
 
+    /* ── Feed delegation: post actions, keyboard parity ────────────── */
     g('feed').addEventListener('click', e => handlePostClick(e, false));
     /* Keyboard activation for the clickable spans (post-tag / post-mention /
        post-handle) — they're role="button" tabindex="0", so Enter/Space must
@@ -4143,6 +4148,7 @@ class SayIt {
       sbr.addEventListener('mouseout',  onFeedMouseout);
     }
 
+    /* ── Channel bar + misc controls ───────────────────────────────── */
     g('cb-address').onclick = () => {
       const addr = g('cb-address').textContent;
       if (addr) utils.copyToClipboard(addr, 'Address copied!');
