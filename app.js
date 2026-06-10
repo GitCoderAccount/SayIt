@@ -6,7 +6,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260610-134';
+const SW_CACHE_VER = '20260610-135';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -481,7 +481,7 @@ class Cache {
   constructor() {
     this._db    = null;
     this._ready = new Promise((res, rej) => {
-      const req = indexedDB.open('SayIt', 4);
+      const req = indexedDB.open('SayIt', 5);
       req.onupgradeneeded = e => {
         const db  = e.target.result;
         const old = e.oldVersion;
@@ -496,6 +496,13 @@ class Cache {
         /* v3: offline post queue — posts saved when tx fails/offline */
         if (old < 3 && !db.objectStoreNames.contains('pending_posts'))
           db.createObjectStore('pending_posts', { keyPath: 'queueId' });
+        /* v5: archived LIKE reactions (deep sync) — powers engagement
+           analytics. Key = the LIKE tx hash; 'target' indexes the liked
+           post. Replies/reposts need no store: they're posts already. */
+        if (old < 5 && !db.objectStoreNames.contains('likes')) {
+          const ls = db.createObjectStore('likes', { keyPath: 'txHash' });
+          ls.createIndex('target', 'target');
+        }
         /* v4: channel index on posts — loadCached queries one channel's
            posts directly instead of a full-table scan per channel switch.
            Works for fresh DBs too: stores created above are visible in
@@ -520,6 +527,34 @@ class Cache {
       req.onerror   = () => rej(req.error);
     });
   }
+  /* Archived LIKE reactions (deep sync). */
+  async saveLikes(rows) {
+    if (!rows.length) return;
+    await this._ready;
+    return new Promise(res => {
+      const tx = this._db.transaction('likes', 'readwrite');
+      const st = tx.objectStore('likes');
+      rows.forEach(r => st.put(r));
+      tx.oncomplete = res;
+      tx.onerror = res; /* best-effort archive */
+    });
+  }
+  /* target → like count across the whole archive. */
+  async likeCounts() {
+    await this._ready;
+    return new Promise(res => {
+      const out = new Map();
+      let req;
+      try { req = this._db.transaction('likes', 'readonly').objectStore('likes').getAll(); }
+      catch { res(out); return; }
+      req.onsuccess = () => {
+        (req.result || []).forEach(r => out.set(r.target, (out.get(r.target) || 0) + 1));
+        res(out);
+      };
+      req.onerror = () => res(out);
+    });
+  }
+
   /* Row counts per store — powers the Settings storage overview. */
   async storeCounts() {
     await this._ready;
@@ -3568,12 +3603,27 @@ class SayIt {
           continue;
         }
         const posts = [];
+        const likes = [];
         for (const tx of raw) {
           const parsed = this._parsePostTx(tx, { mode: 'main' });
           /* Archive view-scoped like the feed does, so loadCached sees them. */
-          if (parsed) posts.push({ ...parsed, channel: MAIN_CHANNEL, mode: 'main' });
+          if (parsed) { posts.push({ ...parsed, channel: MAIN_CHANNEL, mode: 'main' }); continue; }
+          /* Reactions: archive LIKEs for engagement analytics (replies and
+             reposts are posts — already archived above). */
+          try {
+            const text = ethers.toUtf8String(tx.input).trim();
+            if (text.startsWith(LIKE_PREFIX)) {
+              const target = text.slice(LIKE_PREFIX.length).trim().toLowerCase();
+              if (/^0x[a-f0-9]{64}$/.test(target)) {
+                likes.push({ txHash: tx.hash.toLowerCase(), target,
+                             from: tx.from.toLowerCase(),
+                             ts: tx.timeStamp ? Number(tx.timeStamp) * 1000 : Date.now() });
+              }
+            }
+          } catch { /* non-UTF8 input — skip */ }
         }
         if (posts.length) await this.cache.savePosts(posts);
+        if (likes.length) await this.cache.saveLikes(likes);
         st.lastPage = page;
         st.saved += posts.length;
         if (raw.length < 50) { st.done = true; this._deepSyncing = false; }
@@ -3681,13 +3731,14 @@ class SayIt {
     const seen = new Set(posts.map(p => p.txHash));
     this.state.posts.forEach(p => { if (!seen.has(p.txHash)) { posts.push(p); seen.add(p.txHash); } });
 
+    const range = this._anaRange || 14;   /* 7 | 14 | 30 days */
     const feedPosts = posts.filter(p => ['post','repost','poll'].includes(p.postType) || p.parentTx);
     const authors = new Map();
     const types = { post: 0, reply: 0, repost: 0, poll: 0 };
     const byDay = new Map();
     const DAY = 86400000;
     const today = new Date(); today.setHours(0,0,0,0);
-    for (let i = 13; i >= 0; i--) byDay.set(today.getTime() - i * DAY, 0);
+    for (let i = range - 1; i >= 0; i--) byDay.set(today.getTime() - i * DAY, 0);
     feedPosts.forEach(p => {
       authors.set(p.reporter, (authors.get(p.reporter) || 0) + 1);
       const t = p.parentTx ? 'reply' : (p.postType in types ? p.postType : 'post');
@@ -3699,6 +3750,26 @@ class SayIt {
     const trends = this._computeTrends(5, 500);
     const maxDay = Math.max(1, ...byDay.values());
     const fmtDay = ts => new Date(ts).toLocaleDateString('en-US', { month:'short', day:'numeric' });
+
+    /* Engagement: likes from the archive; replies computed from posts. */
+    const likeCounts = await this.cache.likeCounts();
+    if (this.state.mode !== 'analytics') return;
+    const replyCounts = new Map();
+    feedPosts.forEach(p => { if (p.parentTx) replyCounts.set(p.parentTx, (replyCounts.get(p.parentTx) || 0) + 1); });
+    const byHash = new Map(posts.map(p => [p.txHash, p]));
+    const topPosts = [...new Set([...likeCounts.keys(), ...replyCounts.keys()])]
+      .map(h => ({ h, likes: likeCounts.get(h) || 0, replies: replyCounts.get(h) || 0, post: byHash.get(h) }))
+      .filter(x => x.post && (x.likes + x.replies) > 0)
+      .sort((a, b) => (b.likes * 2 + b.replies) - (a.likes * 2 + a.replies))
+      .slice(0, 5);
+    const topRows = topPosts.map(x => {
+      const author = this.state.profCache[x.post.reporter];
+      const name = author?.username ? utils.safe(author.username) : this.trunc(x.post.reporter || '');
+      const text = utils.safe((x.post.display || '').replace(/https?:\/\/\S+/g, '').trim().slice(0, 70)) || '🖼 Media post';
+      return `<div class="ana-row" role="button" tabindex="0" data-act="open-thread" data-act-arg="${utils.safe(x.h)}">
+        <span class="ana-row-name" style="font-weight:500">${text}<span style="color:var(--muted);font-weight:400"> — ${name}</span></span>
+        <span class="ana-row-val">♥ ${x.likes} · 💬 ${x.replies}</span></div>`;
+    }).join('') || '<div class="ana-empty">No engagement data yet — run a Deep sync (Settings → Cache & Storage) to archive likes.</div>';
 
     const stat = (label, value) => `
       <div class="ana-stat"><div class="ana-num">${value}</div><div class="ana-label">${label}</div></div>`;
@@ -3721,7 +3792,10 @@ class SayIt {
 
     feed.innerHTML = headerHTML + `
       <div class="ana-page">
-        <div class="ana-note">Computed locally from your cached slice of the chain — scan more history (scroll feeds, raise scan depth) for deeper numbers.</div>
+        <div class="ana-note">Computed locally from your cached slice of the chain — scan more history (scroll feeds, raise scan depth, or run a Deep sync) for deeper numbers.</div>
+        <div class="ana-range" role="tablist">
+          ${[7, 14, 30].map(d => `<button class="ana-range-btn${range === d ? ' active' : ''}" data-ana-range="${d}" role="tab">${d}d</button>`).join('')}
+        </div>
         <div class="ana-stats">
           ${stat('Cached posts', feedPosts.length.toLocaleString())}
           ${stat('Distinct authors', authors.size.toLocaleString())}
@@ -3729,11 +3803,15 @@ class SayIt {
           ${stat('Reposts', types.repost.toLocaleString())}
           ${stat('Polls', types.poll.toLocaleString())}
         </div>
-        <div class="ana-section"><h3>Posts per day — last 14 days</h3>
+        <div class="ana-section"><h3>Posts per day — last ${range} days</h3>
           <div class="ana-chart">${bars}</div></div>
+        <div class="ana-section"><h3>Top posts by engagement</h3>${topRows}</div>
         <div class="ana-section"><h3>Most active authors</h3>${authorRows}</div>
         <div class="ana-section"><h3>Trending terms</h3>${tagRows}</div>
       </div>`;
+    feed.querySelectorAll('[data-ana-range]').forEach(btn => {
+      btn.onclick = () => { this._anaRange = Number(btn.dataset.anaRange); this.goAnalytics(); };
+    });
   }
 
   goSettings() {

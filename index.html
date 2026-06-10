@@ -2116,6 +2116,14 @@ body.mode-settings #mobile-fab { display:none; }
   transition:width 0.6s ease;
 }
 
+/* Analytics range selector */
+.ana-range { display:flex; gap:8px; padding:12px 0 0; }
+.ana-range-btn {
+  background:var(--bg-mid); border:1px solid var(--border); color:var(--muted);
+  border-radius:9999px; padding:6px 16px; font-size:13px; font-weight:700; cursor:pointer;
+}
+.ana-range-btn.active { background:var(--primary); border-color:var(--primary); color:#fff; }
+
 /* Analytics page */
 .ana-page { padding:4px 16px 32px; }
 .ana-note { font-size:13px; color:var(--muted); padding:10px 0 14px; border-bottom:1px solid var(--border); }
