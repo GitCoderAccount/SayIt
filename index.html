@@ -2927,7 +2927,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260610-122';
+const SW_CACHE_VER = '20260610-123';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -3686,6 +3686,13 @@ class Cache {
     });
   }
   async pruneIfStale(maxAgeDays = 7, force = false) {
+    /* Deep sync builds a full local archive — age-pruning posts would
+       silently undo it. Skip post pruning while a sync is in progress or
+       complete (clearing the post cache in Settings resets this). */
+    try {
+      const ds = JSON.parse(localStorage.getItem('sayitDeepSync') || 'null');
+      if (ds && (ds.done || ds.lastPage > 0)) return;
+    } catch { /* corrupt state — prune normally */ }
     const last = parseInt(utils.safeLS.get(PRUNE_KEY, '0'), 10);
     if (!force && Date.now() - last < 86_400_000) return;
     await this._ready;
@@ -6199,6 +6206,133 @@ class SayIt {
     else document.documentElement.removeAttribute('data-theme');
   }
 
+  /* ── Local-first deep sync ──────────────────────────────────────────
+     Opt-in archive of the main channel's full history into IndexedDB.
+     Pages oldest cursor → end at a polite rate while the user keeps
+     browsing; the cursor persists (localStorage) so it resumes across
+     sessions; pruneIfStale leaves archived posts alone. Search, threads,
+     and Analytics automatically benefit (they read the same cache). */
+  _deepSyncState() {
+    try { return JSON.parse(localStorage.getItem('sayitDeepSync') || 'null') || { lastPage: 0, saved: 0, done: false }; }
+    catch { return { lastPage: 0, saved: 0, done: false }; }
+  }
+  _setDeepSyncState(st) { try { localStorage.setItem('sayitDeepSync', JSON.stringify(st)); } catch { /* full */ } }
+
+  _deepSyncStatusText(st, active) {
+    if (st.done) return `✓ Complete — ${st.saved.toLocaleString()} posts archived`;
+    if (active) return `Syncing… page ${st.lastPage} · ${st.saved.toLocaleString()} posts so far`;
+    if (st.lastPage > 0) return `Paused at page ${st.lastPage} · ${st.saved.toLocaleString()} posts — resume any time`;
+    return '';
+  }
+
+  async toggleDeepSync() {
+    if (this._deepSyncing) { this._deepSyncing = false; return; } /* pause requested */
+    this._deepSyncing = true;
+    const btn = this.g('set-deep-sync');
+    const status = this.g('deep-sync-status');
+    if (btn) btn.textContent = 'Pause';
+    const st = this._deepSyncState();
+    if (st.done) { st.done = false; st.lastPage = 0; st.saved = 0; } /* re-sync from scratch */
+    try {
+      while (this._deepSyncing) {
+        const page = st.lastPage + 1;
+        let raw;
+        try { raw = await this.apiFetch(MAIN_CHANNEL, page); }
+        catch (err) {
+          if (status) status.textContent = 'Network hiccup — retrying in 5s…';
+          await this._scanDelay(5000);
+          continue;
+        }
+        const posts = [];
+        for (const tx of raw) {
+          const parsed = this._parsePostTx(tx, { mode: 'main' });
+          /* Archive view-scoped like the feed does, so loadCached sees them. */
+          if (parsed) posts.push({ ...parsed, channel: MAIN_CHANNEL, mode: 'main' });
+        }
+        if (posts.length) await this.cache.savePosts(posts);
+        st.lastPage = page;
+        st.saved += posts.length;
+        if (raw.length < 50) { st.done = true; this._deepSyncing = false; }
+        this._setDeepSyncState(st);
+        if (status) status.textContent = this._deepSyncStatusText(st, this._deepSyncing);
+        await this._scanDelay(300); /* polite to the explorer */
+      }
+    } finally {
+      this._deepSyncing = false;
+      const b2 = this.g('set-deep-sync');
+      if (b2) b2.textContent = this._deepSyncState().done ? 'Re-sync' : 'Resume';
+      const s2 = this.g('deep-sync-status');
+      if (s2) s2.textContent = this._deepSyncStatusText(this._deepSyncState(), false);
+    }
+  }
+
+  async _exportPostsSnapshot() {
+    let posts = [];
+    try { posts = await this.cache.getPosts(() => true); } catch { /* empty */ }
+    if (!posts.length) { utils.toast('No cached posts to export'); return; }
+    const payload = { app: 'SayIt', type: 'posts-snapshot', version: 1,
+                      exportedAt: new Date().toISOString(), count: posts.length, posts };
+    const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+    const url  = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `sayit-posts-${new Date().toISOString().slice(0,10)}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    utils.toast(`Exported ${posts.length.toLocaleString()} posts ✓`);
+  }
+
+  _importPostsSnapshot(file) {
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const d = JSON.parse(reader.result);
+        if (d?.app !== 'SayIt' || d?.type !== 'posts-snapshot' || !Array.isArray(d.posts)) {
+          utils.toast('Not a SayIt posts snapshot'); return;
+        }
+        /* Never trust a file: whitelist-rebuild every post and validate the
+           fields that reach render paths (same trust stance as the explorer
+           ingestion gate). */
+        const clean = [];
+        for (const p of d.posts) {
+          if (!p || typeof p !== 'object') continue;
+          if (!/^0x[0-9a-f]{64}$/i.test(p.txHash || '')) continue;
+          if (!/^0x[0-9a-f]{40}$/i.test(p.reporter || '')) continue;
+          if (p.to != null && p.to !== '' && !/^0x[0-9a-f]{40}$/i.test(p.to)) continue;
+          if (p.parentTx != null && !/^0x[0-9a-f]{64}$/i.test(p.parentTx)) continue;
+          if (p.repostOf != null && !/^0x[0-9a-f]{64}$/i.test(p.repostOf)) continue;
+          const ts = new Date(p.timestamp || 0);
+          if (isNaN(ts.getTime())) continue;
+          clean.push({
+            content: String(p.content ?? ''), display: String(p.display ?? ''),
+            parentTx: p.parentTx ? p.parentTx.toLowerCase() : null,
+            repostOf: p.repostOf ? p.repostOf.toLowerCase() : null,
+            direction: null, poll: p.poll && typeof p.poll === 'object' ? {
+              question: String(p.poll.question ?? ''),
+              options: Array.isArray(p.poll.options) ? p.poll.options.slice(0, 4).map(o => String(o).slice(0, 60)) : [],
+              endMs: Number(p.poll.endMs) || 0,
+            } : null,
+            postType: ['post','reply','repost','poll'].includes(p.postType) ? p.postType : 'post',
+            reactionTarget: null,
+            reporter: p.reporter.toLowerCase(), to: p.to ? p.to.toLowerCase() : null,
+            timestamp: ts.toISOString(),
+            txHash: p.txHash.toLowerCase(),
+            channel: /^0x[0-9a-f]{40}$/i.test(p.channel || '') ? p.channel.toLowerCase() : MAIN_CHANNEL,
+            mode: 'main',
+            blockNumber: Number.isFinite(Number(p.blockNumber)) ? Number(p.blockNumber) : null,
+          });
+        }
+        if (!clean.length) { utils.toast('Snapshot contained no valid posts'); return; }
+        /* Batch to keep transactions reasonable. */
+        for (let i = 0; i < clean.length; i += 500) {
+          await this.cache.savePosts(clean.slice(i, i + 500));
+        }
+        utils.toast(`Imported ${clean.length.toLocaleString()} posts ✓`);
+      } catch { utils.toast('Invalid snapshot file'); }
+    };
+    reader.onerror = () => utils.toast('Could not read file');
+    reader.readAsText(file);
+  }
+
   /* ── Analytics: client-side network stats computed from the local post
      cache + in-memory engagement maps. No server — the same data any
      client can derive from the chain. ── */
@@ -6749,8 +6883,27 @@ class SayIt {
         </div>
         <div class="settings-row">
           <div class="settings-row-label">
+            <strong>Deep sync</strong>
+            <span>Archive the main feed's full history into this browser — search, analytics and threads work from your own complete local copy. Resumes where it left off; new posts still arrive live.</span>
+            <span id="deep-sync-status" style="display:block;margin-top:4px;color:var(--primary-lt)"></span>
+          </div>
+          <button class="settings-btn" id="set-deep-sync">Start</button>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Posts snapshot</strong>
+            <span>Export your synced posts as JSON to share or restore on another device; import merges a snapshot into the local cache.</span>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="settings-btn" id="set-export-posts">Export</button>
+            <button class="settings-btn" id="set-import-posts">Import</button>
+            <input type="file" id="set-import-posts-file" accept="application/json,.json" style="display:none">
+          </div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">
             <strong>Clear post cache</strong>
-            <span>Removes all cached posts from IndexedDB</span>
+            <span>Removes all cached posts from IndexedDB (also resets deep-sync progress)</span>
           </div>
           <button class="settings-btn danger" id="set-clear-posts">Clear posts</button>
         </div>
@@ -7020,12 +7173,32 @@ class SayIt {
     });
     /* Clear posts */
     g('set-clear-posts')?.addEventListener('click', async () => {
+      this._deepSyncing = false;                  /* stop an active sync */
+      localStorage.removeItem('sayitDeepSync');   /* reset its cursor */
       await this.cache.clearAllPosts();
       utils.safeLS.remove(PRUNE_KEY);
       utils.safeLS.remove('sayit_idx_v1'); /* allow search index rebuild */
       this.state.posts = [];
       this._postHashSet = new Set();
+      const dss = g('deep-sync-status'); if (dss) dss.textContent = '';
+      const dsb = g('set-deep-sync'); if (dsb) dsb.textContent = 'Start';
       utils.toast('Post cache cleared ✓');
+    });
+    /* Deep sync + posts snapshot */
+    g('set-deep-sync')?.addEventListener('click', () => this.toggleDeepSync());
+    {
+      const st = this._deepSyncState();
+      const dsb = g('set-deep-sync');
+      if (dsb) dsb.textContent = this._deepSyncing ? 'Pause' : (st.done ? 'Re-sync' : (st.lastPage > 0 ? 'Resume' : 'Start'));
+      const dss = g('deep-sync-status');
+      if (dss) dss.textContent = this._deepSyncStatusText(st, this._deepSyncing);
+    }
+    g('set-export-posts')?.addEventListener('click', () => this._exportPostsSnapshot());
+    g('set-import-posts')?.addEventListener('click', () => g('set-import-posts-file')?.click());
+    g('set-import-posts-file')?.addEventListener('change', e => {
+      const f = e.target.files?.[0];
+      if (f) this._importPostsSnapshot(f);
+      e.target.value = '';
     });
     /* Clear channels */
     g('set-clear-channels')?.addEventListener('click', async () => {
