@@ -2842,7 +2842,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260610-114';
+const SW_CACHE_VER = '20260610-115';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -6734,7 +6734,7 @@ class SayIt {
       s.autoplayMedia = g('set-autoplay').checked;
       this._saveSettings(s);
       const feed = this.g('feed');
-      if (feed) this._wireVideoObserver(feed);
+      if (feed) this._wireVideoObserver(feed, true); /* reset: setting changed */
     });
     /* Default tab on launch — applied at boot (see init bootstrap). */
     g('set-default-view')?.addEventListener('change', () => {
@@ -9478,6 +9478,8 @@ class SayIt {
     window.scrollTo({ top: 0, behavior: 'smooth' });
     /* Wire video autoplay observer for newly prepended posts */
     const feedEl = this.g('feed');
+    /* Additive (no reset): renderFeed just rebuilt the observer; a second
+       reset here would re-fire initial entries against mid-rebuild nodes. */
     if (feedEl) this._wireVideoObserver(feedEl);
   }
 
@@ -9734,7 +9736,7 @@ class SayIt {
     }
     feed.innerHTML = '';
     feed.appendChild(frag);
-    this._wireVideoObserver(feed);
+    this._wireVideoObserver(feed, true); /* reset: feed DOM rebuilt */
     /* Initialize the observer AFTER the DOM is in place so it can compute
        intersection rects against the freshly-rendered elements. */
     this._vfInitObserver(feed);
@@ -9916,6 +9918,10 @@ class SayIt {
       const h = placeholder.offsetHeight;
       if (h > 0) this._vfHeightMap.set(txHash, h);
     });
+    /* Videos in promoted posts must join the play/pause observer — without
+       this, any video that enters via scroll-virtualization autoplays from
+       its attribute but never pauses off-screen (it was never observed). */
+    this._wireVideoObserver?.(placeholder);
     /* Lazy-load author profile for newly mounted posts */
     if (post.reporter !== this.state.signerAddr) {
       this.fetchOtherProfile(post.reporter);
@@ -9939,34 +9945,86 @@ class SayIt {
     this._vfMountedRef.delete(item);
   }
 
-  _wireVideoObserver(container) {
+  _wireVideoObserver(container, reset = false) {
     const videos = container.querySelectorAll('.post-vid-thumb');
-    if (!videos.length) return;
-    if (this._vidObserver) this._vidObserver.disconnect();
-    /* Autoplay opt-out (Settings → Content & Feed): stop the videos, expose
-       native controls so they're still playable, and skip the play observer.
-       The custom unmute button is redundant once controls show, so hide it. */
-    if (this._getSettings().autoplayMedia === false) {
-      videos.forEach(v => {
+    if (!videos.length && !reset) return;
+    const autoplay = this._getSettings().autoplayMedia !== false;
+    /* PERSISTENT observer — created once and shared. The old code rebuilt it
+       (disconnect + new) on every call, but the virtualized feed wires items
+       one at a time, so each newly materialized post silently dropped
+       observation of every other video: off-screen videos kept playing and
+       on-screen ones never auto-played. reset=true (full re-render paths)
+       rebuilds it to release references to recycled DOM nodes.
+       Videos are observed in BOTH autoplay modes: off-screen always pauses
+       (a manually played video must not keep playing once scrolled away);
+       on-screen auto-plays only when the setting allows and the video isn't
+       in manual-controls mode. */
+    if (reset && this._vidObserver) { this._vidObserver.disconnect(); this._vidObserver = null; }
+    if (!this._vidObserver) {
+      this._vidObserver = new IntersectionObserver(entries => {
+        entries.forEach(entry => {
+          const vid = entry.target;
+          if (!entry.isIntersecting) {
+            /* Recycled/detached nodes report non-intersecting on their
+               initial observation — unobserve instead of "pausing" them,
+               which previously raced freshly re-rendered videos. */
+            if (!vid.isConnected) { this._vidObserver.unobserve(vid); return; }
+            vid.pause();
+            return;
+          }
+          if (this._getSettings().autoplayMedia !== false && !vid.controls) vid.play().catch(() => {});
+        });
+      }, { threshold: 0.3 });
+    }
+    videos.forEach(v => {
+      if (autoplay && v.controls) {
+        /* Setting toggled back on: undo the controls-mode UI. */
+        v.controls = false;
+        const btn = v.parentElement?.querySelector('.vid-unmute-btn');
+        if (btn) btn.style.display = '';
+      } else if (!autoplay) {
+        /* Autoplay opt-out (Settings → Content & Feed): stop the video and
+           expose native controls — the custom unmute button is redundant
+           once controls show. Still observed (off-screen pause applies). */
         v.removeAttribute('autoplay');
         v.controls = true;
         v.pause();
         const btn = v.parentElement?.querySelector('.vid-unmute-btn');
         if (btn) btn.style.display = 'none';
-      });
-      return;
+      }
+      if (!reset && v.dataset.vidObserved === '1') return; /* already watched */
+      v.dataset.vidObserved = '1';
+      this._vidObserver.observe(v);
+    });
+    /* Playback exclusivity, X-style. Muted in-feed autoplays may coexist
+       (X parity), but a DELIBERATE play — a video in native-controls mode,
+       or any unmuted video — pauses every other feed video; and unmuting
+       one video mutes the rest so only one ever has sound. Media events
+       don't bubble, so both listeners are capture-phase. Wired once. */
+    if (!this._singleVidWired) {
+      this._singleVidWired = true;
+      const isFeedVid = v => v && v.tagName === 'VIDEO' && v.classList.contains('post-vid-thumb');
+      document.addEventListener('play', e => {
+        const v = e.target;
+        if (!isFeedVid(v)) return;
+        if (v.muted && !v.controls) return; /* muted auto-preview — coexists */
+        document.querySelectorAll('video.post-vid-thumb').forEach(o => {
+          if (o !== v && !o.paused) o.pause();
+        });
+      }, true);
+      document.addEventListener('volumechange', e => {
+        const v = e.target;
+        if (!isFeedVid(v) || v.muted) return;
+        document.querySelectorAll('video.post-vid-thumb').forEach(o => {
+          if (o === v) return;
+          if (!o.muted) {
+            o.muted = true;
+            const b = o.parentElement?.querySelector('.vid-unmute-btn');
+            if (b) b.textContent = '🔇';
+          }
+        });
+      }, true);
     }
-    this._vidObserver = new IntersectionObserver(entries => {
-      entries.forEach(entry => {
-        const vid = entry.target;
-        if (entry.isIntersecting) {
-          vid.play().catch(() => {});
-        } else {
-          vid.pause();
-        }
-      });
-    }, { threshold: 0.3 });
-    videos.forEach(v => this._vidObserver.observe(v));
   }
 
   /* Resolve display info (avatar, name, verified badge) for a post.
