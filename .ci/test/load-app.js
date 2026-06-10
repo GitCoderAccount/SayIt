@@ -46,18 +46,18 @@ function makeLocalStorage() {
   };
 }
 
-/* Minimal ethers stub — only what the protocol-parsing paths use. */
+/* Minimal ethers stub — only what the protocol-parsing paths use.
+   v6 shape: helpers live flat on the namespace (no .utils). */
 const ethersStub = {
-  utils: {
-    toUtf8String(hex) {
-      if (typeof hex !== 'string' || !hex.startsWith('0x')) throw new Error('invalid hex');
-      if (!/^0x([0-9a-fA-F]{2})*$/.test(hex)) throw new Error('invalid hex');
-      return Buffer.from(hex.slice(2), 'hex').toString('utf8');
-    },
-    isAddress: a => /^0x[0-9a-fA-F]{40}$/.test(a || ''),
-    getAddress: a => a,
+  toUtf8String(hex) {
+    if (typeof hex !== 'string' || !hex.startsWith('0x')) throw new Error('invalid hex');
+    if (!/^0x([0-9a-fA-F]{2})*$/.test(hex)) throw new Error('invalid hex');
+    return Buffer.from(hex.slice(2), 'hex').toString('utf8');
   },
-  providers: {},
+  toUtf8Bytes: s => Buffer.from(String(s), 'utf8'),
+  hexlify: b => '0x' + Buffer.from(b).toString('hex'),
+  isAddress: a => /^0x[0-9a-fA-F]{40}$/.test(a || ''),
+  getAddress: a => a,
 };
 
 function load() {

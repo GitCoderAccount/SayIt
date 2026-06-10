@@ -40,7 +40,7 @@ try {
   if (_s.reduceMotion) _de.classList.add('force-reduce-motion');
   if (_s.displayZoom && String(_s.displayZoom) !== '1') _de.style.zoom = _s.displayZoom;
 } catch (e) {}</script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js" integrity="sha384-Htz1SE4Sl5aitpvFgr2j0sfsGUIuSXI6t8hEyrlQ93zflEF3a29bH2AvkUROUw7J" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.15.0/ethers.umd.min.js" integrity="sha384-OwtfwhPoP4aGLIw192UbPWjNbSkb7AllEbIhEJ01Yp8MxhNLLNUMA+DSjh6Zct05" crossorigin="anonymous"></script>
 <style>
 /* ── Variables ──────────────────────────────────────────────────────────── */
 :root {
@@ -4828,7 +4828,7 @@ class SayIt {
           const voter = tx.from?.toLowerCase();
           if (!voter || voter === me) continue; /* skip my own votes */
           let text;
-          try { text = ethers.utils.toUtf8String(tx.input).trim(); }
+          try { text = ethers.toUtf8String(tx.input).trim(); }
           catch { continue; }
           if (!text.startsWith(VOTE_PREFIX)) continue;
           const m = text.match(/^VOTE:(0x[a-f0-9]{64}):(\d+)/i);
@@ -5052,7 +5052,7 @@ class SayIt {
           if (to !== this.state.signerAddr || from === this.state.signerAddr) return;
           if (!tx.input || tx.input === '0x') return;
           try {
-            const text = ethers.utils.toUtf8String(tx.input).trim();
+            const text = ethers.toUtf8String(tx.input).trim();
             if (text.startsWith(PROFILE_PREFIX)) return;
             if (text.startsWith(BOOKMARK_PREFIX) || text.startsWith(UNBOOKMARK_PREFIX)) return;
             if (text.startsWith(UNLIKE_PREFIX)) return;
@@ -5299,7 +5299,7 @@ class SayIt {
 
   async goCustom() {
     const raw = this.g('custom-input').value.trim().toLowerCase();
-    if (!ethers.utils.isAddress(raw)) { utils.toast('Invalid address'); return; }
+    if (!ethers.isAddress(raw)) { utils.toast('Invalid address'); return; }
     this._setRoute('/channel/' + raw);
     this.setNav(null, null);
     this.state.mode    = 'custom';
@@ -6048,7 +6048,7 @@ class SayIt {
           const partner = (from === this.state.signerAddr) ? to : from;
           if (!partner || partner === this.state.signerAddr || partner === MAIN_CHANNEL) return;
           try {
-            const text = ethers.utils.toUtf8String(tx.input).trim();
+            const text = ethers.toUtf8String(tx.input).trim();
             if (text.startsWith(PROFILE_PREFIX)) return;
             if (text.startsWith(LIKE_PREFIX) || text.startsWith(UNLIKE_PREFIX)) return;
             if (text.startsWith(BOOKMARK_PREFIX) || text.startsWith(UNBOOKMARK_PREFIX)) return;
@@ -6258,7 +6258,7 @@ class SayIt {
   _openChannelFromInput() {
     const val = this.g('ch-new-input')?.value.trim().toLowerCase();
     if (!val) return;
-    if (!ethers.utils.isAddress(val)) { utils.toast('Invalid address'); return; }
+    if (!ethers.isAddress(val)) { utils.toast('Invalid address'); return; }
     this.g('custom-input').value = val;
     this.goCustom();
   }
@@ -6927,7 +6927,7 @@ class SayIt {
   _getReadProvider() {
     if (!this._readProvider) {
       const s = this._getSettings();
-      this._readProvider = new ethers.providers.JsonRpcProvider(
+      this._readProvider = new ethers.JsonRpcProvider(
         s.rpcUrl || 'https://rpc.pulsechain.com', PULSE_CHAIN_ID);
     }
     return this._readProvider;
@@ -6987,7 +6987,7 @@ class SayIt {
             for (const tx of raw) {
               if (tx.from?.toLowerCase() !== editor || !tx.input || tx.input === '0x') continue;
               let text;
-              try { text = ethers.utils.toUtf8String(tx.input).trim(); } catch { continue; }
+              try { text = ethers.toUtf8String(tx.input).trim(); } catch { continue; }
               if (!text.startsWith(TOKEN_PROFILE_PREFIX)) continue;
               const m = text.match(/^PROFILE_FOR:(0x[a-f0-9]{40})\n\n([\s\S]+)$/i);
               if (!m || m[1].toLowerCase() !== key) continue;
@@ -7042,9 +7042,9 @@ class SayIt {
     const token = (address || '').toLowerCase();
     const body  = `${TOKEN_PROFILE_PREFIX}${token}\n\n${JSON.stringify(data)}`;
     try {
-      const d   = ethers.utils.hexlify(ethers.utils.toUtf8Bytes(body));
+      const d   = ethers.hexlify(ethers.toUtf8Bytes(body));
       let   gas = await this.signer.estimateGas({ to: token, value: '0', data: d });
-      gas       = gas.mul(130).div(100);
+      gas       = (gas * 130n) / 100n /* v6: estimateGas returns bigint */;
       const tx  = await this.signer.sendTransaction({ to: token, value: '0', data: d, gasLimit: gas });
       utils.toast('Publishing token profile… confirming on-chain');
       await tx.wait();
@@ -7076,7 +7076,7 @@ class SayIt {
         if (!tx.input || tx.input === '0x') return false;
         if (Number(tx.timeStamp) * 1000 <= lastCheck) return false;
         try {
-          const text = ethers.utils.toUtf8String(tx.input).trim();
+          const text = ethers.toUtf8String(tx.input).trim();
           if (text.startsWith(PROFILE_PREFIX)) return false;
           if (text.startsWith(BOOKMARK_PREFIX)) return false;
           if (text.startsWith(UNBOOKMARK_PREFIX)) return false;
@@ -7140,8 +7140,11 @@ class SayIt {
       this._wrongChain = !onPulse;
       this._reflectChainState();
       if (onPulse) {
-        /* Back on PulseChain — refresh the signer on a provider that sees it. */
-        try { this.signer = new ethers.providers.Web3Provider(eth).getSigner(); } catch {}
+        /* Back on PulseChain — refresh the signer on a provider that sees it.
+           (v6: getSigner is async; this handler is sync, so chain the promise.) */
+        new ethers.BrowserProvider(eth).getSigner()
+          .then(s => { this.signer = s; })
+          .catch(() => {});
       } else {
         /* Don't disconnect — keep the session. Posting is guarded by
            _ensureOnPulseForTx, which offers to switch back on demand. */
@@ -7166,7 +7169,7 @@ class SayIt {
     const eth = this._getEthereum();
     if (!eth) return;
     try {
-      const prov = new ethers.providers.Web3Provider(eth);
+      const prov = new ethers.BrowserProvider(eth);
       const accs = await prov.listAccounts();
       if (accs.length && utils.safeLS.get('sayitConnected') === '1') {
         /* Don't auto-reconnect on the wrong network. connect() switches the
@@ -7177,8 +7180,9 @@ class SayIt {
            leave an active signer on the wrong chain, and the next post/like
            would fire a tx there (wasted gas; never appears in-app). Stay
            disconnected; the user can click Connect, which runs the switch. */
-        if ((await prov.getNetwork()).chainId !== PULSE_CHAIN_ID) return;
-        this.signer = prov.getSigner();
+        /* v6: chainId is a bigint — compare as Number. */
+        if (Number((await prov.getNetwork()).chainId) !== PULSE_CHAIN_ID) return;
+        this.signer = await prov.getSigner();
         this.state.signerAddr = (await this.signer.getAddress()).toLowerCase();
         this._registerWalletListeners();
         await this.afterConnect();
@@ -7235,7 +7239,7 @@ class SayIt {
     try { await this._ensurePulseChain(eth); } catch { /* handled below */ }
     chainId = await this._readChainWithRetry(eth);
     if (chainId === PULSE_CHAIN_ID) {
-      this.signer = new ethers.providers.Web3Provider(eth).getSigner();
+      this.signer = await new ethers.BrowserProvider(eth).getSigner();
       this._wrongChain = false;
       this._reflectChainState();
       return true;
@@ -7305,7 +7309,7 @@ class SayIt {
     }
     this._connecting = true;
     try {
-      const prov = new ethers.providers.Web3Provider(eth);
+      const prov = new ethers.BrowserProvider(eth);
       /* Request accounts FIRST. Mobile wallets (MetaMask/Rabby) often won't
          honor a network switch until the dApp is actually connected, and doing
          it first avoids the switch-then-connect ordering that made mobile
@@ -7323,8 +7327,8 @@ class SayIt {
         }
       }
       /* Fresh provider so the signer/network reflect the (just-switched) chain. */
-      const liveProv = new ethers.providers.Web3Provider(eth);
-      this.signer = liveProv.getSigner();
+      const liveProv = new ethers.BrowserProvider(eth);
+      this.signer = await liveProv.getSigner();
       this.state.signerAddr = (await this.signer.getAddress()).toLowerCase();
       this._wrongChain = false;
       this._reflectChainState();
@@ -7428,7 +7432,7 @@ class SayIt {
           if (from !== this.state.signerAddr) return; /* only my sent txs */
           if (!tx.input || tx.input === '0x') return;
           try {
-            const text = ethers.utils.toUtf8String(tx.input).trim();
+            const text = ethers.toUtf8String(tx.input).trim();
             /* UNLIKE check before LIKE (defensive ordering — neither
                startsWith would clash but readability matters). */
             if (text.startsWith(UNLIKE_PREFIX)) {
@@ -7500,7 +7504,7 @@ class SayIt {
           if (tx.from?.toLowerCase() !== this.state.signerAddr) continue;
           if (tx.to?.toLowerCase()   !== this.state.signerAddr) continue;
           try {
-            const text = ethers.utils.toUtf8String(tx.input).trim();
+            const text = ethers.toUtf8String(tx.input).trim();
             if (!text.startsWith(PROFILE_PREFIX)) continue;
             const data = JSON.parse(text.slice(PROFILE_PREFIX.length).trim());
             this.applyProfile(data);
@@ -7602,7 +7606,7 @@ class SayIt {
             if (tx.from?.toLowerCase() !== address ||
                 tx.to?.toLowerCase()   !== address) continue;
             try {
-              const text = ethers.utils.toUtf8String(tx.input).trim();
+              const text = ethers.toUtf8String(tx.input).trim();
               if (!text.startsWith(PROFILE_PREFIX)) continue;
               const data = JSON.parse(text.slice(PROFILE_PREFIX.length).trim());
               this.state.profCache[address] = {
@@ -8112,7 +8116,7 @@ class SayIt {
             const order = (Number(tx.blockNumber) || 0) * 100000
                         + (Number(tx.transactionIndex) || 0);
             try {
-              const text = ethers.utils.toUtf8String(tx.input).trim();
+              const text = ethers.toUtf8String(tx.input).trim();
               let tgt = null, action = null;
               if (text.startsWith(FOLLOW_PREFIX)) {
                 tgt = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase(); action = 'follow';
@@ -8209,7 +8213,7 @@ class SayIt {
           const order = (Number(tx.blockNumber) || 0) * 100000
                       + (Number(tx.transactionIndex) || 0);
           try {
-            const text = ethers.utils.toUtf8String(tx.input).trim();
+            const text = ethers.toUtf8String(tx.input).trim();
             let action = null;
             if (text.startsWith(FOLLOW_PREFIX)) {
               const target = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
@@ -8375,7 +8379,7 @@ class SayIt {
           const order = (Number(tx.blockNumber) || 0) * 100000
                       + (Number(tx.transactionIndex) || 0);
           try {
-            const text = ethers.utils.toUtf8String(tx.input).trim();
+            const text = ethers.toUtf8String(tx.input).trim();
             let tgt = null, action = null;
             if (text.startsWith(FOLLOW_PREFIX)) {
               tgt = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase(); action = 'follow';
@@ -8446,7 +8450,7 @@ class SayIt {
           const order = (Number(tx.blockNumber) || 0) * 100000
                       + (Number(tx.transactionIndex) || 0);
           try {
-            const text = ethers.utils.toUtf8String(tx.input).trim();
+            const text = ethers.toUtf8String(tx.input).trim();
             let action = null;
             if (text.startsWith(FOLLOW_PREFIX)) {
               const target = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
@@ -8849,7 +8853,7 @@ class SayIt {
     const contractAddr = this.g('nft-contract').value.trim().toLowerCase();
     const tokenIdRaw   = this.g('nft-token-id').value.trim();
     const status       = this.g('nft-status');
-    if (!ethers.utils.isAddress(contractAddr)) { status.textContent = '✗ Invalid contract'; return; }
+    if (!ethers.isAddress(contractAddr)) { status.textContent = '✗ Invalid contract'; return; }
     if (!tokenIdRaw || isNaN(tokenIdRaw))       { status.textContent = '✗ Invalid token ID'; return; }
     if (!this.signer)                            { status.textContent = '✗ Connect wallet first'; return; }
     status.textContent = '⟳ Fetching…';
@@ -9074,7 +9078,7 @@ class SayIt {
     if (!hash) return null;
     if (!tx.input || tx.input === '0x') return null;
     let text;
-    try { text = ethers.utils.toUtf8String(tx.input).trim(); }
+    try { text = ethers.toUtf8String(tx.input).trim(); }
     catch { return null; }
     if (!text) return null;
     /* Non-post payloads that never render as feed items. */
@@ -9132,7 +9136,7 @@ class SayIt {
       const from = tx.from?.toLowerCase();
       const to   = tx.to?.toLowerCase();
       let raw;
-      try { raw = ethers.utils.toUtf8String(tx.input).trim(); }
+      try { raw = ethers.toUtf8String(tx.input).trim(); }
       catch { return acc; }
       if (!raw) return acc;
 
@@ -10205,7 +10209,7 @@ class SayIt {
         for (const tx of raw) {
           if (!tx.input || tx.input === '0x') continue;
           let text;
-          try { text = ethers.utils.toUtf8String(tx.input).trim(); }
+          try { text = ethers.toUtf8String(tx.input).trim(); }
           catch { continue; }
           if (!text.startsWith(VOTE_PREFIX)) continue;
           const m = text.match(/^VOTE:(0x[a-f0-9]{64}):(\d+)/i);
@@ -10299,9 +10303,9 @@ class SayIt {
     const channel = post.to || post.channel || this.state.channel;
     const body = `${VOTE_PREFIX}${pollHash}:${optIdx}`;
     try {
-      const data  = ethers.utils.hexlify(ethers.utils.toUtf8Bytes(body));
+      const data  = ethers.hexlify(ethers.toUtf8Bytes(body));
       let gas     = await this.signer.estimateGas({ to: channel, value: '0', data });
-      gas         = gas.mul(130).div(100);
+      gas         = (gas * 130n) / 100n /* v6: estimateGas returns bigint */;
       const tx    = await this.signer.sendTransaction({ to: channel, value: '0', data, gasLimit: gas });
       utils.toast('Vote submitted ✓ confirming on-chain…');
       await tx.wait();
@@ -10356,9 +10360,9 @@ class SayIt {
      card — the X model. Notes are gathered with ONE channel scan per render
      (throttled 60s), not per-post, so the cost matches a single poll tally. */
   async _sendTagged(channel, body) {
-    const data = ethers.utils.hexlify(ethers.utils.toUtf8Bytes(body));
+    const data = ethers.hexlify(ethers.toUtf8Bytes(body));
     let gas = await this.signer.estimateGas({ to: channel, value: '0', data });
-    gas = gas.mul(130).div(100);
+    gas = (gas * 130n) / 100n /* v6: estimateGas returns bigint */;
     return this.signer.sendTransaction({ to: channel, value: '0', data, gasLimit: gas });
   }
 
@@ -10383,7 +10387,7 @@ class SayIt {
         for (const tx of raw) {
           if (!tx.input || tx.input === '0x') continue;
           let text;
-          try { text = ethers.utils.toUtf8String(tx.input).trim(); } catch { continue; }
+          try { text = ethers.toUtf8String(tx.input).trim(); } catch { continue; }
           if (text.startsWith(NOTE_PREFIX)) {
             const m = text.match(/^NOTE:(0x[a-f0-9]{64})\n\n([\s\S]+)$/i);
             if (!m) continue;
@@ -10622,15 +10626,15 @@ class SayIt {
        covers the confirmation step; after that the user can keep using
        the app while the tx mines. Toasts report the outcome. */
     try {
-      const bytes   = ethers.utils.toUtf8Bytes(body);
-      const data    = ethers.utils.hexlify(bytes);
+      const bytes   = ethers.toUtf8Bytes(body);
+      const data    = ethers.hexlify(bytes);
       const txReq   = { to, value: '0', data };
       let   gas     = await this.signer.estimateGas(txReq);
-      gas           = gas.mul(130).div(100);
+      gas           = (gas * 130n) / 100n /* v6: estimateGas returns bigint */;
       const tx      = await this.signer.sendTransaction({ ...txReq, gasLimit: gas });
       utils.toast('Submitting to chain… you can keep browsing');
       const receipt = await tx.wait();
-      const hash    = receipt.transactionHash.toLowerCase();
+      const hash    = receipt.hash.toLowerCase(); /* v6: transactionHash → hash */
       /* Only insert an optimistic feed row for genuine feed content (plain
          post, reply, repost/quote, poll). Exclude every non-feed prefix —
          VOTE/NOTERATE/PROFILE_FOR/NOTE/LC_SYNC were missing, so those showed
@@ -11408,7 +11412,7 @@ class SayIt {
         raw.forEach(tx => {
           if (!tx.input || tx.input === '0x') return;
           try {
-            const text = ethers.utils.toUtf8String(tx.input).trim();
+            const text = ethers.toUtf8String(tx.input).trim();
             const m    = text.match(/^REPLY_TO:(0x[a-f0-9]{64})\n\n/i);
             if (!m || m[1].toLowerCase() !== targetHash) return;
             const display = text.slice(m[0].length).trim();
@@ -12076,7 +12080,7 @@ class SayIt {
           if (tx.hash?.toLowerCase() !== hash) continue;
           if (!tx.input || tx.input === '0x') break;
           try {
-            const text = ethers.utils.toUtf8String(tx.input).trim();
+            const text = ethers.toUtf8String(tx.input).trim();
             if (text.startsWith(PROFILE_PREFIX)) break;
             const m = text.match(/^REPLY_TO:(0x[a-f0-9]{64})\n\n/i);
             const display = m ? text.slice(m[0].length).trim() : text;
@@ -13054,9 +13058,9 @@ class SayIt {
        tx will simply fail at estimateGas, which we surface below. */
     try {
       const to    = this.state.signerAddr; /* self-tx */
-      const data  = ethers.utils.hexlify(ethers.utils.toUtf8Bytes(body));
+      const data  = ethers.hexlify(ethers.toUtf8Bytes(body));
       let gas     = await this.signer.estimateGas({ to, value: '0', data });
-      gas         = gas.mul(130).div(100);
+      gas         = (gas * 130n) / 100n /* v6: estimateGas returns bigint */;
       const tx    = await this.signer.sendTransaction({ to, value: '0', data, gasLimit: gas });
       utils.toast('Publishing lists on-chain… you can keep browsing');
       await tx.wait();
@@ -13085,7 +13089,7 @@ class SayIt {
           if (tx.from?.toLowerCase() !== this.state.signerAddr) continue;
           if (!tx.input || tx.input === '0x') continue;
           let text;
-          try { text = ethers.utils.toUtf8String(tx.input).trim(); }
+          try { text = ethers.toUtf8String(tx.input).trim(); }
           catch { continue; }
           if (!text.startsWith(LC_SYNC_PREFIX)) continue;
           try { snapshot = JSON.parse(text.slice(LC_SYNC_PREFIX.length)); break outer; }
@@ -13126,7 +13130,7 @@ class SayIt {
           if (tx.from?.toLowerCase() !== this.state.signerAddr) continue;
           if (!tx.input || tx.input === '0x') continue;
           let text;
-          try { text = ethers.utils.toUtf8String(tx.input).trim(); }
+          try { text = ethers.toUtf8String(tx.input).trim(); }
           catch { continue; }
           if (!text.startsWith(LC_SYNC_PREFIX)) continue;
           try { snapshot = JSON.parse(text.slice(LC_SYNC_PREFIX.length)); break outer; }
@@ -13286,7 +13290,7 @@ class SayIt {
     const g = id => document.getElementById(id);
     g('add-member-btn').onclick = () => {
       const a = g('add-member-addr').value.trim().toLowerCase();
-      if (!ethers.utils.isAddress(a)) { utils.toast('Invalid address'); return; }
+      if (!ethers.isAddress(a)) { utils.toast('Invalid address'); return; }
       if (list.members.includes(a)) { utils.toast('Already in this list'); return; }
       list.members.push(a);
       this._saveLists();
@@ -13499,7 +13503,7 @@ class SayIt {
       const name = g('new-comm-name')?.value.trim();
       const addr = g('new-comm-addr')?.value.trim().toLowerCase();
       if (!name) { utils.toast('Enter a community name'); return; }
-      if (!ethers.utils.isAddress(addr)) { utils.toast('Invalid channel address'); return; }
+      if (!ethers.isAddress(addr)) { utils.toast('Invalid channel address'); return; }
       if (this.state.communities.some(c => c.address === addr)) {
         utils.toast('That community already exists'); return;
       }
