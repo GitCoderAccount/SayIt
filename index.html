@@ -2898,7 +2898,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260610-120';
+const SW_CACHE_VER = '20260610-121';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -3352,7 +3352,7 @@ class Cache {
   constructor() {
     this._db    = null;
     this._ready = new Promise((res, rej) => {
-      const req = indexedDB.open('SayIt', 3);
+      const req = indexedDB.open('SayIt', 4);
       req.onupgradeneeded = e => {
         const db  = e.target.result;
         const old = e.oldVersion;
@@ -3367,6 +3367,14 @@ class Cache {
         /* v3: offline post queue — posts saved when tx fails/offline */
         if (old < 3 && !db.objectStoreNames.contains('pending_posts'))
           db.createObjectStore('pending_posts', { keyPath: 'queueId' });
+        /* v4: channel index on posts — loadCached queries one channel's
+           posts directly instead of a full-table scan per channel switch.
+           Works for fresh DBs too: stores created above are visible in
+           this same upgrade transaction. */
+        if (old < 4) {
+          try { e.target.transaction.objectStore('posts').createIndex('channel', 'channel'); }
+          catch { /* index already exists */ }
+        }
         /* v3: full-text search trigram index */
         if (old < 3 && !db.objectStoreNames.contains('search_index'))
           db.createObjectStore('search_index', { keyPath: 'id', autoIncrement: true })
@@ -3380,6 +3388,28 @@ class Cache {
         }
       };
       req.onsuccess = () => { this._db = req.result; res(); };
+      req.onerror   = () => rej(req.error);
+    });
+  }
+  /* O(1) single-post lookup by primary key. */
+  async getPost(hash) {
+    await this._ready;
+    return new Promise((res, rej) => {
+      const req = this._db.transaction('posts','readonly').objectStore('posts').get(hash);
+      req.onsuccess = () => res(req.result || null);
+      req.onerror   = () => rej(req.error);
+    });
+  }
+  /* Channel-scoped fetch via the v4 index; falls back to a full scan on
+     very old DBs where the index doesn't exist yet. */
+  async getPostsByChannel(channel) {
+    await this._ready;
+    return new Promise((res, rej) => {
+      const store = this._db.transaction('posts','readonly').objectStore('posts');
+      let req;
+      try { req = store.index('channel').getAll(channel); }
+      catch { req = store.getAll(); }
+      req.onsuccess = () => res(req.result || []);
       req.onerror   = () => rej(req.error);
     });
   }
@@ -3801,7 +3831,8 @@ class SayIt {
     this.updateChLabel();
     /* Use the user's pruneAgeDays setting (default 7). */
     const _pruneDays = parseInt(this._getSettings().pruneAgeDays, 10) || 7;
-    await this.cache.pruneIfStale(_pruneDays);
+    /* Housekeeping — never block boot on it. */
+    this.cache.pruneIfStale(_pruneDays).catch(err => console.warn('Prune failed', err));
     /* Migrate muted list from localStorage to IDB if needed */
     try {
       const idbMuted = await this.cache.getMuted();
@@ -7228,8 +7259,7 @@ class SayIt {
     const body  = `${TOKEN_PROFILE_PREFIX}${token}\n\n${JSON.stringify(data)}`;
     try {
       const d   = ethers.hexlify(ethers.toUtf8Bytes(body));
-      let   gas = await this.signer.estimateGas({ to: token, value: '0', data: d });
-      gas       = (gas * 130n) / 100n /* v6: estimateGas returns bigint */;
+      const gas = await this._estimateGasSafe({ to: token, value: '0', data: d }, (d.length - 2) / 2);
       const tx  = await this.signer.sendTransaction({ to: token, value: '0', data: d, gasLimit: gas });
       utils.toast('Publishing token profile… confirming on-chain');
       await tx.wait();
@@ -8402,10 +8432,13 @@ class SayIt {
             let action = null;
             if (text.startsWith(FOLLOW_PREFIX)) {
               const target = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
-              if (target === addr || to === addr) action = 'follow';
+              /* Strict: the PAYLOAD must name this address. A tx merely
+                 sent here whose payload follows someone else must not
+                 count as a follower of this address. */
+              if (target === addr) action = 'follow';
             } else if (text.startsWith(UNFOLLOW_PREFIX)) {
               const target = text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase();
-              if (target === addr || to === addr) action = 'unfollow';
+              if (target === addr) action = 'unfollow';
             }
             if (action) {
               const prev = lastAction.get(from);
@@ -8761,8 +8794,8 @@ class SayIt {
         const missing = [...this.state.likes].filter(h => !cachedSet.has(h)).slice(0, 20);
         for (const hash of missing) {
           try {
-            const cached = await this.cache.getPosts(p => p.txHash === hash);
-            if (cached.length) posts.push(cached[0]);
+            const cached = await this.cache.getPost(hash);
+            if (cached) posts.push(cached);
           } catch { /* skip */ }
         }
         posts.sort((a,b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()));
@@ -9618,11 +9651,12 @@ class SayIt {
 
   async loadCached() {
     const { mode, channel, signerAddr } = this.state;
-    const posts = await this.cache.getPosts(p => {
-      if (mode === 'notifications') return false;
-      if (mode === 'self')  return p.mode === 'self'  && p.channel === signerAddr;
-      return p.channel === channel && p.mode === mode;
-    });
+    let posts = [];
+    if (mode !== 'notifications') {
+      const chanKey = mode === 'self' ? signerAddr : channel;
+      posts = (await this.cache.getPostsByChannel(chanKey))
+        .filter(p => mode === 'self' ? p.mode === 'self' : p.mode === mode);
+    }
     this.state.posts = posts.sort((a, b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()));
     /* Rebuild _postHashSet from cached posts so fetchPosts() doesn't
        re-add them as "new". Without this, every cached post appears
@@ -10559,8 +10593,7 @@ class SayIt {
     const body = `${VOTE_PREFIX}${pollHash}:${optIdx}`;
     try {
       const data  = ethers.hexlify(ethers.toUtf8Bytes(body));
-      let gas     = await this.signer.estimateGas({ to: channel, value: '0', data });
-      gas         = (gas * 130n) / 100n /* v6: estimateGas returns bigint */;
+      const gas   = await this._estimateGasSafe({ to: channel, value: '0', data }, (data.length - 2) / 2);
       const tx    = await this.signer.sendTransaction({ to: channel, value: '0', data, gasLimit: gas });
       utils.toast('Vote submitted ✓ confirming on-chain…');
       await tx.wait();
@@ -10616,8 +10649,7 @@ class SayIt {
      (throttled 60s), not per-post, so the cost matches a single poll tally. */
   async _sendTagged(channel, body) {
     const data = ethers.hexlify(ethers.toUtf8Bytes(body));
-    let gas = await this.signer.estimateGas({ to: channel, value: '0', data });
-    gas = (gas * 130n) / 100n /* v6: estimateGas returns bigint */;
+    const gas = await this._estimateGasSafe({ to: channel, value: '0', data }, (data.length - 2) / 2);
     return this.signer.sendTransaction({ to: channel, value: '0', data, gasLimit: gas });
   }
 
@@ -10866,6 +10898,20 @@ class SayIt {
     await this.publish(body);
   }
 
+  /* Estimate gas with a deterministic fallback. A transient node error on
+     estimateGas must not block publishing — a data tx's intrinsic cost is
+     21000 + ~16 gas per byte; pad generously (×2) for safety. The wallet
+     still shows the final fee for user approval. */
+  async _estimateGasSafe(txReq, byteLen) {
+    try {
+      const gas = await this.signer.estimateGas(txReq);
+      return (gas * 130n) / 100n;
+    } catch (err) {
+      console.warn('estimateGas failed — using heuristic fallback', err);
+      return BigInt(21000 + Math.ceil(byteLen * 32));
+    }
+  }
+
   async publish(content, parentTx = null, toAddress = null) {
     if (!this.signer)     { utils.toast('Connect wallet first'); return false; }
     if (!content?.trim()) { utils.toast('Message cannot be empty'); return false; }
@@ -10884,8 +10930,7 @@ class SayIt {
       const bytes   = ethers.toUtf8Bytes(body);
       const data    = ethers.hexlify(bytes);
       const txReq   = { to, value: '0', data };
-      let   gas     = await this.signer.estimateGas(txReq);
-      gas           = (gas * 130n) / 100n /* v6: estimateGas returns bigint */;
+      const gas     = await this._estimateGasSafe(txReq, bytes.length);
       const tx      = await this.signer.sendTransaction({ ...txReq, gasLimit: gas });
       utils.toast('Submitting to chain… you can keep browsing');
       const receipt = await tx.wait();
@@ -11281,10 +11326,10 @@ class SayIt {
     if (inMap) { this.openThread(inMap); return; }
     /* Try IDB cache */
     try {
-      const cached = await this.cache.getPosts(p => p.txHash === hash);
-      if (cached.length) {
-        this._postMap.set(hash, cached[0]);
-        this.openThread(cached[0]);
+      const cached = await this.cache.getPost(hash);
+      if (cached) {
+        this._postMap.set(hash, cached);
+        this.openThread(cached);
         return;
       }
     } catch { /* IDB miss — fall through to chain fetch */ }
@@ -13317,8 +13362,7 @@ class SayIt {
     try {
       const to    = this.state.signerAddr; /* self-tx */
       const data  = ethers.hexlify(ethers.toUtf8Bytes(body));
-      let gas     = await this.signer.estimateGas({ to, value: '0', data });
-      gas         = (gas * 130n) / 100n /* v6: estimateGas returns bigint */;
+      const gas   = await this._estimateGasSafe({ to, value: '0', data }, (data.length - 2) / 2);
       const tx    = await this.signer.sendTransaction({ to, value: '0', data, gasLimit: gas });
       utils.toast('Publishing lists on-chain… you can keep browsing');
       await tx.wait();
