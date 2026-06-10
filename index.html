@@ -996,13 +996,15 @@ nav { flex:1; padding:4px 0; }
 
 /* ── Right sidebar ──────────────────────────────────────────────────────── */
 #sidebar-right {
-  flex:0 0 360px; width:360px;
+  flex:0 0 380px; width:380px;
   /* NOT position:sticky — the right sidebar scrolls with the page.
      The search bar inside it IS sticky so it stays visible on scroll. */
   background:var(--bg-dark);
   overflow:visible; display:flex;
   flex-direction:column; gap:12px;
-  padding:12px 16px 24px;
+  /* X geometry: ~30px gutter off the center column's border, cards run
+     350px wide to the content edge (no right padding). */
+  padding:12px 0 24px 30px;
   /* No scrollbar — sidebar ends where its content ends */
   scrollbar-width:none;
 }
@@ -1505,7 +1507,7 @@ body.mode-settings #mobile-fab { display:none; }
   /* Re-center: once the nav collapses to the icon rail, shrink #app's max-width
      to the new column total (72 + 600 + 360) so margin:auto keeps the content
      centered instead of letting the freed width pool on the right. */
-  #app { max-width:1032px; }
+  #app { max-width:1052px; }  /* 72 + 600 + 380 */
   /* Collapsed rail: re-center content and drop the right-align padding so
      the icon-only buttons sit centered in the 88px column. */
   #sidebar-left { align-items:center; padding:0; }
@@ -1580,16 +1582,17 @@ body.mode-settings #mobile-fab { display:none; }
   }
 }
 @media (max-width:1100px) {
-  #app { max-width:982px; }   /* 72 + 600 + 310 — keep centered */
-  #sidebar-right { flex:0 0 310px; width:310px; }
+  #app { max-width:980px; }   /* 72 + 600 + 308 — fits the tier's narrowest viewport */
+  #sidebar-right { flex:0 0 308px; width:308px; padding-left:20px; }
   .sb-card-title { font-size:18px; }
 }
 @media (max-width:980px) {
-  #app { max-width:952px; }   /* 72 + 600 + 280 — keep centered */
-  #sidebar-right { flex:0 0 280px; width:280px; padding:12px 12px 24px; }
+  /* Below ~980 there's no room for a useful right column at full center
+     width — hide it (X does the same around this width). */
+  #app { max-width:672px; }   /* 72 + 600 */
+  #sidebar-right { display:none; }
 }
 @media (max-width:900px)  {
-  #sidebar-right { display:none; }
   #main { flex:1; width:auto; max-width:none; border-left:none; border-right:none; }
 }
 @media (max-width:768px) {
