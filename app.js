@@ -6,7 +6,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260610-129';
+const SW_CACHE_VER = '20260610-130';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -1113,6 +1113,20 @@ class SayIt {
       if (el) el[event] = fn;
     };
 
+    /* Each group wires one functional area; order preserved from the
+       original monolith (capture-listener precedence is order-sensitive). */
+    this._wireTopNav();
+    this._wireFeedTabs();
+    this._wireSideNav();
+    this._wireCompose();
+    this._wireFeedDelegation();
+    this._wireHoverPopups();
+    this._wireChannelBar();
+    this._wireGlobalDelegates();
+  }
+
+  _wireTopNav() {
+    const g = this.g.bind(this);
     /* ── Top-level nav: logo, wallet, post buttons ─────────────────── */
     this._initVideoAutoWire();
     /* Unmute toggle for feed videos (was an inline handler; CSP-strict). */
@@ -1146,6 +1160,10 @@ class SayIt {
     g('mobile-fab').onclick    = () => this.openComposeModal();
 
     /* Tapping the active tab refreshes feed -- matches X/Twitter */
+  }
+
+  _wireFeedTabs() {
+    const g = this.g.bind(this);
     /* ── Feed tabs (For You / Following) ───────────────────────────── */
     g('tab-foryou').onclick = () => {
       if (document.getElementById('tab-foryou').classList.contains('active')) {
@@ -1183,6 +1201,15 @@ class SayIt {
         else this.openProfileModal();
       };
     }
+  }
+
+  _wireSideNav() {
+    const g = this.g.bind(this);
+    /* Safe wire: silently skips if the element doesn't exist. */
+    const w = (id, event, fn) => {
+      const el = g(id);
+      if (el) el[event] = fn;
+    };
     /* These nav items are real <a href="#/…"> links so right-click / middle-click
        / ctrl-click open them in a new tab. On a plain left-click we preventDefault
        and route in-app (no reload); modified clicks fall through to the browser. */
@@ -1229,6 +1256,10 @@ class SayIt {
       };
     });
 
+  }
+
+  _wireCompose() {
+    const g = this.g.bind(this);
     /* ── Compose box + compose modal ───────────────────────────────── */
     g('compose-text').oninput = () => {
       utils.autoGrow(g('compose-text'));
@@ -1248,6 +1279,11 @@ class SayIt {
     };
     g('modal-post-btn').onclick = () => this.publishFromModal();
 
+
+  }
+
+  _wireFeedDelegation() {
+    const g = this.g.bind(this);
     const handlePostClick = (e, inModal) => {
       const img = e.target.closest('.post-img-thumb');
       if (img?.dataset.href) { e.stopPropagation(); window.open(img.dataset.href, '_blank', 'noopener,noreferrer'); return; }
@@ -1282,7 +1318,6 @@ class SayIt {
       }
       this.onFeedClick(e, inModal);
     };
-
     /* ── Feed delegation: post actions, keyboard parity ────────────── */
     g('feed').addEventListener('click', e => handlePostClick(e, false));
     /* Keyboard activation for the clickable spans (post-tag / post-mention /
@@ -1295,6 +1330,10 @@ class SayIt {
       handlePostClick(e, false);
     });
 
+  }
+
+  _wireHoverPopups() {
+    const g = this.g.bind(this);
     /* ── Hover popup (desktop only) ──────────────────────────────────
        Uses mouseover/mouseout on the feed so we don't attach N listeners.
        400ms hover delay matches Twitter. Cleared immediately on mouseout
@@ -1415,6 +1454,10 @@ class SayIt {
       sbr.addEventListener('mouseout',  onFeedMouseout);
     }
 
+  }
+
+  _wireChannelBar() {
+    const g = this.g.bind(this);
     /* ── Channel bar + misc controls ───────────────────────────────── */
     g('cb-address').onclick = () => {
       const addr = g('cb-address').textContent;
@@ -1553,6 +1596,15 @@ class SayIt {
 
     window.addEventListener('scroll', utils.throttle(() => this.onScroll(), 100), { passive: true });
 
+  }
+
+  _wireGlobalDelegates() {
+    const g = this.g.bind(this);
+    /* Safe wire: silently skips if the element doesn't exist. */
+    const w = (id, event, fn) => {
+      const el = g(id);
+      if (el) el[event] = fn;
+    };
     /* ── Central delegated click handler ─────────────────────────────────
        Replaces every template-interpolated inline onclick. Two security
        wins: (1) values never enter a JS-string context (where HTML-attr
@@ -1831,6 +1883,7 @@ class SayIt {
 
     this._initPullToRefresh();
   }
+
 
   _initPullToRefresh() {
     let startY = 0, active = false;
