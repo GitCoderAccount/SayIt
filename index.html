@@ -2087,6 +2087,17 @@ body.mode-settings #mobile-fab { display:none; }
 }
 .repost-card-name { font-size:13px; font-weight:700; }
 .repost-card-body { font-size:14px; color:var(--text); line-height:1.5; word-break:break-word; }
+/* Storage overview bar (Settings → Cache & Storage) */
+.storage-bar {
+  height:8px; border-radius:9999px; background:var(--bg-mid);
+  border:1px solid var(--border); overflow:hidden;
+}
+.storage-bar-fill {
+  height:100%; width:0; border-radius:9999px;
+  background:linear-gradient(90deg, var(--primary), var(--primary-lt));
+  transition:width 0.6s ease;
+}
+
 /* Analytics page */
 .ana-page { padding:4px 16px 32px; }
 .ana-note { font-size:13px; color:var(--muted); padding:10px 0 14px; border-bottom:1px solid var(--border); }
