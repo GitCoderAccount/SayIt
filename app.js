@@ -6,7 +6,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260611-136';
+const SW_CACHE_VER = '20260611-138';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -9351,6 +9351,16 @@ class SayIt {
     this._prevMode    = this.state.mode;
     this._prevChannel = this.state.channel;
     this._prevPosts   = this.state.posts;
+    /* Remember WHICH profile we came from — back must return to the viewed
+       profile page, not the signed-in user's profile modal. */
+    this._prevProfileAddr = this._prevMode === 'profile' ? this._profilePageState?.address : null;
+    /* Stash control: _renderThreadPage re-renders after the async ancestor
+       fetch; it stashes its own header on first render so re-renders never
+       reuse a stale or foreign (e.g. profile username) header. */
+    this._threadHeaderHTML = null;
+    /* Thread always starts at the top — arriving from a scrolled profile
+       otherwise leaves the viewport mid-thread ("no post at the top"). */
+    window.scrollTo({ top: 0 });
 
     this.state.mode = 'thread';
     this.g('compose-area').style.display   = 'none';
@@ -9408,7 +9418,12 @@ class SayIt {
     /* Restore previous view */
     const prev = this._prevMode || 'main';
     if (prev === 'main')         this.goHome();
-    else if (prev === 'profile') this.openProfileModal();
+    else if (prev === 'profile') {
+      /* Back to the PAGE we were viewing (any author) — openProfileModal
+         would wrongly open the signed-in user's own editor. */
+      if (this._prevProfileAddr) this.goProfilePage(this._prevProfileAddr, this._prevProfileAddr === this.state.signerAddr);
+      else this.openProfileModal();
+    }
     else if (prev === 'self')    this.goSelf();
     else if (prev === 'custom') {
       this.g('custom-input').value = this._prevChannel || '';
@@ -9490,10 +9505,12 @@ class SayIt {
       repliesHTML += `<div class="post-item thread-reply-item${posClass}" data-txhash="${utils.safe(r.txHash)}">${this.postHTML(r, true, null, null)}</div>`;
     });
 
-    /* Keep the header already in the feed — the ancestor fetch re-renders
-       this page and _applyPageHeader() only yields the header once. */
-    const headerEl = this.g('feed').querySelector('.page-header');
-    const threadHeader = headerEl ? headerEl.outerHTML : this._applyPageHeader();
+    /* The ancestor fetch re-renders this page and _applyPageHeader() only
+       yields the header once — stash it on first render. (Never reuse a
+       header already in the DOM: arriving from a profile, that's the
+       profile's username header, not the thread's.) */
+    if (!this._threadHeaderHTML) this._threadHeaderHTML = this._applyPageHeader();
+    const threadHeader = this._threadHeaderHTML;
     /* X-canonical thread layout: original post at top, the reply composer
        directly beneath it, then the replies below. */
     const replyingToName = this.state.profCache[post.reporter]?.username
@@ -9537,9 +9554,9 @@ class SayIt {
         </div>
       </div>`;
 
-    /* Wire back button to use _threadBack() (restores feed state correctly) */
-    const threadBackBtn = this.g('feed')?.querySelector('.page-header-back');
-    if (threadBackBtn) threadBackBtn.onclick = () => this._threadBack();
+    /* Back button: handled by the global nav-back delegate → _navBack(),
+       which routes to _threadBack() while _threadBackOverride is set. A
+       direct onclick here double-fired with the delegate. */
 
     /* Wire thread compose */
     const input = document.getElementById('thread-page-input');
