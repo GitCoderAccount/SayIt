@@ -21,6 +21,16 @@
 <link rel="manifest" href="./manifest.json">
 <link rel="apple-touch-icon" href="./image1.jpeg">
 <meta name="theme-color" content="#7c4dff">
+<!-- Interim CSP. What it buys today: blocks loading attacker-controlled
+     external scripts, eval(), plugins, <base> hijacks, form exfil, and
+     arbitrary iframes. script-src must keep 'unsafe-inline' until the
+     inline onclick/onerror handlers are converted to delegated listeners
+     (tracked in AUDIT.md) — at that point drop it for real XSS containment.
+     img/media/connect stay open by design: user media may live on any host
+     (IPFS, Arweave, any gateway) and the explorer/RPC endpoints are
+     user-configurable in Settings. frame-ancestors can't be set via a meta
+     tag (header-only, and GitHub Pages can't send custom headers). -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * data: blob:; connect-src *; frame-src https://www.youtube-nocookie.com https://player.vimeo.com; object-src 'none'; base-uri 'self'; form-action 'none'; worker-src 'self'; manifest-src 'self'">
 <script>/* Apply saved appearance prefs before first paint to avoid a flash of the wrong
    colors / size / motion. Theme, forced reduce-motion, and display zoom. */
 try {
@@ -2806,7 +2816,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260607-107';
+const SW_CACHE_VER = '20260609-108';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -4559,7 +4569,12 @@ class SayIt {
     /* 200 followed addresses — generous cap for the parallel fetch strategy */
     const addrs = [...this.state.following].slice(0, 200);
     if (!addrs.length) return;
-    const known = new Set(this._postHashSet || this.state.posts.map(p => p.txHash));
+    /* Skip only posts that already RENDER in the Following view (current
+       state.posts + the extra store). NOT _postHashSet — that set keeps every
+       hash ever loaded, including posts long since capped out of state.posts,
+       which made their authors silently vanish from the Following feed over
+       a long session. */
+    const known = new Set(this.state.posts.map(p => p.txHash));
     if (this._followingExtra) for (const h of this._followingExtra.keys()) known.add(h);
     let newPosts = [];
     /* Fetch pages from each followed address, 5 addresses at a time.
@@ -4595,6 +4610,11 @@ class SayIt {
       const batch = addrs.slice(i, i + BATCH);
       const results = await Promise.allSettled(
         batch.map(async addr => {
+          /* Sent-only fetch first: guarantees the account's own latest posts
+             even when received engagement floods their mixed txlist. */
+          const sent = await this._apiFetchSentTxs(addr);
+          if (sent) return sent;
+          /* Fallback: compat txlist pages (endpoint without a v2 API). */
           const pages = [];
           for (let pg = 1; pg <= pagesPerAddr; pg++) {
             try {
@@ -4621,9 +4641,14 @@ class SayIt {
           if (!tx.input || tx.input === '0x') return;
           const parsed = this._parsePostTx(tx, { mode: 'main' });
           if (!parsed) return;
-          // Extra guard: ensure belongs to this addr (defensive)
+          /* Only the followed account's OWN posts — their txlist also contains
+             received txs authored by others. But any destination channel is
+             fine: a followed account's posts and replies belong in Following
+             wherever they posted them (matches X). The old to===main-or-self
+             restriction silently dropped their posts to other channels and
+             inboxes, which was a root cause of "Following shows only one
+             account". Content filters still apply at render. */
           if (parsed.reporter?.toLowerCase() !== addr.toLowerCase()) return;
-          if (parsed.to && parsed.to !== MAIN_CHANNEL && parsed.to !== addr) return;
           known.add(hash);
           newPosts.push(parsed);
         });
@@ -8537,9 +8562,21 @@ class SayIt {
         const cacheKey = `${address}_${_limit}`;
         let raw = this._profileScanCache[cacheKey];
         if (!raw) {
-          /* Initial paint: scan only a few pages so posts appear immediately;
-             deeper history streams in via fetchProfileMore (scroll / fill). */
-          raw = await this._scanProfilePages(address, PROFILE_INIT_PAGES);
+          /* Initial paint: a sent-only fetch (guarantees the profile's own
+             latest posts even when received engagement floods the mixed
+             txlist pages) merged with a shallow page scan; deeper history
+             streams in via fetchProfileMore (scroll / fill). */
+          const [sent, paged] = await Promise.all([
+            this._apiFetchSentTxs(address),
+            this._scanProfilePages(address, PROFILE_INIT_PAGES),
+          ]);
+          if (sent?.length) {
+            const seen = new Set(sent.map(t => t.hash.toLowerCase()));
+            raw = [...sent, ...(paged || []).filter(t => !seen.has(t.hash?.toLowerCase()))];
+            raw.sort((a, b) => Number(b.timeStamp || 0) - Number(a.timeStamp || 0));
+          } else {
+            raw = paged;
+          }
           /* Cache for 60s — covers all tab switching */
           this._profileScanCache[cacheKey] = raw;
           setTimeout(() => { delete this._profileScanCache[cacheKey]; }, 60_000);
@@ -8880,6 +8917,45 @@ class SayIt {
       }
       throw err;
     }
+  }
+
+  /* Fetch only an address's SENT transactions via the Blockscout v2 API
+     (filter=from), newest first. The etherscan-compat txlist mixes sent and
+     received txs, and a popular account's received engagement (every like/
+     follow/reply lands as a tx TO them) buries their own posts beyond any
+     reasonable page window — the root cause of Following feeds and profiles
+     showing only some accounts. One filtered request covers an account's
+     last 50 posts regardless of how much engagement they receive.
+     Returns a sanitized etherscan-shaped array, or null when the configured
+     endpoint doesn't speak v2 (caller falls back to the compat txlist). */
+  async _apiFetchSentTxs(addr) {
+    if (!/^0x[0-9a-f]{40}$/i.test(addr || '')) return null;
+    const s = this._getSettings();
+    const base = (s.apiUrl || 'https://api.scan.pulsechain.com/api').replace(/\/api\/?$/, '');
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 15000);
+      let res;
+      try {
+        res = await fetch(`${base}/api/v2/addresses/${addr}/transactions?filter=from`,
+          { signal: ctrl.signal });
+      } finally { clearTimeout(timer); }
+      if (!res.ok) return null;
+      const d = await res.json();
+      if (!Array.isArray(d?.items)) return null;
+      /* Map the v2 shape onto the etherscan-compat shape every parser
+         expects, then through the standard ingestion gate. */
+      return utils.sanitizeTxs(d.items.map(it => ({
+        hash:  it.hash,
+        from:  it.from?.hash,
+        to:    it.to?.hash ?? null,
+        input: it.raw_input,
+        timeStamp: it.timestamp
+          ? String(Math.floor(new Date(it.timestamp).getTime() / 1000)) : undefined,
+        blockNumber: it.block_number ?? it.block ?? undefined,
+        transactionIndex: it.position ?? undefined,
+      })));
+    } catch { return null; }
   }
 
   queryAddr() {
