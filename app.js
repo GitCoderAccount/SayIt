@@ -6,7 +6,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260610-132';
+const SW_CACHE_VER = '20260610-133';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -4072,18 +4072,37 @@ class SayIt {
             </label>
           </div>`).join('')}
         <div class="settings-row">
-          <div class="settings-row-label"><strong>Autoplay videos</strong><span>Play videos automatically as they scroll into view</span></div>
+          <div class="settings-row-label"><strong>Default tab on launch</strong><span>Where the app opens (when not following a shared link)</span></div>
+          <select class="settings-btn" id="set-default-view" style="padding:9px 12px">
+            ${[['home','Home'],['explore','Explore'],['bookmarks','Bookmarks']].map(([v,label]) =>
+              `<option value="${v}" ${(s.defaultView || 'home') === v ? 'selected' : ''}>${label}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+
+      <!-- Media -->
+      <div class="settings-section">
+        <div class="settings-section-title">Media</div>
+        <div class="settings-row">
+          <div class="settings-row-label"><strong>Autoplay videos</strong><span>Play video files automatically (muted) as they scroll into view</span></div>
           <label class="settings-switch">
             <input type="checkbox" id="set-autoplay" ${s.autoplayMedia === false ? '' : 'checked'}>
             <span class="settings-switch-slider"></span>
           </label>
         </div>
         <div class="settings-row">
-          <div class="settings-row-label"><strong>Default tab on launch</strong><span>Where the app opens (when not following a shared link)</span></div>
-          <select class="settings-btn" id="set-default-view" style="padding:9px 12px">
-            ${[['home','Home'],['explore','Explore'],['bookmarks','Bookmarks']].map(([v,label]) =>
-              `<option value="${v}" ${(s.defaultView || 'home') === v ? 'selected' : ''}>${label}</option>`).join('')}
-          </select>
+          <div class="settings-row-label"><strong>Autoplay video embeds</strong><span>Start YouTube/Vimeo cards muted when mostly on screen (¾ visible); they stop when scrolled away</span></div>
+          <label class="settings-switch">
+            <input type="checkbox" id="set-autoplay-embeds" ${s.autoplayEmbeds === false ? '' : 'checked'}>
+            <span class="settings-switch-slider"></span>
+          </label>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label"><strong>Data saver</strong><span>Everything click-to-play: no autoplay of any kind, video files show controls</span></div>
+          <label class="settings-switch">
+            <input type="checkbox" id="set-data-saver" ${s.dataSaver ? 'checked' : ''}>
+            <span class="settings-switch-slider"></span>
+          </label>
         </div>
       </div>
 
@@ -4364,6 +4383,20 @@ class SayIt {
     });
     /* Autoplay videos — applies on the next render; re-wire the current feed
        so the change takes effect immediately. */
+    g('set-autoplay-embeds')?.addEventListener('change', () => {
+      const s = this._getSettings();
+      s.autoplayEmbeds = g('set-autoplay-embeds').checked;
+      this._saveSettings(s);
+      const feed = this.g('feed');
+      if (feed) this._wireVideoObserver(feed, true);
+    });
+    g('set-data-saver')?.addEventListener('change', () => {
+      const s = this._getSettings();
+      s.dataSaver = g('set-data-saver').checked;
+      this._saveSettings(s);
+      const feed = this.g('feed');
+      if (feed) this._wireVideoObserver(feed, true);
+    });
     g('set-autoplay')?.addEventListener('change', () => {
       const s = this._getSettings();
       s.autoplayMedia = g('set-autoplay').checked;
@@ -6442,16 +6475,12 @@ class SayIt {
       }
 
       if (tab === 'media') {
-        const imgUrls = [];
+        const items = [];
         posts.forEach(p => {
-          this._mediaImageUrls(p.display).forEach(url => imgUrls.push({ url, txHash: p.txHash }));
+          this._postMediaItems(p.display).forEach(it => items.push({ ...it, txHash: p.txHash }));
         });
         feedEl.innerHTML = `<div class="prof-media-grid">${
-          imgUrls.slice(0,60).map(({ url, txHash }) =>
-            `<img src="${utils.safe(url)}" class="prof-media-thumb" loading="lazy"
-              data-fallback="hide"
-              data-act="open-tx" data-act-arg="${utils.safe(txHash)}" style="cursor:pointer">`
-          ).join('')
+          items.slice(0, 60).map(it => this._mediaGridCellHTML(it)).join('')
         }</div>`;
         return;
       }
@@ -7630,30 +7659,49 @@ class SayIt {
        via _stopOtherMedia. */
     const media = container.querySelectorAll('.post-vid-thumb, .post-yt-facade, .post-embed-playing');
     if (!media.length && !reset) return;
-    const autoplay = this._getSettings().autoplayMedia !== false;
-    if (reset && this._vidObserver) { this._vidObserver.disconnect(); this._vidObserver = null; }
+    const st = this._getSettings();
+    const autoplay = st.autoplayMedia !== false && !st.dataSaver;
+    if (reset) {
+      this._vidObserver?.disconnect(); this._vidObserver = null;
+      this._embObserver?.disconnect(); this._embObserver = null;
+    }
     if (!this._vidObserver) {
       this._vidObserver = new IntersectionObserver(entries => {
         entries.forEach(entry => {
           const el = entry.target;
           if (!entry.isIntersecting) {
             if (!el.isConnected) { this._vidObserver.unobserve(el); return; }
-            if (el.tagName === 'VIDEO') el.pause();
-            else if (el.classList.contains('post-embed-playing')) this._revertEmbed(el);
+            el.pause();
             return;
           }
-          if (this._getSettings().autoplayMedia === false) return;
-          if (el.tagName === 'VIDEO') {
-            if (!el.controls) el.play().catch(() => {});
-          } else if (el.classList.contains('post-yt-facade')) {
-            /* Muted viewport-autoplay, X-style. Click still gives sound. */
-            this._playFacade(el, true);
-          }
+          const s2 = this._getSettings();
+          if (s2.autoplayMedia === false || s2.dataSaver) return;
+          if (!el.controls) el.play().catch(() => {});
         });
       }, { threshold: 0.5 });
     }
+    if (!this._embObserver) {
+      /* Embeds get a gentler gate than file videos: start only when ¾
+         visible, stop only when mostly gone (<¼) — hysteresis prevents
+         the start/stop churn of a single threshold while scrolling. */
+      this._embObserver = new IntersectionObserver(entries => {
+        entries.forEach(entry => {
+          const el = entry.target;
+          if (el.classList.contains('post-embed-playing')) {
+            if (!el.isConnected) { this._embObserver.unobserve(el); return; }
+            if (entry.intersectionRatio < 0.25) this._revertEmbed(el);
+            return;
+          }
+          if (!el.classList.contains('post-yt-facade')) return;
+          const s2 = this._getSettings();
+          if (s2.dataSaver || s2.autoplayEmbeds === false) return;
+          if (entry.intersectionRatio >= 0.75) this._playFacade(el, true);
+        });
+      }, { threshold: [0.25, 0.75] });
+    }
     media.forEach(el => {
-      if (el.tagName === 'VIDEO') {
+      const isVideo = el.tagName === 'VIDEO';
+      if (isVideo) {
         if (autoplay && el.controls) {
           el.controls = false;
           const btn = el.parentElement?.querySelector('.vid-unmute-btn');
@@ -7668,7 +7716,7 @@ class SayIt {
       }
       if (!reset && el.dataset.vidObserved === '1') return;
       el.dataset.vidObserved = '1';
-      this._vidObserver.observe(el);
+      (isVideo ? this._vidObserver : this._embObserver).observe(el);
     });
     /* Strict exclusivity for natives that start by attribute/controls, and
        single-sound via volumechange. Capture phase: media events don't
@@ -10603,22 +10651,18 @@ class SayIt {
         fresh.forEach(p => { if (p.parentTx) replyMap.set(p.parentTx, (replyMap.get(p.parentTx)||0)+1); });
         fresh.forEach(p => {
           if (tab === 'media') {
-            /* For media tab, append matching thumbs (same detection as paint) */
-            this._mediaImageUrls(p.display).forEach(resolved => {
-              const img = document.createElement('img');
-              img.src = resolved;
-              img.className = 'prof-media-thumb';
-              img.loading = 'lazy';
-              img.onerror = function(){ this.style.display = 'none'; };
-              img.onclick = () => window.open('https://otter.pulsechain.com/tx/' + p.txHash, '_blank', 'noopener,noreferrer');
+            /* Same cells as the initial paint (all media types). */
+            const cells = this._postMediaItems(p.display)
+              .map(it => this._mediaGridCellHTML({ ...it, txHash: p.txHash })).join('');
+            if (cells) {
               const grid = feedEl.querySelector('.prof-media-grid') || (() => {
-                const g = document.createElement('div');
-                g.className = 'prof-media-grid';
-                feedEl.insertBefore(g, footer);
-                return g;
+                const g2 = document.createElement('div');
+                g2.className = 'prof-media-grid';
+                feedEl.insertBefore(g2, footer);
+                return g2;
               })();
-              grid.appendChild(img);
-            });
+              grid.insertAdjacentHTML('beforeend', cells);
+            }
             return;
           }
           const el = document.createElement('div');
@@ -10686,7 +10730,43 @@ class SayIt {
     }
     return out;
   }
-  _postHasMedia(text) { return this._mediaImageUrls(text).length > 0; }
+  _postHasMedia(text) { return this._postMediaItems(text).length > 0; }
+
+  /* One cell of the profile Media grid. Videos render as muted previews
+     with a play badge; YouTube links by their thumbnail. Clicking opens
+     the post's thread. */
+  _mediaGridCellHTML(it) {
+    const open = `data-act="open-thread" data-act-arg="${utils.safe(it.txHash)}" style="cursor:pointer"`;
+    if (it.type === 'vid') {
+      return `<div class="prof-media-cell" ${open}>
+        <video src="${utils.safe(it.thumb)}" class="prof-media-thumb" muted playsinline preload="metadata" data-fallback="hide-wrap"></video>
+        <span class="prof-media-play">▶</span></div>`;
+    }
+    if (it.type === 'yt') {
+      return `<div class="prof-media-cell" ${open}>
+        <img src="${utils.safe(it.thumb)}" class="prof-media-thumb" loading="lazy" data-fallback="hide">
+        <span class="prof-media-play">▶</span></div>`;
+    }
+    return `<img src="${utils.safe(it.thumb)}" class="prof-media-thumb" loading="lazy" data-fallback="hide" ${open}>`;
+  }
+
+  /* Every media item a post carries, for the profile Media grid:
+     images (incl. gifs), native video files, and YouTube links (rendered
+     by their thumbnail). Returns [{type:'img'|'vid'|'yt', url, thumb}]. */
+  _postMediaItems(text) {
+    const items = this._mediaImageUrls(text).map(u => ({ type: 'img', url: u, thumb: u }));
+    for (const w of String(text || '').split(/\s+/)) {
+      if (!/^(https?:|ipfs:|ar:|arweave:)/.test(w)) continue;
+      if (_LK_VID_RE.test(w)) {
+        const u = utils.safeUrl(w.startsWith('ipfs://') ? utils.resolveIPFS(w) : w);
+        if (u) items.push({ type: 'vid', url: u, thumb: u });
+        continue;
+      }
+      const yt = utils.ytId(w);
+      if (yt) items.push({ type: 'yt', url: w, thumb: `https://i.ytimg.com/vi/${yt}/hqdefault.jpg` });
+    }
+    return items;
+  }
 
   /* Pure tx filter — split out of loadProfileTab so fetchProfileMore can
      reuse it without re-fetching. Returns parsed post objects. */
