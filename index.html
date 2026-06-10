@@ -2842,7 +2842,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260610-113';
+const SW_CACHE_VER = '20260610-114';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -13824,6 +13824,7 @@ class SayIt {
        this address. It needn't be indexed; addresses are shareable, so this
        lets someone paste an address from anywhere and land on its profile. */
     const isFullAddr = /^0x[0-9a-f]{40}$/.test(q);
+    const isTxHash   = /^0x[0-9a-f]{64}$/.test(q);
 
     /* People: match known profiles by username or address. Searches BOTH the
        live session cache and a lazy snapshot of the persisted profiles store,
@@ -13864,7 +13865,7 @@ class SayIt {
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5);
 
-    if (people.length === 0 && tags.length === 0 && !isFullAddr) {
+    if (people.length === 0 && tags.length === 0 && !isFullAddr && !isTxHash) {
       dd.innerHTML = `<div class="search-dd-empty">No people or tags match “${utils.safe(term)}”<br><span style="font-size:13px">Press Enter to search post text</span></div>`;
       dd.classList.add('open');
       if (inp) inp.setAttribute('aria-expanded', 'true');
@@ -13872,6 +13873,20 @@ class SayIt {
     }
 
     let html = '';
+    if (isTxHash) {
+      /* A full 64-hex transaction hash — offer to open it as a post thread.
+         openThreadByHash resolves it via _fetchTxByHash even when the post
+         isn't in the local cache. */
+      const sh = utils.safe(q);
+      html += `<div class="search-dd-section-title">Post</div>`;
+      html += `<div class="search-dd-item" role="option" data-search-hash="${sh}">
+        <div class="search-dd-tag-icon">📝</div>
+        <div class="search-dd-body">
+          <div class="search-dd-name">Open post</div>
+          <div class="search-dd-sub">${utils.safe(this.trunc(q))} · view this transaction as a thread</div>
+        </div>
+      </div>`;
+    }
     if (isFullAddr) {
       const sa = utils.safe(q), ta = utils.safe(this.trunc(q));
       html += `<div class="search-dd-section-title">Address</div>`;
@@ -13937,6 +13952,14 @@ class SayIt {
         } else {
           this.goProfilePage(addr, addr === this.state.signerAddr);
         }
+      };
+    });
+    dd.querySelectorAll('[data-search-hash]').forEach(el => {
+      el.onclick = () => {
+        const hash = el.dataset.searchHash;
+        this._hideSearchDropdown();
+        this._clearSearch();
+        if (/^0x[0-9a-f]{64}$/i.test(hash)) this.openThreadByHash(hash.toLowerCase());
       };
     });
     dd.querySelectorAll('[data-search-tag]').forEach(el => {
