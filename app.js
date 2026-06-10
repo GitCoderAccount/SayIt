@@ -1,0 +1,11770 @@
+'use strict';
+const ethers = window.ethers;
+
+/* ── Constants ────────────────────────────────────────────────────────── */
+const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseChain burn address */
+/* SW_CACHE_VER: bump this string whenever you deploy a new version.
+   The service worker uses it to invalidate cached files.
+   Format: date + build number, e.g. '20250526-1' */
+const SW_CACHE_VER = '20260610-125';
+const PULSE_CHAIN_ID = 369;
+const REPLY_PREFIX   = 'REPLY_TO:';
+const PROFILE_PREFIX = 'PROFILE_DATA:';
+/* MAX_PREVIEW: chars shown before "Show more" truncation in feed */
+const MAX_PREVIEW    = 500;
+/* POSTS_TARGET: stop fetching once we've added this many new posts in one
+   pagination pass. Higher = denser scroll, more API calls. */
+const POSTS_TARGET   = 20;
+/* MAX_PAGES: hard cap on API pages scanned per fetchPosts() call. Each
+   page = 50 txs, so 40 pages = 2000 txs max. Beyond this, the user gets
+   a manual "Load more" button to continue. */
+const MAX_PAGES      = 40;
+const POLL_FIRST_MS  = 30_000;
+const POLL_MS        = 120_000;
+const DRAFT_KEY      = 'sayitDraft';
+const PRUNE_KEY      = 'sayitLastPrune';
+const LAST_CHECK_KEY = 'sayitLastCheck';
+const DISCLAIMER_KEY = 'sayitDisclaimerAck'; /* '1' once the user has acknowledged */
+const OFFICIAL_CHANNEL  = '0x0000000000000000000000000000000000000001'; /* placeholder — update with real address */
+const LIKE_PREFIX       = 'LIKE:';
+const UNLIKE_PREFIX     = 'UNLIKE:';
+const BOOKMARK_PREFIX   = 'BOOKMARK:';
+const UNBOOKMARK_PREFIX = 'UNBOOKMARK:';
+const FOLLOW_PREFIX     = 'FOLLOW:';
+const UNFOLLOW_PREFIX   = 'UNFOLLOW:';
+const POLL_PREFIX       = 'POLL:';   /* POLL:{json}\n\nQuestion text */
+const VOTE_PREFIX       = 'VOTE:';   /* VOTE:0xpollhash:optionIndex */
+const NOTE_PREFIX       = 'NOTE:';     /* NOTE:0xposthash\n\nnote text (community note) */
+const NOTERATE_PREFIX   = 'NOTERATE:'; /* NOTERATE:0xnotehash:h|n (helpful/not, last-wins) */
+const TOKEN_PROFILE_PREFIX = 'PROFILE_FOR:'; /* PROFILE_FOR:0xtoken\n\n{json} — set a token channel's profile; only honored from the token's deployer or current owner() */
+const NOTE_SHOW_THRESHOLD = 2;         /* net helpful (helpful − not) to graduate to "context" */
+const PROFILE_INIT_PAGES  = 4;         /* pages scanned for the FIRST profile paint; rest streams on scroll */
+const SETTINGS_KEY    = 'sayitSettings';
+const MUTE_KEY        = 'sayitMuted';   /* JSON array of muted addresses */
+const LISTS_KEY       = 'sayitLists';       /* JSON array of {id,name,members[]} */
+const COMMUNITIES_KEY = 'sayitCommunities'; /* JSON array of {address,name,desc,joined} */
+/* On-chain sync: a single self-tx publishes a snapshot of all lists +
+   joined communities as JSON. Scanning the user's own outbox for the latest
+   LC_SYNC restores them on any device. One tx per publish (not per edit) —
+   keeps gas reasonable while making the data portable + publicly visible. */
+const LC_SYNC_PREFIX  = 'LC_SYNC:';
+const CHANNELS_KEY    = 'sayitChannelsScan';
+
+const ERC721_ABI = [
+  'function tokenURI(uint256 tokenId) view returns (string)',
+  'function ownerOf(uint256 tokenId) view returns (address)',
+];
+
+/* Linkify patterns — hoisted and compiled once. linkify() runs on every post
+   render, so recreating these regexes/Set per call was wasted work. */
+const _LK_RE         = /ipfs:\/\/\S+|ar:\/\/\S+|arweave:\/\/\S+|https?:\/\/[^\s<>"{}|\\^[\]`]+|#([a-zA-Z]\w{0,99})|@(0x[a-fA-F0-9]{40})/g;
+const _LK_IMG_RE     = /\.(jpg|jpeg|png|gif|webp|svg|avif|tiff|bmp)(\?[^\s]*)?$/i;
+const _LK_VID_RE     = /\.(mp4|webm|ogg|mov|m4v)(\?[^\s]*)?$/i;
+const _LK_IMG_DOMAINS = /\/(ipfs|ipns)\//i;          /* IPFS gateways: .../ipfs/Qm... */
+const _LK_IMG_HOSTS  = new Set([
+  'pbs.twimg.com', 'ton.twimg.com',                  /* Twitter/X image CDN */
+  'i.imgur.com', 'imgur.com',                        /* Imgur */
+  'cdn.discordapp.com', 'media.discordapp.net',      /* Discord attachments */
+  'media.tenor.com', 'c.tenor.com',                  /* Tenor GIFs */
+  'media.giphy.com', 'i.giphy.com',                  /* Giphy */
+  'media1.giphy.com', 'media2.giphy.com', 'media3.giphy.com', 'media4.giphy.com',
+  'nftstorage.link', 'gateway.pinata.cloud',         /* IPFS gateways */
+  'cloudflare-ipfs.com', 'dweb.link',
+]);
+
+/* ── Utils ────────────────────────────────────────────────────────────── */
+const utils = {
+  _t: null,
+  toast(msg, ms = 3000) {
+    /* Queue toasts so rapid-fire actions (like + repost) show both messages
+       rather than the second one immediately stomping the first. */
+    this._toastQueue = this._toastQueue || [];
+    this._toastBusy  = this._toastBusy  || false;
+    this._toastQueue.push({ msg, ms });
+    if (!this._toastBusy) this._drainToastQueue();
+  },
+  _drainToastQueue() {
+    if (!this._toastQueue?.length) { this._toastBusy = false; return; }
+    this._toastBusy = true;
+    const { msg, ms } = this._toastQueue.shift();
+    const el = document.getElementById('toast');
+    if (!el) { this._drainToastQueue(); return; }
+    el.textContent = msg;
+    el.style.display = 'block';
+    /* After this toast, wait briefly then show the next (or hide). */
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => {
+      el.style.display = 'none';
+      /* Short gap between queued toasts so the user sees the transition */
+      setTimeout(() => this._drainToastQueue(), 200);
+    }, ms);
+  },
+  loading(show, label = 'Publishing…') {
+    document.getElementById('loading-overlay').classList.toggle('on', show);
+    document.getElementById('loading-label').textContent = label;
+  },
+  /* ── Explorer-response validation (ingestion gate) ──────────────────────
+     The block explorer API is an input, not an oracle: the endpoint is
+     user-configurable and network-supplied, so a malicious or compromised
+     explorer must not be able to inject scriptable values. tx.hash/from/to
+     end up interpolated into inline-handler JS-string contexts where
+     HTML-entity escaping is decoded away before the JS engine runs — their
+     only real protection is strict shape validation here. Malformed numeric
+     fields are stripped (not dropped) so downstream Number()/Date fallbacks
+     engage instead of producing NaN. */
+  isTxShape(tx) {
+    if (!tx || typeof tx !== 'object') return false;
+    if (!/^0x[0-9a-f]{64}$/i.test(tx.hash  || '')) return false;
+    if (!/^0x[0-9a-f]{40}$/i.test(tx.from  || '')) return false;
+    /* tx.to is null/'' for contract creation — allow; otherwise strict. */
+    if (tx.to != null && tx.to !== '' && !/^0x[0-9a-f]{40}$/i.test(tx.to)) return false;
+    return true;
+  },
+  _stripBadNumerics(tx) {
+    if (tx.timeStamp   != null && !/^\d+$/.test(String(tx.timeStamp)))   delete tx.timeStamp;
+    if (tx.blockNumber != null && !/^\d+$/.test(String(tx.blockNumber))) delete tx.blockNumber;
+    return tx;
+  },
+  sanitizeTxs(list) {
+    if (!Array.isArray(list)) return [];
+    return list.filter(tx => this.isTxShape(tx)).map(tx => this._stripBadNumerics(tx));
+  },
+  safe(str) {
+    /* Escapes for BOTH text and attribute contexts. The old textContent→
+       innerHTML trick does NOT escape quotes (HTML text-node serialization
+       never does), so any value interpolated into a "..." attribute — e.g.
+       <img src="${safe(picUrl)}"> — could close the attribute with a " and
+       inject an event handler. picUrl/website/etc. are attacker-controlled
+       on-chain data, so escaping quotes here is what blocks that XSS. */
+    return String(str ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  },
+  linkify(text, fullText) {
+    /* fullText = complete post text for image extraction (ignores MAX_PREVIEW truncation)
+       text     = possibly truncated text for body rendering */
+    /* Cheap aliases to the module-level compiled patterns (see _LK_* above). */
+    const re = _LK_RE, imgRe = _LK_IMG_RE, vidRe = _LK_VID_RE,
+          imgDomains = _LK_IMG_DOMAINS, imgHosts = _LK_IMG_HOSTS;
+    const isMediaUrl = url => {
+      if (imgRe.test(url)) return 'img';
+      if (vidRe.test(url)) return 'vid';
+      if (imgDomains.test(url)) return 'img';    /* IPFS gateway path */
+      if (url.includes('arweave.net/')) return 'img';
+      try {
+        const host = new URL(url).hostname;
+        if (imgHosts.has(host)) return 'img';
+        /* YouTube / Vimeo — embedded as click-to-play facades (can't autoplay) */
+        if (/(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com)$/i.test(host) && ytId(url)) return 'youtube';
+        if (/(^|\.)vimeo\.com$/i.test(host) && vimeoId(url)) return 'vimeo';
+      } catch { /* invalid URL — skip */ }
+      if (xPost(url)) return 'tweet';   /* X / Twitter post → styled link card */
+      return null;
+    };
+    const resolveUrl = u => {
+      if (u.startsWith('ipfs://'))    return 'https://ipfs.io/ipfs/' + u.slice(7);
+      if (u.startsWith('ar://'))      return 'https://arweave.net/' + u.slice(5);
+      if (u.startsWith('arweave://')) return 'https://arweave.net/' + u.slice(10);
+      return u;
+    };
+    /* Extract the 11-char YouTube video ID from any common URL form
+       (watch?v=, youtu.be/, /embed/, /shorts/). Returns null if not found. */
+    const ytId = url => {
+      try {
+        const u = new URL(url);
+        const h = u.hostname.replace(/^www\./, '');
+        let id = '';
+        if (h === 'youtu.be')               id = u.pathname.slice(1).split('/')[0];
+        else if (u.pathname.startsWith('/shorts/')) id = u.pathname.split('/')[2] || '';
+        else if (u.pathname.startsWith('/embed/'))  id = u.pathname.split('/')[2] || '';
+        else if (u.pathname.startsWith('/live/'))   id = u.pathname.split('/')[2] || '';
+        else                                id = u.searchParams.get('v') || '';
+        return /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
+      } catch { return null; }
+    };
+    /* Extract the numeric Vimeo video ID. Returns null if not found. */
+    const vimeoId = url => {
+      const m = url.match(/vimeo\.com\/(?:video\/)?(\d+)/i);
+      return m ? m[1] : null;
+    };
+    /* Parse an X/Twitter post URL → { handle, id } or null. Only matches
+       real status URLs (x.com/<handle>/status/<id>); anything else (profiles,
+       search, etc.) falls through to a plain link. No third-party script is
+       loaded — we render our own styled card that links out to X. */
+    const xPost = url => {
+      try {
+        const u = new URL(url);
+        const h = u.hostname.replace(/^(www|mobile|m)\./, '');
+        if (h !== 'x.com' && h !== 'twitter.com') return null;
+        const m = u.pathname.match(/^\/([A-Za-z0-9_]{1,15})\/status(?:es)?\/(\d+)/);
+        return m ? { handle: m[1], id: m[2] } : null;
+      } catch { return null; }
+    };
+
+    /* ── Pass 1: extract ALL media from fullText (never truncated) ── */
+    const scanText = fullText || text;
+    let imgHtml = '', embedHtml = '', mediaCount = 0;
+    const mediaUrls = new Set(); /* dedup */
+    let mScan;
+    re.lastIndex = 0;
+    while ((mScan = re.exec(scanText)) !== null && mediaCount < 4) {
+      const raw = mScan[0];
+      if (!raw.startsWith('http') && !raw.startsWith('ipfs://') &&
+          !raw.startsWith('ar://') && !raw.startsWith('arweave://')) continue;
+      const resolved = resolveUrl(raw);
+      if (mediaUrls.has(resolved)) continue;
+      const mtype = isMediaUrl(resolved);
+      if (mtype === 'img') {
+        mediaUrls.add(resolved);
+        const safeR = utils.safe(resolved);
+        const safeRaw = utils.safe(raw);
+        imgHtml += `<img src="${safeR}" class="post-img-thumb" alt="image"
+          loading="lazy" onerror="this.style.display='none'"
+          data-href="${safeR}" title="Right-click to copy URL"
+          data-raw-url="${safeRaw}">`;
+        mediaCount++;
+      } else if (mtype === 'vid') {
+        mediaUrls.add(resolved);
+        const safeR = utils.safe(resolved);
+        imgHtml += `<div class="post-vid-wrap">
+          <video src="${safeR}" class="post-vid-thumb"
+            autoplay muted loop playsinline preload="auto"
+            onerror="this.closest('.post-vid-wrap').style.display='none'"></video>
+          <button class="vid-unmute-btn" title="Tap to unmute"
+            onclick="event.stopPropagation();const v=this.previousElementSibling;v.muted=!v.muted;this.textContent=v.muted?'🔇':'🔊'">🔇</button>
+        </div>`;
+        mediaCount++;
+      } else if (mtype === 'youtube') {
+        const vid = ytId(resolved);
+        if (vid) {
+          mediaUrls.add(resolved);
+          const safeVid = utils.safe(vid);
+          /* Thumbnail + play button — iframe loads on click (faster, avoids
+             Google tracking before user interaction, and works in feed context
+             where autoplay is blocked by browser sandbox). */
+          imgHtml += `<div class="post-vid-wrap post-yt-facade" data-yt-id="${safeVid}">
+            <img src="https://i.ytimg.com/vi/${safeVid}/hqdefault.jpg"
+              class="post-yt-thumb" alt="YouTube video" loading="lazy"
+              onerror="this.src='https://i.ytimg.com/vi/${safeVid}/default.jpg'">
+            <div class="post-yt-play">
+              <svg viewBox="0 0 68 48" width="68" height="48">
+                <path d="M66.52 7.74c-.78-2.93-2.49-5.41-5.42-6.19C55.79.13 34 0 34 0S12.21.13 6.9 1.55c-2.93.78-4.63 3.26-5.42 6.19C.06 13.05 0 24 0 24s.06 10.95 1.48 16.26c.78 2.93 2.49 5.41 5.42 6.19C12.21 47.87 34 48 34 48s21.79-.13 27.1-1.55c2.93-.78 4.64-3.26 5.42-6.19C67.94 34.95 68 24 68 24s-.06-10.95-1.48-16.26z" fill="#f00"/>
+                <path d="M45 24 27 14v20" fill="#fff"/>
+              </svg>
+            </div>
+          </div>`;
+          mediaCount++;
+        }
+      } else if (mtype === 'vimeo') {
+        const vid = vimeoId(resolved);
+        if (vid) {
+          mediaUrls.add(resolved);
+          const safeVid = utils.safe(vid);
+          /* Facade: thumbnail from vumbnail.com + branded play button.
+             Clicking loads the real iframe with autoplay — same pattern as YouTube. */
+          imgHtml += `<div class="post-vid-wrap post-yt-facade post-vimeo-facade" data-vimeo-id="${safeVid}">
+            <img src="https://vumbnail.com/${safeVid}.jpg"
+              class="post-yt-thumb" alt="Vimeo video" loading="lazy"
+              onerror="this.style.display='none'">
+            <div class="post-yt-play post-vimeo-play">
+              <svg viewBox="0 0 68 48" width="68" height="48">
+                <rect width="68" height="48" rx="8" fill="#1AB7EA" opacity="0.9"/>
+                <path d="M45 24 27 14v20" fill="#fff"/>
+              </svg>
+            </div>
+          </div>`;
+          mediaCount++;
+        }
+      } else if (mtype === 'tweet') {
+        const tw = xPost(resolved);
+        if (tw) {
+          mediaUrls.add(resolved);
+          /* Canonical URL (drops tracking params); handle is [A-Za-z0-9_] only. */
+          const href = `https://x.com/${tw.handle}/status/${tw.id}`;
+          const safeHandle = utils.safe(tw.handle);
+          embedHtml += `<a class="x-embed-card" href="${utils.safe(href)}"
+              target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">
+            <span class="x-embed-hdr">
+              <svg class="x-embed-logo" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+              <span class="x-embed-title">Post on X</span>
+              <span class="x-embed-arrow" aria-hidden="true">↗</span>
+            </span>
+            <span class="x-embed-handle">@${safeHandle}</span>
+            <span class="x-embed-cta">View this post on X</span>
+          </a>`;
+          mediaCount++;
+        }
+      }
+    }
+
+    /* ── Pass 2: render body text (may be truncated), suppressing media URLs ── */
+    let result = '', last = 0;
+    re.lastIndex = 0;
+    while ((mScan = re.exec(text)) !== null) {
+      result += utils.safe(text.slice(last, mScan.index)).replace(/\n/g, '<br>');
+      last = mScan.index + mScan[0].length;
+      const raw = mScan[0];
+      if (mScan[1]) {
+        /* hashtag */
+        result += `<span class="post-tag" role="button" tabindex="0" data-tag="${utils.safe(mScan[1])}">#${utils.safe(mScan[1])}</span>`;
+      } else if (mScan[2]) {
+        /* @address mention */
+        const addr = mScan[2].toLowerCase();
+        result += `<span class="post-mention" role="button" tabindex="0" data-addr="${utils.safe(addr)}">@${utils.safe(addr.slice(0,6)+'…'+addr.slice(-4))}</span>`;
+      } else {
+        /* URL — suppress if it's a media URL we're already rendering as image/video */
+        const resolved = resolveUrl(raw);
+        if (mediaUrls.has(resolved)) {
+          /* Suppressed — shown as inline media instead */
+        } else {
+          const display = raw.length > 50 ? raw.slice(0, 47) + '…' : raw;
+          result += `<a href="${utils.safe(resolved)}" target="_blank" rel="noopener noreferrer"
+            class="post-link" onclick="event.stopPropagation()">${utils.safe(display)}</a>`;
+        }
+      }
+    }
+    result += utils.safe(text.slice(last)).replace(/\n/g, '<br>');
+    return { text: result, images: imgHtml, embeds: embedHtml };
+  },
+  resolveIPFS(uri) {
+    if (!uri) return null;
+    if (uri.startsWith('ipfs://')) return 'https://ipfs.io/ipfs/' + uri.slice(7);
+    return uri;
+  },
+  /* Defensive URL validation. Returns the URL if safe to render in an
+     <a href>, <img src>, or similar context, otherwise returns ''.
+     Blocks javascript:, data:, vbscript:, file:, and any other scheme
+     not in the allowlist. Critical: chain data is attacker-controlled
+     and CAN contain javascript: URIs that bypass client-side validation.
+     Allowed schemes: http, https, ipfs, ar, arweave, mailto. */
+  safeUrl(url) {
+    if (!url || typeof url !== 'string') return '';
+    const s = url.trim();
+    if (!s) return '';
+    /* Schemeless URLs (no colon before first /) are fine — treated as relative */
+    const colonIdx = s.indexOf(':');
+    const slashIdx = s.indexOf('/');
+    if (colonIdx === -1 || (slashIdx !== -1 && slashIdx < colonIdx)) return s;
+    /* Lowercase the scheme for comparison, strip control chars/whitespace
+       that some browsers tolerate before the colon. */
+    const scheme = s.slice(0, colonIdx).toLowerCase().replace(/[\s\x00-\x1f]/g, '');
+    const allowed = new Set(['http', 'https', 'ipfs', 'ar', 'arweave', 'mailto']);
+    return allowed.has(scheme) ? s : '';
+  },
+  /* Escape a URL for safe interpolation inside a CSS url('...') value.
+     CSS-escapes single quotes, backslashes, newlines, and control chars
+     that could break out of the url() and inject CSS declarations.
+     Returns '' if the URL fails safeUrl validation. */
+  cssUrlValue(url) {
+    const safe = this.safeUrl(url);
+    if (!safe) return '';
+    return safe.replace(/[\\\n\r\f'"]/g, c => '\\' + c.charCodeAt(0).toString(16) + ' ');
+  },
+  debounce(fn, ms) {
+    let t;
+    return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+  },
+  /* throttle: fires at most once per `ms`. Used for scroll-style events
+     where you want continuous updates during the action, not just a final
+     trailing call. The trailing setTimeout guarantees the LAST event is
+     processed even if it lands inside the cooldown window. */
+  throttle(fn, ms) {
+    let last = 0, pending = null;
+    return (...a) => {
+      const now = Date.now();
+      const remaining = ms - (now - last);
+      if (remaining <= 0) {
+        if (pending) { clearTimeout(pending); pending = null; }
+        last = now;
+        fn(...a);
+      } else if (!pending) {
+        pending = setTimeout(() => {
+          last = Date.now();
+          pending = null;
+          fn(...a);
+        }, remaining);
+      }
+    };
+  },
+  autoGrow(el) {
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 400) + 'px';
+  },
+  /* Check if an img URL is too large to render safely.
+     Loads a test Image element and checks naturalWidth*naturalHeight*4 bytes.
+     Returns true if safe, false if oversized. Timeout: 5s. */
+  async checkImageSize(url, maxBytes = 8_000_000) {
+    return new Promise(resolve => {
+      const img = new Image();
+      const timer = setTimeout(() => { img.src = ''; resolve(true); }, 5000);
+      img.onload = () => {
+        clearTimeout(timer);
+        const bytes = img.naturalWidth * img.naturalHeight * 4;
+        resolve(bytes <= maxBytes);
+      };
+      img.onerror = () => { clearTimeout(timer); resolve(true); };
+      img.src = url;
+    });
+  },
+  copyToClipboard(text, label = 'Copied!') {
+    navigator.clipboard?.writeText(text).then(() => this.toast(label)).catch(() => this.toast('Copy failed'));
+  },
+  /* Safe localStorage wrapper — silently no-ops on quota errors,
+     private-mode blocks, or other write failures. Returns true on success,
+     false on failure. Callers that care can branch on the return. */
+  safeLS: {
+    set(key, val) {
+      try { localStorage.setItem(key, val); return true; }
+      catch { return false; }
+    },
+    get(key, fallback = null) {
+      try { return localStorage.getItem(key) ?? fallback; }
+      catch { return fallback; }
+    },
+    remove(key) {
+      try { localStorage.removeItem(key); return true; }
+      catch { return false; }
+    },
+  },
+  updateCharCount(el, countEl) {
+    const n   = el.value.length;
+    const max = 62.83;
+    /* The ring belongs to the HOME composer — don't let the modal/thread
+       composers (which pass their own countEl) drive it. */
+    if (el.id === 'compose-text') {
+      const ring = document.getElementById('char-ring');
+      const fg   = document.getElementById('cr-fg');
+      const num  = document.getElementById('char-count-num');
+      if (ring && fg) {
+        ring.style.display = n > 0 ? 'flex' : 'none';   /* hide until typing (X-style) */
+        /* There's no hard character limit (long-form posts are intended), so
+           the ring is a soft length hint that tops out — not an "over the
+           limit" warning. Show the real count, never a red "over" state. */
+        const pct = Math.min(n / 1000, 1);
+        fg.setAttribute('stroke-dasharray', `${pct * max} ${max}`);
+        ring.className = 'char-ring ' + (n > 700 ? 'warn' : n > 280 ? 'note' : 'ok');
+        if (num) num.textContent = n > 280 ? n.toLocaleString() : '';
+      }
+    }
+    if (countEl && countEl !== document.getElementById('char-ring')) {
+      countEl.textContent = n > 0 ? n.toLocaleString() : '';
+    }
+  },
+};
+
+/* ── IndexedDB Cache ──────────────────────────────────────────────────── */
+class Cache {
+  constructor() {
+    this._db    = null;
+    this._ready = new Promise((res, rej) => {
+      const req = indexedDB.open('SayIt', 4);
+      req.onupgradeneeded = e => {
+        const db  = e.target.result;
+        const old = e.oldVersion;
+        if (!db.objectStoreNames.contains('posts'))
+          db.createObjectStore('posts', { keyPath: 'txHash' });
+        if (!db.objectStoreNames.contains('profiles'))
+          db.createObjectStore('profiles', { keyPath: 'address' });
+        if (!db.objectStoreNames.contains('channels'))
+          db.createObjectStore('channels', { keyPath: 'address' });
+        if (old < 2 && !db.objectStoreNames.contains('muted'))
+          db.createObjectStore('muted', { keyPath: 'address' });
+        /* v3: offline post queue — posts saved when tx fails/offline */
+        if (old < 3 && !db.objectStoreNames.contains('pending_posts'))
+          db.createObjectStore('pending_posts', { keyPath: 'queueId' });
+        /* v4: channel index on posts — loadCached queries one channel's
+           posts directly instead of a full-table scan per channel switch.
+           Works for fresh DBs too: stores created above are visible in
+           this same upgrade transaction. */
+        if (old < 4) {
+          try { e.target.transaction.objectStore('posts').createIndex('channel', 'channel'); }
+          catch { /* index already exists */ }
+        }
+        /* v3: full-text search trigram index */
+        if (old < 3 && !db.objectStoreNames.contains('search_index'))
+          db.createObjectStore('search_index', { keyPath: 'id', autoIncrement: true })
+            .createIndex('trigram', 'trigram', { unique: false });
+        if (!db.objectStoreNames.contains('migrations')) {
+          const ms = db.createObjectStore('migrations', { keyPath: 'version' });
+          ms.transaction.oncomplete = () => {
+            const tx2 = db.transaction('migrations', 'readwrite');
+            tx2.objectStore('migrations').put({ version: 3, ts: Date.now(), note: 'Added pending_posts + search_index' });
+          };
+        }
+      };
+      req.onsuccess = () => { this._db = req.result; res(); };
+      req.onerror   = () => rej(req.error);
+    });
+  }
+  /* O(1) single-post lookup by primary key. */
+  async getPost(hash) {
+    await this._ready;
+    return new Promise((res, rej) => {
+      const req = this._db.transaction('posts','readonly').objectStore('posts').get(hash);
+      req.onsuccess = () => res(req.result || null);
+      req.onerror   = () => rej(req.error);
+    });
+  }
+  /* Channel-scoped fetch via the v4 index; falls back to a full scan on
+     very old DBs where the index doesn't exist yet. */
+  async getPostsByChannel(channel) {
+    await this._ready;
+    return new Promise((res, rej) => {
+      const store = this._db.transaction('posts','readonly').objectStore('posts');
+      let req;
+      try { req = store.index('channel').getAll(channel); }
+      catch { req = store.getAll(); }
+      req.onsuccess = () => res(req.result || []);
+      req.onerror   = () => rej(req.error);
+    });
+  }
+  async getPosts(filterFn) {
+    await this._ready;
+    return new Promise((res, rej) => {
+      const req = this._db.transaction('posts','readonly').objectStore('posts').getAll();
+      req.onsuccess = () => res((req.result || []).filter(filterFn));
+      req.onerror   = () => rej(req.error);
+    });
+  }
+  async savePosts(posts) {
+    await this._ready;
+    const tx    = this._db.transaction('posts', 'readwrite');
+    const store = tx.objectStore('posts');
+    posts.forEach(p => store.put(p));
+    return new Promise((res) => {
+      tx.oncomplete = () => {
+        /* Index for search in ONE batched IDB transaction instead of N.
+           Was: 100 posts = 100 transactions = ~1s of overhead. */
+        /* Search indexing is best-effort, but log failures — a persistently
+           failing index silently degrades full-text search to in-memory only. */
+        this.indexPostsBatch(posts).catch(err => console.warn('Search indexing failed', err)).then(() => {
+          this.pruneSearchIndex().catch(err => console.warn('Search-index prune failed', err));
+        });
+        res();
+      };
+      tx.onerror = () => {
+        /* Almost always QuotaExceededError — local storage is full. Don't
+           hard-reject: the posts are already in memory (and on-chain), so
+           persistence is best-effort. Free space by force-pruning old posts
+           so the NEXT save can land, and warn the user once. */
+        const err = tx.error;
+        if (err && err.name === 'QuotaExceededError') {
+          if (!this._quotaWarned) {
+            this._quotaWarned = true;
+            utils.toast?.('Local storage full — clearing old cached posts');
+          }
+          this.pruneIfStale(3, /*force=*/true).catch(() => {});
+        }
+        res();
+      };
+    });
+  }
+  /* Batched search-index writer. One IDB transaction per call instead of
+     one-per-post. Posts are immutable on-chain, so a post only ever needs
+     indexing once; polling re-returns the same recent posts every cycle, so
+     without a guard we'd append the same trigram rows over and over —
+     unbounded duplicate growth that eventually trips pruneSearchIndex and
+     silently degrades search. We seed a set of already-indexed txHashes once
+     per session (from the existing index) and skip anything in it. */
+  async indexPostsBatch(posts) {
+    await this._ready;
+    if (!this._db.objectStoreNames.contains('search_index')) return;
+    if (!this._indexedHashes) {
+      this._indexedHashes = await new Promise(res => {
+        const out = new Set();
+        const req = this._db.transaction('search_index', 'readonly')
+          .objectStore('search_index').getAll();
+        req.onsuccess = () => { (req.result || []).forEach(r => out.add(r.txHash)); res(out); };
+        req.onerror   = () => res(out);
+      });
+    }
+    const writes = [];
+    posts.forEach(post => {
+      if (!post.txHash || this._indexedHashes.has(post.txHash)) return;
+      this._indexedHashes.add(post.txHash);
+      const tris = this._trigrams((post.display || '') + ' ' + (post.reporter || ''));
+      tris.forEach(tri => writes.push({ trigram: tri, txHash: post.txHash }));
+    });
+    if (!writes.length) return;
+    const tx = this._db.transaction('search_index', 'readwrite');
+    const store = tx.objectStore('search_index');
+    writes.forEach(w => store.add(w));
+    return new Promise(res => { tx.oncomplete = res; tx.onerror = res; });
+  }
+  async pruneSearchIndex(maxRows = 200000) {
+    await this._ready;
+    if (!this._db.objectStoreNames.contains('search_index')) return;
+    const countReq = this._db.transaction('search_index', 'readonly')
+      .objectStore('search_index').count();
+    const count = await new Promise(res => { countReq.onsuccess = () => res(countReq.result); });
+    if (count <= maxRows) return;
+    const toDelete = count - maxRows;
+    /* Evict by WHOLE post (txHash) groups, not a raw row count. Each post
+       contributes many trigram rows, so deleting an arbitrary number of oldest
+       rows would slice through a post — leaving it partially indexed, so it
+       matched some search queries but not others (corrupt results). Pass 1
+       gathers the txHashes covering the oldest ~toDelete rows; pass 2 deletes
+       every row belonging to them (rounding up to whole posts). */
+    const victims = await new Promise(res => {
+      const set = new Set();
+      let seen = 0;
+      const req = this._db.transaction('search_index', 'readonly')
+        .objectStore('search_index').openCursor();
+      req.onsuccess = e => {
+        const cur = e.target.result;
+        if (!cur || seen >= toDelete) { res(set); return; }
+        set.add(cur.value.txHash);
+        seen++;
+        cur.continue();
+      };
+      req.onerror = () => res(set);
+    });
+    if (!victims.size) return;
+    return new Promise(res => {
+      const tx = this._db.transaction('search_index', 'readwrite');
+      tx.oncomplete = () => res();
+      tx.onerror    = () => res();
+      const req = tx.objectStore('search_index').openCursor();
+      req.onsuccess = e => {
+        const cur = e.target.result;
+        if (!cur) return;
+        if (victims.has(cur.value.txHash)) cur.delete();
+        cur.continue();
+      };
+    });
+  }
+
+  async getPendingPosts() {
+    await this._ready;
+    if (!this._db.objectStoreNames.contains('pending_posts')) return [];
+    return new Promise((res, rej) => {
+      const req = this._db.transaction('pending_posts','readonly')
+        .objectStore('pending_posts').getAll();
+      req.onsuccess = () => res(req.result || []);
+      req.onerror   = () => rej(req.error);
+    });
+  }
+  async savePendingPost(item) {
+    await this._ready;
+    if (!this._db.objectStoreNames.contains('pending_posts')) return;
+    return new Promise((res, rej) => {
+      const req = this._db.transaction('pending_posts','readwrite')
+        .objectStore('pending_posts').put(item);
+      req.onsuccess = () => res(req.result);
+      req.onerror   = () => rej(req.error);
+    });
+  }
+  async deletePendingPost(queueId) {
+    await this._ready;
+    if (!this._db.objectStoreNames.contains('pending_posts')) return;
+    return new Promise((res, rej) => {
+      const req = this._db.transaction('pending_posts','readwrite')
+        .objectStore('pending_posts').delete(queueId);
+      req.onsuccess = () => res();
+      req.onerror   = () => rej(req.error);
+    });
+  }
+  /* Full-text search via trigram index */
+  _trigrams(text) {
+    /* Generate all 3-char substrings from lowercase text — the index key type */
+    const s = text.toLowerCase().replace(/\s+/g, ' ');
+    const tris = new Set();
+    for (let i = 0; i <= s.length - 3; i++) tris.add(s.slice(i, i + 3));
+    return [...tris];
+  }
+  async indexPost(post) {
+    await this._ready;
+    if (!this._db.objectStoreNames.contains('search_index')) return;
+    if (!post.txHash) return;
+    /* Share indexPostsBatch's already-indexed guard so the one-time backfill
+       and the per-fetch indexer never double-index the same post. (When the
+       set isn't seeded yet — e.g. backfill on an empty index — this is a
+       no-op and the eventual seed picks these rows up from the store.) */
+    if (this._indexedHashes?.has(post.txHash)) return;
+    const tris = this._trigrams((post.display || '') + ' ' + (post.reporter || ''));
+    if (!tris.length) return;
+    this._indexedHashes?.add(post.txHash);
+    const tx = this._db.transaction('search_index', 'readwrite');
+    const store = tx.objectStore('search_index');
+    tris.forEach(tri => store.add({ trigram: tri, txHash: post.txHash }));
+    return new Promise(res => { tx.oncomplete = res; tx.onerror = res; });
+  }
+  async searchByText(query, limit = 50) {
+    await this._ready;
+    if (!this._db.objectStoreNames.contains('search_index')) return [];
+    const tris = this._trigrams(query);
+    if (!tris.length) return [];
+    /* AND-search: find txHashes that appear in ALL trigram result sets */
+    const sets = await Promise.all(tris.map(tri => new Promise((res, rej) => {
+      const range = IDBKeyRange.only(tri);
+      const req   = this._db.transaction('search_index','readonly')
+        .objectStore('search_index').index('trigram').getAll(range);
+      req.onsuccess = () => res(new Set((req.result || []).map(r => r.txHash)));
+      req.onerror   = () => rej(req.error);
+    })));
+    /* Intersect all sets */
+    let result = sets[0];
+    for (let i = 1; i < sets.length; i++) {
+      result = new Set([...result].filter(h => sets[i].has(h)));
+      if (!result.size) break;
+    }
+    /* Return at most `limit` matching txHashes */
+    return [...result].slice(0, limit);
+  }
+  async getMuted() {
+    await this._ready;
+    if (!this._db.objectStoreNames.contains('muted')) return [];
+    return new Promise((res, rej) => {
+      const req = this._db.transaction('muted','readonly')
+        .objectStore('muted').getAll();
+      req.onsuccess = () => res((req.result || []).map(r => r.address));
+      req.onerror   = () => rej(req.error);
+    });
+  }
+  async saveMuted(addresses) {
+    await this._ready;
+    if (!this._db.objectStoreNames.contains('muted')) return;
+    const tx = this._db.transaction('muted', 'readwrite');
+    const store = tx.objectStore('muted');
+    /* Clear and re-write — muted list is small, full replace is fine */
+    store.clear();
+    addresses.forEach(addr => store.put({ address: addr.toLowerCase() }));
+    return new Promise((res, rej) => {
+      tx.oncomplete = () => res();
+      tx.onerror    = () => rej(tx.error);
+    });
+  }
+  async getProfile(address) {
+    await this._ready;
+    return new Promise((res, rej) => {
+      const req = this._db.transaction('profiles','readonly').objectStore('profiles').get(address);
+      req.onsuccess = () => res(req.result ?? null);
+      req.onerror   = () => rej(req.error);
+    });
+  }
+  async saveProfile(data) {
+    await this._ready;
+    return new Promise((res, rej) => {
+      const tx = this._db.transaction('profiles','readwrite');
+      tx.objectStore('profiles').put(data);
+      tx.oncomplete = res;
+      tx.onerror    = () => rej(tx.error);
+    });
+  }
+  /* All persisted profiles — used to broaden handle search beyond the
+     current session's in-memory cache. Resolves to [] on any error. */
+  async getAllProfiles() {
+    await this._ready;
+    return new Promise((res) => {
+      const req = this._db.transaction('profiles','readonly').objectStore('profiles').getAll();
+      req.onsuccess = () => res(req.result || []);
+      req.onerror   = () => res([]);
+    });
+  }
+  async pruneIfStale(maxAgeDays = 7, force = false) {
+    /* Deep sync builds a full local archive — age-pruning posts would
+       silently undo it. Skip post pruning while a sync is in progress or
+       complete (clearing the post cache in Settings resets this). */
+    try {
+      const ds = JSON.parse(localStorage.getItem('sayitDeepSync') || 'null');
+      if (ds && (ds.done || ds.lastPage > 0)) return;
+    } catch { /* corrupt state — prune normally */ }
+    const last = parseInt(utils.safeLS.get(PRUNE_KEY, '0'), 10);
+    if (!force && Date.now() - last < 86_400_000) return;
+    await this._ready;
+    const cutoff = new Date(Date.now() - maxAgeDays * 86_400_000).toISOString();
+    await new Promise((res, rej) => {
+      const tx  = this._db.transaction('posts','readwrite');
+      const s   = tx.objectStore('posts');
+      const req = s.getAll();
+      req.onsuccess = () => {
+        (req.result || []).filter(p => p.timestamp < cutoff).forEach(p => s.delete(p.txHash));
+        tx.oncomplete = () => { utils.safeLS.set(PRUNE_KEY, Date.now().toString()); res(); };
+      };
+      req.onerror = () => rej(req.error);
+    });
+  }
+  /* ── Channel history store ── */
+  async getChannels() {
+    await this._ready;
+    return new Promise((res, rej) => {
+      const req = this._db.transaction('channels','readonly').objectStore('channels').getAll();
+      req.onsuccess = () => res((req.result || []).sort((a,b) => (b.lastActivity||'') > (a.lastActivity||'') ? 1 : -1));
+      req.onerror   = () => rej(req.error);
+    });
+  }
+  async saveChannel(data) {
+    await this._ready;
+    return new Promise((res, rej) => {
+      const tx = this._db.transaction('channels','readwrite');
+      tx.objectStore('channels').put(data);
+      tx.oncomplete = res;
+      tx.onerror    = () => rej(tx.error);
+    });
+  }
+  async clearChannels() {
+    await this._ready;
+    return new Promise((res, rej) => {
+      const tx = this._db.transaction('channels','readwrite');
+      tx.objectStore('channels').clear();
+      tx.oncomplete = res;
+      tx.onerror    = () => rej(tx.error);
+    });
+  }
+  async deleteChannel(address) {
+    await this._ready;
+    return new Promise((res, rej) => {
+      const req = this._db.transaction('channels','readwrite')
+        .objectStore('channels').delete(address);
+      req.onsuccess = () => res();
+      req.onerror   = () => rej(req.error);
+    });
+  }
+  async clearAllPosts() {
+    await this._ready;
+    return new Promise((res, rej) => {
+      const tx = this._db.transaction('posts','readwrite');
+      tx.objectStore('posts').clear();
+      tx.oncomplete = res;
+      tx.onerror    = () => rej(tx.error);
+    });
+  }
+}
+
+/* ── Say It DeFi ────────────────────────────────────────────── */
+class SayIt {
+  constructor() {
+    this.state = {
+      posts: [], pending: [], searchTerm: '', activeTag: null,
+      loading: false, hasMore: true, nextPage: 1,
+      channel: MAIN_CHANNEL, mode: 'main',
+      profile: { username:'', picUrl:'image1.jpeg', bio:'' },
+      signerAddr: null, expanded: new Set(),
+      replyTarget: null, repostTarget: null, threadPost: null, profCache: {},
+      /* reactions & social */
+      likes:      new Set(),   /* txHashes this user has liked */
+      bookmarks:  new Set(),   /* txHashes this user has bookmarked */
+      following:  new Set(),   /* addresses this user follows */
+      /* muted: loaded from IDB in init() after cache is ready; seeded
+         with localStorage fallback for backwards compat. Try/catch guards
+         against corrupt localStorage data crashing the entire constructor. */
+      muted: (() => {
+        try { return new Set(JSON.parse(localStorage.getItem(MUTE_KEY) || '[]')); }
+        catch { return new Set(); }
+      })(),
+      /* Lists & Communities — local, stored in localStorage. Lists are
+         {id, name, members:[addr]}; communities are {address, name, desc, joined}. */
+      lists: (() => {
+        try { return JSON.parse(localStorage.getItem(LISTS_KEY) || '[]'); }
+        catch { return []; }
+      })(),
+      communities: (() => {
+        try { return JSON.parse(localStorage.getItem(COMMUNITIES_KEY) || '[]'); }
+        catch { return []; }
+      })(),
+      activeList: null,        /* id of the list currently being viewed */
+      /* channel history */
+      channelHistory: [],      /* [{address, label, lastActivity, preview, postCount}] */
+      /* settings */
+      settings: (() => {
+        try { return JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); } catch { return {}; }
+      })(),
+    };
+    this.signer        = null;
+    this.cache         = new Cache();
+    this.pollTimer     = null;
+    this._profInFlight = 0;
+    this._profQueue    = [];
+    /* Monotonic token bumped whenever we want to invalidate in-flight fetches
+       (channel switch, refresh). The async fetch loop checks this against
+       its locally captured token and aborts if they differ. Prevents stale
+       fetches from overwriting fresh state. */
+    this._fetchToken   = 0;
+    this._walletReg    = false;
+    this._postMap      = new Map();
+    this._postHashSet  = new Set(); /* O(1) dedup — kept in sync with state.posts */
+    /* Virtualization state. Posts outside the visible window render as
+       placeholders with reserved height; an IntersectionObserver swaps
+       them for real .post-item elements as the user scrolls into range. */
+    this._vfHeightMap  = new Map(); /* txHash → measured pixel height */
+    this._vfMaps       = null;      /* { replyMap, likeMap, repostMap, engagerMap } */
+    this._vfObserver   = null;      /* IntersectionObserver instance */
+    /* Persistent engagement maps — built from full IDB cache, not just
+       state.posts. Without these, counts are limited to what's in memory:
+       a post with 1000 likes shows as 50 if only 50 like-txs are loaded.
+       Refreshed from IDB on init and on channel switch; updated
+       incrementally when new reactions arrive. */
+    this._engagement   = { replyMap: new Map(), likeMap: new Map(),
+                           repostMap: new Map(), engagerMap: new Map(),
+                           /* target → Map(engager → {liked, ts}). Tracks each
+                              engager's latest like-state by timestamp so an
+                              UNLIKE removes an earlier LIKE from the count,
+                              regardless of the order batches arrive in.
+                              likeMap is derived from this. */
+                           likeState: new Map() };
+    this._engagementReady = false;
+    /* Poll votes ride in on the same channel scan the feed already does:
+       parseTxs/_parsePostTx capture every VOTE tx into _voteAccum instead of
+       discarding it, so visible polls tally for free with no per-poll
+       re-scan. _voteAccum: pollHash → Map(voter → {optIdx, ts}) (newest-wins
+       by ts). Tallies are aggregated on the fly from this by _pollTally. */
+    this._voteAccum    = new Map();
+    this._pollScanned  = new Map(); /* pollHash → ts of last cold-scan fallback */
+    this._pollScanning = new Set(); /* poll hashes with an in-flight cold scan */
+    this._myVotes      = new Map(); /* pollHash → optIdx the user has voted (session) */
+    this._pollEndMs    = new Map(); /* pollHash → endMs; gates out post-close votes */
+    /* Community Notes: per-post note data, scan throttle, session ratings,
+       and which posts have their pending-note panel expanded. */
+    this._noteData      = new Map(); /* postHash → { notes:[…], scannedAt } */
+    this._noteScanning  = new Set(); /* channels with an in-flight note scan */
+    this._noteScanAt    = new Map(); /* channel → last scan timestamp */
+    this._myNoteRatings = new Map(); /* noteHash → 'h'|'n' (session, optimistic) */
+    this._expandedNotes = new Set(); /* postHashes whose pending notes are shown */
+    this._navToken     = 0;         /* bumped on every navigation; async view
+                                       renders check it before painting #feed */
+    /* Tab title + favicon badge state. _titleSuffix is the per-view label
+       (Home, Notifications, etc.); _unreadCount drives the (N) prefix and
+       the favicon dot. Both compose in _updateTitle / _updateFavicon. */
+    this._titleSuffix  = '';
+    this._unreadCount  = 0;
+    this._faviconBase  = null;   /* cached base favicon image */
+    this._vfEstHeight  = 200;       /* default estimate per post */
+    this._vfMountedRef = new WeakMap(); /* element → post reference */
+    this.g             = id => document.getElementById(id);
+    /* Profile-triggered re-renders: instead of rebuilding the entire feed,
+       patch only the avatar+name elements for the address that just loaded.
+       Full re-renders still happen for structural changes (new posts, filters). */
+    this._debouncedRender = utils.debounce(() => this._patchProfilesInFeed(), 120);
+    this._draftSave       = utils.debounce(() => this._saveDraft(), 500);
+  }
+
+  async init(opts = {}) {
+    this.wireListeners();
+    this.updateChLabel();
+    /* Use the user's pruneAgeDays setting (default 7). */
+    const _pruneDays = parseInt(this._getSettings().pruneAgeDays, 10) || 7;
+    /* Housekeeping — never block boot on it. */
+    this.cache.pruneIfStale(_pruneDays).catch(err => console.warn('Prune failed', err));
+    /* Migrate muted list from localStorage to IDB if needed */
+    try {
+      const idbMuted = await this.cache.getMuted();
+      if (idbMuted.length > 0) {
+        /* IDB has data — use it as the source of truth */
+        this.state.muted = new Set(idbMuted);
+      } else if (this.state.muted.size > 0) {
+        /* localStorage has data but IDB doesn't — migrate */
+        await this.cache.saveMuted([...this.state.muted]);
+      }
+    } catch (err) { console.warn('Muted IDB load:', err); }
+    this._restoreDraft();
+    await this.loadCached();
+    await this.tryAutoReconnect();
+    /* Skip the home-feed scan when the page was opened on a deep link that
+       loads its own data (post / profile / channel) — otherwise that view
+       waits behind a full home scan before its own scan even starts. The
+       home feed loads lazily when the user navigates Home. Cached posts from
+       loadCached() are still in state.posts for anything that needs them. */
+    if (!opts.skipHomeFetch) await this.fetchPosts(true);
+    this._initComposePlaceholderRotation();
+    this._refreshSidebarPanels();
+    /* First-visit disclaimer — shown once per device, then remembered. */
+    this._maybeShowDisclaimer();
+    /* Resume polling immediately when tab becomes visible — picks up
+       anything that landed on-chain while the user was away. */
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) this.pollNew();
+    });
+    window.addEventListener('online', () => {
+      utils.toast('✅ Back online — retrying queued posts…');
+      setTimeout(() => this._retryPendingPosts(), 1000);
+    });
+    setTimeout(() => { this.pollNew(); this.startPolling(); }, POLL_FIRST_MS);
+    this._loadPendingPostsIntoFeed();
+    /* Kick off engagement-from-IDB build during idle time. Posts already
+       loaded into state.posts will be merged on first render via
+       _mergeEngagement; this catches the rest from IDB. */
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(() => this._refreshEngagementFromCache(), { timeout: 3000 });
+    } else {
+      setTimeout(() => this._refreshEngagementFromCache(), 1500);
+    }
+    /* Refresh relative timestamps in place every 60s so "2m" becomes "3m"
+       without a full feed re-render. Only touches .post-time elements that
+       carry a data-ts attribute; cheap DOM text updates. */
+    this._timeTickTimer = setInterval(() => this._tickRelativeTimes(), 60000);
+    /* Debounced sidebar refresh: renderFeed can fire many times in quick
+       succession (virtualized scroll, polling, tab switches). Each sidebar
+       rebuild re-scans all posts (trending/polls/news/who-to-follow), so
+       coalescing rapid calls into one avoids redundant O(n) passes. */
+    this._refreshSidebarDebounced = utils.debounce(() => this._refreshSidebarPanels(), 150);
+
+    /* Pre-warm the profile cache from IDB for the authors of already-loaded
+       posts. Without this, avatars/names flash the default placeholder on
+       reload until each profile lazy-loads. fetchOtherProfile reads IDB
+       first (fast) and patches the feed in place when done. */
+    {
+      const authors = new Set();
+      for (const p of this.state.posts) {
+        if (p.reporter && p.reporter !== this.state.signerAddr) authors.add(p.reporter);
+        if (authors.size >= 30) break; /* only the first screenful matters */
+      }
+      authors.forEach(addr => this.fetchOtherProfile(addr));
+    }
+    /* One-time idle-time search index rebuild for posts cached before r18. */
+    this._rebuildSearchIndex();
+  }
+
+  /* Per-channel draft storage — keyed by channel address so switching
+     channels preserves each channel's draft independently. Falls back
+     to DRAFT_KEY for backwards compat with any saved drafts. */
+  _draftKey() {
+    const ch = this.state.channel || 'global';
+    return `${DRAFT_KEY}:${ch}`;
+  }
+  _saveDraft() {
+    const v = this.g('compose-text').value;
+    const key = this._draftKey();
+    if (v.trim()) {
+      utils.safeLS.set(key, v);
+      this._flashDraftSaved();
+    } else {
+      utils.safeLS.remove(key);
+      utils.safeLS.remove(DRAFT_KEY); /* clean up legacy key too */
+    }
+  }
+
+  /* Briefly show the "Draft saved" hint, then fade it out. Debounced via
+     a timer so rapid saves don't flicker. */
+  _flashDraftSaved() {
+    const hint = this.g('draft-saved-hint');
+    if (!hint) return;
+    hint.classList.add('show');
+    clearTimeout(this._draftHintTimer);
+    this._draftHintTimer = setTimeout(() => hint.classList.remove('show'), 1800);
+  }
+  _restoreDraft() {
+    /* Try per-channel key first, then fall back to legacy global key */
+    const draft = utils.safeLS.get(this._draftKey())
+                || utils.safeLS.get(DRAFT_KEY)
+                || '';
+    if (!draft) return;
+    this.g('compose-text').value = draft;
+    utils.autoGrow(this.g('compose-text'));
+    utils.updateCharCount(this.g('compose-text'), null);
+    this._syncPostBtn();
+  }
+  _clearDraft() {
+    utils.safeLS.remove(this._draftKey());
+    utils.safeLS.remove(DRAFT_KEY); /* clean up any legacy key */
+  }
+
+  wireListeners() {
+    const g = this.g.bind(this);
+    /* Safe wire: silently skips if element doesn't exist.
+       Prevents "Cannot set properties of null" crashes when HTML
+       and JS get out of sync during development or future HTML changes. */
+    const w = (id, event, fn) => {
+      const el = g(id);
+      if (el) el[event] = fn;
+    };
+
+    /* ── Top-level nav: logo, wallet, post buttons ─────────────────── */
+    g('logo-wrap').onclick     = () => this.goHome();
+    /* Wave / PulseChain pinned rows are wired via inline onclick in the
+       HTML (so they survive renderTrending's outerHTML rebuild). Wave opens
+       the Wave channel; PulseChain opens pulsechain.com. */
+    g('connect-btn').onclick   = () => this.toggleWallet();
+    const mConn = g('mobile-connect');
+    if (mConn) mConn.onclick = () => this.toggleWallet();
+    g('nav-post-btn').onclick  = () => this.openComposeModal();
+    g('mobile-fab').onclick    = () => this.openComposeModal();
+
+    /* Tapping the active tab refreshes feed -- matches X/Twitter */
+    /* ── Feed tabs (For You / Following) ───────────────────────────── */
+    g('tab-foryou').onclick = () => {
+      if (document.getElementById('tab-foryou').classList.contains('active')) {
+        this.refreshFeed(); return;
+      }
+      this.setFeedTab('foryou');
+    };
+    g('tab-following').onclick = () => {
+      if (document.getElementById('tab-following').classList.contains('active')) {
+        this.refreshFeed(); return;
+      }
+      this.setFeedTab('following');
+    };
+
+    g('compose-text').addEventListener('focus', () => {
+      g('compose-area').classList.add('focused');
+    });
+    document.addEventListener('click', e => {
+      if (!g('compose-area').contains(e.target) &&
+          e.target !== g('post-btn') && e.target !== g('expand-compose-btn')) {
+        if (!g('compose-text').value.trim()) {
+          g('compose-area').classList.remove('focused');
+        }
+      }
+      /* close More popup on outside click */
+      if (!g('nav-more-wrap').contains(e.target)
+          && !e.target.closest('#mn-more')
+          && !e.target.closest('#more-popup')) this.hideMoreMenu();
+    });
+
+    const apill = g('account-pill');
+    if (apill) {
+      apill.onclick = e => {
+        if (e.target.closest('#ap-dots')) this.disconnect();
+        else this.openProfileModal();
+      };
+    }
+    /* These nav items are real <a href="#/…"> links so right-click / middle-click
+       / ctrl-click open them in a new tab. On a plain left-click we preventDefault
+       and route in-app (no reload); modified clicks fall through to the browser. */
+    const navClick = fn => e => {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button === 1) return;
+      e.preventDefault();
+      fn();
+    };
+    /* ── Sidebar + mobile nav items ────────────────────────────────── */
+    g('nav-home').onclick      = navClick(() => this.goHome());
+    g('nav-explore').onclick   = navClick(() => this.goExplore());
+    g('nav-notifs').onclick    = navClick(() => this.goNotifications());
+    g('nav-channels').onclick  = navClick(() => this.goChannels());
+    w('nav-mychannel', 'onclick', navClick(() => this.goSelf()));
+    /* Bookmarks lives only in the More menu now (removed from the main nav).
+       Lists/Communities also live in More, keeping the left rail compact. */
+    w('nav-premium', 'onclick', () => this.goPremium());
+    w('sb-premium-btn', 'onclick', () => this.goPremium());
+    g('nav-profile').onclick   = navClick(() => this.openProfileModal());
+    g('nav-more').onclick      = e => { e.stopPropagation(); this.toggleMoreMenu(); };
+    /* The mobile #mn-more button is wired via the [data-mn="more"]
+       delegation handler below. */
+    g('more-settings').onclick = () => { this.hideMoreMenu(); this.goSettings(); };
+    const mlBtn = g('more-lists');
+    if (mlBtn) mlBtn.onclick = () => { this.hideMoreMenu(); this.goLists(); };
+    const mcBtn = g('more-communities');
+    if (mcBtn) mcBtn.onclick = () => { this.hideMoreMenu(); this.goCommunities(); };
+    const mbBtn = g('more-bookmarks-mn');
+    if (mbBtn) mbBtn.onclick = () => { this.hideMoreMenu(); this.goBookmarks(); };
+    const maBtn = g('more-analytics');
+    if (maBtn) maBtn.onclick = () => { this.hideMoreMenu(); this.goAnalytics(); };
+
+    document.querySelectorAll('[data-mn]').forEach(b => {
+      b.onclick = (ev) => {
+        const t = b.dataset.mn;
+        if (t === 'more') ev.stopPropagation();
+        if (t === 'home')      this.goHome();
+        if (t === 'explore')   this.goExplore();
+        if (t === 'notifs')    this.goNotifications();
+        if (t === 'channels')  this.goChannels();
+        if (t === 'mychannel') this.goSelf();
+        if (t === 'profile')   this.openProfileModal();
+        if (t === 'more')      this.toggleMoreMenu();
+      };
+    });
+
+    /* ── Compose box + compose modal ───────────────────────────────── */
+    g('compose-text').oninput = () => {
+      utils.autoGrow(g('compose-text'));
+      utils.updateCharCount(g('compose-text'), null);
+      this._syncPostBtn();
+      this._draftSave();
+    };
+    g('post-btn').onclick           = () => this.publishPost();
+    g('expand-compose-btn').onclick = () => this.openComposeModal();
+    this._syncPostBtn(); /* initial: disabled while the box is empty */
+
+    g('close-compose-modal').onclick = () => this.closeModal('compose-modal');
+    g('modal-compose-text').oninput  = () => {
+      utils.autoGrow(g('modal-compose-text'));
+      utils.updateCharCount(g('modal-compose-text'), g('modal-char-count'));
+      this._syncPostBtn();
+    };
+    g('modal-post-btn').onclick = () => this.publishFromModal();
+
+    const handlePostClick = (e, inModal) => {
+      const img = e.target.closest('.post-img-thumb');
+      if (img?.dataset.href) { e.stopPropagation(); window.open(img.dataset.href, '_blank', 'noopener,noreferrer'); return; }
+      const tag = e.target.closest('.post-tag');
+      if (tag) { e.stopPropagation(); this.filterByTag(tag.dataset.tag); return; }
+      const mention = e.target.closest('.post-mention');
+      if (mention) { e.stopPropagation(); this.g('custom-input').value = mention.dataset.addr; this.goCustom(); return; }
+      const handle = e.target.closest('.post-handle');
+      if (handle) { e.stopPropagation(); utils.copyToClipboard(handle.dataset.addr, 'Address copied!'); return; }
+      /* Click on poster's display name or avatar → profile popup card.
+         Avatar click is also a popup trigger (matches Twitter behavior
+         on touch, where hover doesn't exist). */
+      const name   = e.target.closest('.post-name');
+      const avatar = e.target.closest('.post-avatar');
+      if (name || avatar) {
+        /* Name and avatar are both real <a href="#/profile/…"> links: on a
+           modified click let the browser open it in a new tab; on a plain
+           click route in-app. */
+        const link = e.target.closest('a');
+        if (link && (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button === 1)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const item = e.target.closest('.post-item');
+        const post = item ? this._postMap.get(item.dataset.txhash) : null;
+        if (post?.reporter) {
+          /* Click navigates straight to the profile (like X). The hovercard
+             still appears on hover via the separate mouseover handler. */
+          this.hideProfilePopup();
+          this.goProfilePage(post.reporter, post.reporter === this.state.signerAddr);
+        }
+        return;
+      }
+      this.onFeedClick(e, inModal);
+    };
+
+    /* ── Feed delegation: post actions, keyboard parity ────────────── */
+    g('feed').addEventListener('click', e => handlePostClick(e, false));
+    /* Keyboard activation for the clickable spans (post-tag / post-mention /
+       post-handle) — they're role="button" tabindex="0", so Enter/Space must
+       fire the same action a click does. Reuses handlePostClick's dispatch. */
+    g('feed').addEventListener('keydown', e => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      if (!e.target.closest('.post-tag, .post-mention, .post-handle')) return;
+      e.preventDefault();
+      handlePostClick(e, false);
+    });
+
+    /* ── Hover popup (desktop only) ──────────────────────────────────
+       Uses mouseover/mouseout on the feed so we don't attach N listeners.
+       400ms hover delay matches Twitter. Cleared immediately on mouseout
+       unless the mouse moved into the popup itself. */
+    let _hoverTimer = null;
+    let _hoverAddr  = null;
+    const isTouch = () => window.matchMedia('(hover: none)').matches;
+
+    const onFeedMouseover = e => {
+      if (isTouch()) return;
+      let trigger = e.target.closest('.post-name, .post-avatar');
+      let addr = null;
+      if (trigger) {
+        const item = e.target.closest('.post-item');
+        const post = item ? this._postMap.get(item.dataset.txhash) : null;
+        addr = post?.reporter?.toLowerCase() || null;
+      }
+      /* Fallback for non-post rows (followers/following lists, etc.) that carry
+         the address directly on a [data-pop-addr] element. */
+      if (!addr) {
+        const popEl = e.target.closest('[data-pop-addr]');
+        if (popEl) { trigger = popEl; addr = popEl.dataset.popAddr?.toLowerCase() || null; }
+      }
+      if (!addr || !trigger) return;
+      /* If already showing for this address, don't re-trigger */
+      if (this.g('profile-popup')?.classList.contains('open') &&
+          this.g('profile-popup').dataset.addr === addr) return;
+      /* Debounce: cancel any pending show, restart timer */
+      clearTimeout(_hoverTimer);
+      _hoverAddr = addr;
+      _hoverTimer = setTimeout(() => {
+        if (_hoverAddr === addr) this.showProfilePopup(addr, trigger, 'hover');
+      }, 400);
+    };
+
+    const onFeedMouseout = e => {
+      if (isTouch()) return;
+      /* Did the mouse leave toward the popup? If so, keep it open. */
+      const popup = this.g('profile-popup');
+      if (popup?.contains(e.relatedTarget)) return;
+      clearTimeout(_hoverTimer);
+      _hoverAddr = null;
+      /* Small grace window — if mouse re-enters popup within 150ms,
+         we leave it open. This prevents flicker when gap between
+         trigger and popup is crossed. */
+      if (popup?.classList.contains('open')) {
+        const closeTimer = setTimeout(() => {
+          /* Only auto-close if mouse is outside BOTH trigger and popup */
+          if (!popup.matches(':hover') && !popup.contains(document.activeElement)) {
+            this.hideProfilePopup();
+          }
+        }, 150);
+        popup._pendingClose = closeTimer;
+      }
+    };
+
+    /* Single permanent capture-phase click listener for popup dismissal.
+       Runs before any other click handler. If popup is open:
+         - Click inside popup -> handled by popup (action or navigate)
+         - Click outside popup -> close popup, then let event continue
+       We NEVER stopPropagation for outside clicks — that's what was
+       causing the left sidebar to lose click ability. When dismiss fired
+       via a leaked listener and called stopPropagation, sidebar buttons
+       never got the event. */
+    document.addEventListener('click', e => {
+      const popup = this.g('profile-popup');
+      if (!popup?.classList.contains('open')) return;
+      if (popup.contains(e.target)) {
+        /* Inside popup: handle follow/unfollow action */
+        const btn = e.target.closest('[data-pp-action]');
+        if (btn) {
+          e.stopPropagation();
+          const addr = popup.dataset.addr;
+          this.toggleFollowAddr(addr, null);
+          setTimeout(() => {
+            if (popup.classList.contains('open') && popup.dataset.addr === addr) {
+              const postCount = this.state.posts.filter(
+                p => p.reporter?.toLowerCase() === addr &&
+                     (!p.postType || p.postType === 'post')).length;
+              popup.innerHTML = this._profilePopupHTML(addr,
+                this.state.profCache[addr] ||
+                (addr === this.state.signerAddr ? this.state.profile : {}), postCount);
+            }
+          }, 500);
+          return;
+        }
+        /* Click on popup body -> open profile page */
+        const addr = popup.dataset.addr;
+        this.hideProfilePopup();
+        this.goProfilePage(addr, addr === this.state.signerAddr);
+        return;
+      }
+      /* Outside popup: close it. Do NOT stopPropagation — allow the
+         click to reach its intended target (sidebar, buttons, etc). */
+      this.hideProfilePopup();
+      /* Note: we intentionally do NOT return or stopPropagation here.
+         The sidebar/feed elements get this click event normally. */
+    }, true /* capture phase: run before target handlers */);
+
+    /* Backstop: a capture-phase pointerdown also dismisses the popup on any
+       outside tap/click. Covers cases the click path can miss (e.g. the
+       trigger element was removed by a feed re-render, or a handler swallows
+       the click). Triggers themselves are excluded so they can re-open/toggle. */
+    document.addEventListener('pointerdown', e => {
+      const popup = this.g('profile-popup');
+      if (!popup?.classList.contains('open')) return;
+      if (popup.contains(e.target)) return;
+      if (e.target.closest?.('.post-name, .post-avatar')) return;
+      this.hideProfilePopup();
+    }, true);
+
+    g('feed').addEventListener('mouseover', onFeedMouseover);
+    g('feed').addEventListener('mouseout',  onFeedMouseout);
+    /* Same hovercard for [data-pop-addr] rows in the right column (who-to-follow). */
+    const sbr = g('sidebar-right');
+    if (sbr) {
+      sbr.addEventListener('mouseover', onFeedMouseover);
+      sbr.addEventListener('mouseout',  onFeedMouseout);
+    }
+
+    /* ── Channel bar + misc controls ───────────────────────────────── */
+    g('cb-address').onclick = () => {
+      const addr = g('cb-address').textContent;
+      if (addr) utils.copyToClipboard(addr, 'Address copied!');
+    };
+
+    /* Escape in the search input clears the search (Twitter parity).
+       Global keydown handler early-returns for INPUT/TEXTAREA, so we wire
+       Escape on the input itself. */
+    const _searchInputEl = g('search-input');
+    if (_searchInputEl) {
+      _searchInputEl.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && _searchInputEl.value) {
+          e.preventDefault();
+          _searchInputEl.value = '';
+          this.state.searchTerm = '';
+          this.state.activeTag  = null;
+          this._updateSearchClearBtn();
+          if (!this._selfManagedModes.has(this.state.mode)) this.renderFeed();
+          _searchInputEl.blur();
+        }
+      });
+    }
+
+    /* Search clear (X) button — wire BEFORE the oninput handler so it's
+       available when the handler calls _updateSearchClearBtn. */
+    const searchClear = g('search-clear');
+    if (searchClear) {
+      searchClear.onclick = () => {
+        const inp = g('search-input');
+        inp.value = '';
+        this.state.searchTerm = '';
+        this.state.activeTag  = null;
+        this._updateSearchClearBtn();
+        this._hideSearchDropdown();
+        if (!this._selfManagedModes.has(this.state.mode)) this.renderFeed();
+        inp.focus();
+      };
+    }
+    /* Dismiss the search dropdown on outside click. Delayed so a click on
+       a dropdown item registers before the dropdown is hidden. */
+    document.addEventListener('click', e => {
+      const wrap = g('search-input')?.closest('.search-wrap');
+      if (wrap && !wrap.contains(e.target)) this._hideSearchDropdown();
+    });
+    /* Keyboard navigation for the search dropdown: ↑/↓ to move between
+       suggestions, Enter to select the active one, Escape to close. */
+    g('search-input').addEventListener('keydown', e => {
+      const dd = this.g('search-dropdown');
+      const open = dd && dd.classList.contains('open');
+      if (e.key === 'Escape') { this._hideSearchDropdown(); return; }
+      if (!open) return;
+      const items = Array.from(dd.querySelectorAll('.search-dd-item'));
+      if (!items.length) return;
+      let idx = items.findIndex(el => el.classList.contains('active'));
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        idx = (idx + 1) % items.length;
+        items.forEach(el => el.classList.remove('active'));
+        items[idx].classList.add('active');
+        items[idx].scrollIntoView({ block: 'nearest' });
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        idx = idx <= 0 ? items.length - 1 : idx - 1;
+        items.forEach(el => el.classList.remove('active'));
+        items[idx].classList.add('active');
+        items[idx].scrollIntoView({ block: 'nearest' });
+      } else if (e.key === 'Enter') {
+        /* If an item is highlighted, activate it. Otherwise: a pasted tx
+           hash or address jumps straight to the post / profile (no need to
+           arrow down to the dropdown row first). Anything else falls
+           through to the normal full-text search (no preventDefault). */
+        if (idx >= 0) {
+          e.preventDefault();
+          items[idx].click();
+        } else {
+          const q = e.target.value.trim().toLowerCase();
+          if (/^0x[a-f0-9]{64}$/.test(q)) {
+            e.preventDefault();
+            this._hideSearchDropdown();
+            this._clearSearch();
+            this.openThreadByHash(q);
+          } else if (/^0x[a-f0-9]{40}$/.test(q)) {
+            e.preventDefault();
+            this._hideSearchDropdown();
+            this._clearSearch();
+            this.goProfilePage(q, q === this.state.signerAddr);
+          }
+        }
+      }
+    });
+    g('search-input').oninput = utils.debounce(async () => {
+      const term = g('search-input').value.trim();
+      this.state.searchTerm = term.toLowerCase();
+      this.state.activeTag  = null;
+      /* Build the live suggestion dropdown (people + hashtags). */
+      this._renderSearchDropdown(term);
+      /* Search input is dead on self-managed pages (renderFeed bails early).
+         If the user is typing and we're on Notifications/Bookmarks/etc,
+         switch to home so they can actually see results. We await goHome()
+         so resetAndFetch finishes clearing state BEFORE we re-apply the
+         search term — otherwise resetAndFetch would clobber it (race). */
+      if (term && this._selfManagedModes.has(this.state.mode)) {
+        await this.goHome();
+        /* goHome / resetAndFetch already cleared state.searchTerm and the
+           input value. Re-apply, then render. */
+        this.state.searchTerm = term.toLowerCase();
+        g('search-input').value = term;
+        this._updateSearchClearBtn();
+        this.renderFeed();
+        return;
+      }
+      this._updateSearchClearBtn();
+      this.renderFeed();
+    }, 250);
+
+    g('new-banner').onclick  = () => this.loadPending();
+    const newPill = g('new-pill');
+    if (newPill) newPill.onclick = () => this.loadPending();
+    /* Show the floating pill only when there are pending posts AND the user
+       has scrolled the stationary bar out of view. Throttled via rAF. */
+    let _pillTick = false;
+    window.addEventListener('scroll', () => {
+      if (_pillTick) return;
+      _pillTick = true;
+      requestAnimationFrame(() => {
+        _pillTick = false;
+        this._updateFloatingPill();
+      });
+    }, { passive: true });
+
+    g('ch-main').onclick = () => this.goHome();
+    g('ch-self').onclick = () => this.goSelf();
+    g('ch-go').onclick   = () => this.goCustom();
+    g('custom-input').onkeydown = e => { if (e.key === 'Enter') this.goCustom(); };
+
+    window.addEventListener('scroll', utils.throttle(() => this.onScroll(), 100), { passive: true });
+
+    /* ── Central delegated click handler ─────────────────────────────────
+       Replaces every template-interpolated inline onclick. Two security
+       wins: (1) values never enter a JS-string context (where HTML-attr
+       escaping is decoded away before the JS engine evaluates the handler)
+       — they ride in data attributes instead; (2) hash/address arguments
+       are format-validated again right here at the sink.
+       Bound in CAPTURE phase so cases that need to shield an enclosing
+       clickable row (the old event.stopPropagation() contract on buttons
+       inside rows) can stop propagation before row-level bubble handlers
+       fire. Note: stopPropagation from document-capture also suppresses
+       the target's own addEventListener handlers — fine for these
+       elements, whose only behavior lived in the converted inline
+       attribute. Keyboard activation still works: the global keydown
+       delegate dispatches el.click() on role="button" elements. */
+    document.addEventListener('click', e => {
+      const el = e.target.closest('[data-act]');
+      if (!el) return;
+      const arg  = el.dataset.actArg  || '';
+      const arg2 = el.dataset.actArg2 || '';
+      const isHash = /^0x[a-f0-9]{64}$/i.test(arg);
+      const isAddr = /^0x[a-f0-9]{40}$/i.test(arg);
+      switch (el.dataset.act) {
+        case 'open-thread':
+          if (isHash) this.openThreadByHash(arg.toLowerCase());
+          break;
+        case 'notif-open':
+          /* Whole notification row — but the avatar/name inside open the
+             profile popup via their own delegate; let those through. */
+          if (e.target.closest('.notif-pop')) return;
+          if (arg2 === 'tx') {
+            if (isHash) window.open('https://otter.pulsechain.com/tx/' + arg.toLowerCase(), '_blank', 'noopener,noreferrer');
+          } else if (isHash) this.openThreadByHash(arg.toLowerCase());
+          break;
+        case 'open-tx':
+          if (isHash) window.open('https://otter.pulsechain.com/tx/' + arg.toLowerCase(), '_blank', 'noopener,noreferrer');
+          break;
+        case 'share-profile':
+          e.stopPropagation();
+          if (isAddr) this._shareUrl(this._profileUrl(arg), '');
+          break;
+        case 'open-channel':
+          /* Real <a href> — modifier/middle clicks fall through to the
+             browser for open-in-new-tab. */
+          if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button === 1) return;
+          e.preventDefault(); e.stopPropagation();
+          if (isAddr) { this.g('custom-input').value = arg; this.goCustom(); }
+          break;
+        case 'modal-open-channel':
+          e.preventDefault();
+          this._closeGenericModal();
+          if (isAddr) { this.g('custom-input').value = arg; this.goCustom(); }
+          break;
+        case 'follow-toggle':
+          e.stopPropagation();
+          if (isAddr) this.toggleFollow(arg, el);
+          break;
+        case 'follow-toggle-addr':
+          e.stopPropagation();
+          if (isAddr) this.toggleFollowAddr(arg, el);
+          break;
+        case 'open-profile':
+          if (isAddr) this.goProfilePage(arg, arg2 === '1');
+          break;
+        case 'follow-more':
+          this._renderFollowListMore(el, parseInt(arg, 10) || 0);
+          break;
+        case 'open-quote':
+          e.stopPropagation();
+          if (isHash) this._openQuotedPost(arg, /^0x[a-f0-9]{40}$/i.test(arg2) ? arg2 : '');
+          break;
+        case 'search-trend':
+          this._searchTrend(arg);
+          break;
+      }
+    }, true);
+
+    document.addEventListener('keydown', e => {
+      const active = document.activeElement?.tagName;
+      if (active === 'INPUT' || active === 'TEXTAREA') return;
+      /* Enter/Space activates a focused custom button (role="button" on a
+         non-native element) — keyboard parity for clickable rows/cards. */
+      const ae = document.activeElement;
+      if (ae && ae.getAttribute && ae.getAttribute('role') === 'button' &&
+          ae.tagName !== 'BUTTON' && ae.tagName !== 'A' &&
+          !ae.hasAttribute('onkeydown') && /* element handles its own keys */
+          (e.key === 'Enter' || e.key === ' ')) {
+        e.preventDefault();
+        ae.click();
+        return;
+      }
+      /* ── Compose / nav shortcuts ── */
+      if (e.key === 'n' || e.key === 'N') {
+        e.preventDefault();
+        g('compose-text').focus();
+        g('compose-text').scrollIntoView({ behavior:'smooth', block:'center' });
+        return;
+      }
+      if (e.key === '/') { e.preventDefault(); g('search-input').focus(); return; }
+      if (e.key === '?') { e.preventDefault(); this.showShortcutsHelp(); return; }
+      if (e.key === 'e' || e.key === 'E') { e.preventDefault(); this.openComposeModal(); return; }
+      /* ── J/K post navigation ── */
+      if (e.key === 'j' || e.key === 'J' || e.key === 'k' || e.key === 'K') {
+        e.preventDefault();
+        const items = [...document.querySelectorAll('.post-item')];
+        if (!items.length) return;
+        const focused = document.querySelector('.post-item.kb-focus');
+        let idx = focused ? items.indexOf(focused) : -1;
+        if (e.key === 'j' || e.key === 'J') idx = Math.min(idx + 1, items.length - 1);
+        else                                  idx = Math.max(idx - 1, 0);
+        items.forEach(el => el.classList.remove('kb-focus'));
+        items[idx].classList.add('kb-focus');
+        items[idx].scrollIntoView({ behavior:'smooth', block:'nearest' });
+        this._kbFocusedPost = this._postMap.get(items[idx].dataset.txhash);
+        return;
+      }
+      /* ── Actions on focused post ── */
+      const post = this._kbFocusedPost;
+      if (post) {
+        if (e.key === 'Enter') { e.preventDefault(); this.openThread(post); return; }
+        if (e.key === 'l' || e.key === 'L') {
+          e.preventDefault();
+          const el = document.querySelector(`.post-item.kb-focus`);
+          if (el) this.toggleLike(post, el);
+          return;
+        }
+        if (e.key === 'r' || e.key === 'R') { e.preventDefault(); this.openReplyModal(post); return; }
+        if (e.key === 't' || e.key === 'T') { e.preventDefault(); this.openRepostChoice(post, null); return; }
+        if (e.key === 'b' || e.key === 'B') {
+          e.preventDefault();
+          const el = document.querySelector(`.post-item.kb-focus`);
+          if (el) this.toggleBookmark(post, el);
+          return;
+        }
+        if (e.key === 'u' || e.key === 'U') {
+          e.preventDefault();
+          utils.copyToClipboard(`https://otter.pulsechain.com/tx/${post.txHash}`, 'Link copied!');
+          return;
+        }
+      }
+      /* ── Page navigation shortcuts ── */
+      if (e.key === 'g' && !e.shiftKey) {
+        /* g+h home, g+n notifications, g+p profile etc — wait for 2nd key */
+        this._gPressed = true;
+        setTimeout(() => { this._gPressed = false; }, 1500);
+        return;
+      }
+      if (this._gPressed) {
+        this._gPressed = false;
+        if (e.key === 'h') { e.preventDefault(); this.goHome(); return; }
+        if (e.key === 'n') { e.preventDefault(); this.goNotifications(); return; }
+        if (e.key === 'p') { e.preventDefault(); this.openProfileModal(); return; }
+        if (e.key === 's') { e.preventDefault(); this.goSelf(); return; }
+        if (e.key === 'b') { e.preventDefault(); this.goBookmarks(); return; }
+      }
+      if (e.key === 'Escape') {
+        /* Close popup first — it's higher in the UI stack than modals. */
+        if (this.g('profile-popup')?.classList.contains('open')) {
+          this.hideProfilePopup();
+          return;
+        }
+        /* Clear J/K focus */
+        if (document.querySelector('.post-item.kb-focus')) {
+          document.querySelectorAll('.post-item.kb-focus').forEach(el => el.classList.remove('kb-focus'));
+          this._kbFocusedPost = null;
+          return;
+        }
+        /* Generic modal is built on the fly and sits topmost when present —
+           close it first (it removes itself + releases focus). */
+        if (this.g('generic-modal')) { this._closeGenericModal(); return; }
+        ['compose-modal','profile-modal','reply-modal','repost-modal','media-modal','share-modal'].forEach(id => {
+          if (g(id).classList.contains('open')) this.closeModal(id);
+        });
+      }
+    });
+
+    ['compose-modal','profile-modal','reply-modal','repost-modal','media-modal','share-modal'].forEach(id => {
+      g(id).addEventListener('click', e => { if (e.target === g(id)) this.closeModal(id); });
+    });
+
+    g('close-profile').onclick    = () => this.closeModal('profile-modal');
+    g('cancel-edit-btn').onclick  = () => this.closeModal('profile-modal');
+    g('save-profile-btn').onclick = () => this.saveProfile();
+    g('pe-pic').oninput = () => {
+      const v = g('pe-pic').value.trim();
+      g('pe-preview').src = v || 'image1.jpeg';
+    };
+    g('pe-cover').oninput = () => {
+      const v = g('pe-cover').value.trim();
+      const prev = g('pe-cover-preview');
+      /* Route through cssUrlValue (validates scheme + CSS-escapes) — same path
+         the saved cover renders through, so the preview matches and a hostile
+         javascript:/data: URL can't break out of url() or render. */
+      const css = v ? utils.cssUrlValue(v) : '';
+      if (css) {
+        prev.style.backgroundImage    = `url('${css}')`;
+        prev.style.backgroundSize     = 'cover';
+        prev.style.backgroundPosition = 'center';
+        prev.classList.add('has-cover');
+      } else {
+        prev.style.backgroundImage = '';
+        prev.classList.remove('has-cover');
+      }
+    };
+    g('pe-bio').oninput = () => {
+      const n = g('pe-bio').value.length;
+      g('pe-bio-count').textContent = `${n}/160`;
+      g('pe-bio-count').style.color = n > 140 ? '#f4212e' : 'var(--muted)';
+    };
+    g('fetch-nft-btn').onclick = () => this.fetchNFTImage();
+
+    w('close-share-modal', 'onclick', () => this.closeModal('share-modal'));
+    g('close-reply').onclick      = () => this.closeModal('reply-modal');
+    g('cancel-reply-btn').onclick = () => this.closeModal('reply-modal');
+    g('post-reply-btn').onclick   = () => this.postReply();
+    g('reply-input').oninput = () => {
+      utils.autoGrow(g('reply-input'));
+      utils.updateCharCount(g('reply-input'), g('reply-count'));
+    };
+
+    /* Repost modal */
+    g('close-repost').onclick      = () => this.closeModal('repost-modal');
+    g('cancel-repost-btn').onclick = () => this.closeModal('repost-modal');
+    g('post-repost-btn').onclick   = () => this.postRepost();
+    g('repost-input').oninput = () => {
+      utils.autoGrow(g('repost-input'));
+      utils.updateCharCount(g('repost-input'), g('repost-count'));
+    };
+
+    /* Compose toolbar — Image / GIF / Emoji */
+    /* "Media" button (photos + video, auto-detected from the URL). */
+    g('cmp-image-btn').onclick = () => this.openMediaModal('media');
+    g('cmp-gif-btn').onclick   = () => this.openMediaModal('gif');
+    const pollBtn = g('cmp-poll-btn');
+    if (pollBtn) pollBtn.onclick = () => this.openPollComposer();
+    /* Expanded modal compose toolbar — same merged Media affordance. */
+    const miBtn = g('modal-cmp-image-btn');
+    const mgBtn = g('modal-cmp-gif-btn');
+    const mvBtn = g('modal-cmp-video-btn');
+    if (miBtn) miBtn.onclick = () => this.openMediaModal('media');
+    if (mgBtn) mgBtn.onclick = () => this.openMediaModal('gif');
+    if (mvBtn) mvBtn.onclick = () => this.openPollComposer(); /* modal poll button */
+    g('cmp-emoji-btn').onclick = () => this.toggleEmojiPicker();
+
+    /* Media attach modal */
+    g('close-media-modal').onclick  = () => this.closeModal('media-modal');
+    g('media-url-input').oninput    = () => this._previewMedia();
+    g('media-attach-btn').onclick   = () => this._attachMedia();
+    g('media-cancel-btn').onclick   = () => this.closeModal('media-modal');
+
+    this._initPullToRefresh();
+  }
+
+  _initPullToRefresh() {
+    let startY = 0, active = false;
+    const pill = this.g('ptr-pill');
+    document.addEventListener('touchstart', e => {
+      if (window.scrollY === 0) { startY = e.touches[0].clientY; active = true; }
+    }, { passive: true });
+    document.addEventListener('touchmove', e => {
+      if (!active) return;
+      if (e.touches[0].clientY - startY > 70) pill.classList.add('show');
+    }, { passive: true });
+    document.addEventListener('touchend', () => {
+      if (!active) return;
+      active = false;
+      if (pill.classList.contains('show')) { pill.classList.remove('show'); this.refreshFeed(); }
+    });
+  }
+
+  /* Replace a YouTube/Vimeo facade thumbnail with the real autoplaying iframe.
+     IDs were validated at render time (ytId: [A-Za-z0-9_-]{11}; vimeoId: \d+)
+     and are URL-encoded here as defense in depth. */
+  _playFacade(el) {
+    const yt = el.dataset.ytId, vm = el.dataset.vimeoId;
+    let src = '';
+    if (yt)      src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(yt)}?autoplay=1&rel=0`;
+    else if (vm) src = `https://player.vimeo.com/video/${encodeURIComponent(vm)}?autoplay=1&dnt=1`;
+    if (!src) return;
+    const frame = document.createElement('iframe');
+    frame.src = src;
+    frame.className = 'post-yt-frame';
+    frame.allowFullscreen = true;
+    frame.setAttribute('allow', 'autoplay;accelerometer;clipboard-write;encrypted-media;gyroscope;picture-in-picture;fullscreen');
+    frame.setAttribute('title', yt ? 'YouTube video' : 'Vimeo video');
+    el.innerHTML = '';
+    el.appendChild(frame);
+    /* Drop the facade affordances and give the container a 16:9 box so the
+       absolutely-positioned iframe has height (emptying the thumbnail would
+       otherwise collapse the wrapper to 0 and hide the player). */
+    el.classList.remove('post-yt-facade', 'post-vimeo-facade');
+    el.classList.add('post-embed-playing');
+  }
+
+  onFeedClick(e, inModal) {
+    /* YouTube/Vimeo click-to-play facade → swap the thumbnail for the real
+       player iframe (autoplay on). Handled before post routing so it doesn't
+       open the thread. Iframe is built via DOM APIs (no HTML-string nesting). */
+    const facade = e.target.closest('.post-yt-facade');
+    if (facade) {
+      e.stopPropagation();
+      this._playFacade(facade);
+      return;
+    }
+    /* Poll vote buttons are handled before the generic post routing. */
+    const voteBtn = e.target.closest('[data-poll-vote]');
+    if (voteBtn) {
+      e.stopPropagation();
+      this.votePoll(voteBtn.dataset.pollHash, Number(voteBtn.dataset.pollVote));
+      return;
+    }
+    /* Community-note controls: expand/collapse the proposed-note panel, or rate. */
+    const noteExpand = e.target.closest('[data-note-expand]');
+    if (noteExpand) {
+      e.stopPropagation();
+      const ph = noteExpand.dataset.noteExpand;
+      this._expandedNotes.has(ph) ? this._expandedNotes.delete(ph) : this._expandedNotes.add(ph);
+      this._refreshNoteSlot(ph);
+      return;
+    }
+    const noteRate = e.target.closest('[data-note-rate]');
+    if (noteRate) {
+      e.stopPropagation();
+      const host = e.target.closest('.post-item');
+      this.rateNote(noteRate.dataset.noteRate, noteRate.dataset.noteVal, host?.dataset.txhash);
+      return;
+    }
+    const action = e.target.closest('[data-action]')?.dataset.action;
+    const item   = e.target.closest('.post-item');
+    if (!item) return;
+    const post = this._postMap.get(item.dataset.txhash);
+    if (!post) return;
+
+    if (action === 'expand') {
+      e.stopPropagation();
+      this.state.expanded.has(post.txHash)
+        ? this.state.expanded.delete(post.txHash)
+        : this.state.expanded.add(post.txHash);
+      /* Re-render ONLY this post in place. A full renderFeed() would
+         re-virtualize from the top and re-placeholder posts past the initial
+         mount window, so expanding a post far down the feed appeared to do
+         nothing (and jumped scroll). Swap this item's content and re-measure. */
+      const m = this._vfMaps || {};
+      item.innerHTML = this.postHTML(post, inModal, m.replyMap, m.likeMap, m.repostMap, m.engagerMap);
+      if (this._vfHeightMap) this._vfHeightMap.set(post.txHash, item.offsetHeight);
+      this._wireVideoObserver?.(item);
+    } else if (action === 'reply') {
+      e.stopPropagation();
+      this.openReplyModal(post);
+    } else if (action === 'like') {
+      e.stopPropagation();
+      this.toggleLike(post, item);
+    } else if (action === 'repost') {
+      e.stopPropagation();
+      this.openRepostChoice(post, e.target.closest('.act-btn'));
+    } else if (action === 'bookmark') {
+      e.stopPropagation();
+      this.toggleBookmark(post, item);
+    } else if (action === 'share') {
+      e.stopPropagation();
+      this.sharePost(post);
+    } else if (action === 'mute') {
+      e.stopPropagation();
+      this.muteAddress(post.reporter);
+    } else if (action === 'menu') {
+      e.stopPropagation();
+      /* Anchor to the actual ⋯ button. e.currentTarget is the delegated
+         listener host (#feed), which made the menu open against the whole
+         feed's rect instead of the button. */
+      this.openPostMenu(post, e.target.closest('[data-action="menu"]') || e.target.closest('.post-menu-btn'));
+    } else if (!action && !inModal && !e.target.closest('a') && !e.target.closest('button')) {
+      /* Don't open threads for pure reaction posts — they have no body to display */
+      if (post.postType === 'like' || post.postType === 'follow') return;
+      this.openThread(post);
+    }
+  }
+
+  setFeedTab(tab) {
+    document.querySelectorAll('.feed-tab').forEach(t => t.classList.remove('active'));
+    this.g(tab === 'foryou' ? 'tab-foryou' : 'tab-following').classList.add('active');
+    if (tab === 'following') {
+      if (!this.signer) { utils.toast('Connect wallet to see Following feed'); return; }
+      if (this.state.following.size === 0) {
+        utils.toast('Follow some accounts first to see their posts here');
+        this.g('tab-foryou').classList.add('active');
+        this.g('tab-following').classList.remove('active');
+        return;
+      }
+      this.state.searchTerm = '';
+      this._followingFilter = true;
+      /* Show what we have immediately, then fetch fresh posts from followed
+         addresses in parallel (up to 5 concurrent). */
+      this.renderFeed();
+      this._fetchFollowingFeed();
+    } else {
+      this._followingFilter = false;
+      this.state.searchTerm = '';
+      this.g('search-input').value = '';
+      this._updateSearchClearBtn();
+      this.renderFeed();
+    }
+  }
+
+  async _fetchFollowingFeed() {
+    /* Cancel any in-flight following fetch from a previous tab click */
+    const myToken = (this._followingFetchToken = (this._followingFetchToken || 0) + 1);
+    /* 200 followed addresses — generous cap for the parallel fetch strategy */
+    const addrs = [...this.state.following].slice(0, 200);
+    if (!addrs.length) return;
+    /* Skip only posts that already RENDER in the Following view (current
+       state.posts + the extra store). NOT _postHashSet — that set keeps every
+       hash ever loaded, including posts long since capped out of state.posts,
+       which made their authors silently vanish from the Following feed over
+       a long session. */
+    const known = new Set(this.state.posts.map(p => p.txHash));
+    if (this._followingExtra) for (const h of this._followingExtra.keys()) known.add(h);
+    let newPosts = [];
+    /* Fetch pages from each followed address, 5 addresses at a time.
+       Page count per address: 1 for small scan depth, up to 3 for larger.
+       Keeps total API calls bounded: 200 addrs * 3 pages * 5 concurrent = manageable. */
+    const scanLimit  = this._getMaxScanPages();
+    const pagesPerAddr = scanLimit === Infinity ? 3 : Math.min(3, Math.ceil(scanLimit / 30));
+    const BATCH = 5;
+    const totalBatches = Math.ceil(addrs.length / BATCH);
+    const startedAt = Date.now();
+    /* Format mm:ss elapsed for the progress banner */
+    const fmtElapsed = () => {
+      const s = Math.floor((Date.now() - startedAt) / 1000);
+      const m = Math.floor(s / 60), r = s % 60;
+      return m > 0 ? `${m}m ${r}s` : `${s}s`;
+    };
+    let batchNum = 0;
+    for (let i = 0; i < addrs.length; i += BATCH) {
+      batchNum++;
+      /* Show live progress in the feed while loading */
+      const progBanner = this.g('feed')?.querySelector('.following-progress');
+      if (!progBanner && this._followingFilter) {
+        const banner = document.createElement('div');
+        banner.className = 'following-progress';
+        banner.style.cssText = 'padding:10px 16px;font-size:13px;color:var(--muted);border-bottom:1px solid var(--border)';
+        /* Spinner + status span: per-batch updates touch only the status
+           span so the spinner isn't wiped and restarted each batch. */
+        banner.innerHTML = '<span class="spinner sp-sm" aria-hidden="true"></span><span class="fp-status"></span>';
+        this.g('feed')?.insertAdjacentElement('afterbegin', banner);
+      }
+      const prog = this.g('feed')?.querySelector('.following-progress .fp-status')
+                || this.g('feed')?.querySelector('.following-progress');
+      const done = Math.min(batchNum * BATCH, addrs.length);
+      if (prog) {
+        prog.textContent = `Loading following feed… ${done}/${addrs.length} addresses • ${fmtElapsed()} elapsed`;
+      }
+      const batch = addrs.slice(i, i + BATCH);
+      const results = await Promise.allSettled(
+        batch.map(async addr => {
+          /* Sent-only fetch first: guarantees the account's own latest posts
+             even when received engagement floods their mixed txlist. */
+          const sent = await this._apiFetchSentTxs(addr);
+          if (sent) return sent;
+          /* Fallback: compat txlist pages (endpoint without a v2 API). */
+          const pages = [];
+          for (let pg = 1; pg <= pagesPerAddr; pg++) {
+            try {
+              const r = await this.apiFetch(addr, pg);
+              pages.push(...r);
+              if (r.length < 50) break;
+              if (pg < pagesPerAddr) await this._scanDelay(100);
+            } catch { break; }
+          }
+          return pages;
+        })
+      );
+      results.forEach((res, j) => {
+        if (res.status !== 'fulfilled') return;
+        const addr = batch[j];
+        // Robust flatten: pages array may be nested in some API responses
+        let txList = res.value || [];
+        if (Array.isArray(txList) && txList.length > 0 && Array.isArray(txList[0])) {
+          txList = txList.flat();
+        }
+        txList.forEach(tx => {
+          const hash = tx.hash?.toLowerCase();
+          if (!hash || known.has(hash)) return;
+          if (!tx.input || tx.input === '0x') return;
+          const parsed = this._parsePostTx(tx, { mode: 'main' });
+          if (!parsed) return;
+          /* Only the followed account's OWN posts — their txlist also contains
+             received txs authored by others. But any destination channel is
+             fine: a followed account's posts and replies belong in Following
+             wherever they posted them (matches X). The old to===main-or-self
+             restriction silently dropped their posts to other channels and
+             inboxes, which was a root cause of "Following shows only one
+             account". Content filters still apply at render. */
+          if (parsed.reporter?.toLowerCase() !== addr.toLowerCase()) return;
+          known.add(hash);
+          newPosts.push(parsed);
+        });
+      });
+    }
+    /* Remove progress banner */
+    this.g('feed')?.querySelector('.following-progress')?.remove();
+    if (!newPosts.length) return;
+    if (myToken !== this._followingFetchToken) return;
+    /* Store following-only posts SEPARATELY so they show in the Following feed
+       but never leak into the For You (main-channel) timeline. */
+    this._followingExtra = this._followingExtra || new Map();
+    newPosts.forEach(p => this._followingExtra.set(p.txHash, p));
+    /* Cap the store so a long session can't grow it without bound. */
+    if (this._followingExtra.size > 1000) {
+      const keys = [...this._followingExtra.keys()];
+      for (let k = 0; k < keys.length - 1000; k++) this._followingExtra.delete(keys[k]);
+    }
+    if (newPosts.some(pp => pp.poll)) setTimeout(() => this._tallyVisiblePolls(), 150);
+    await this.cache.savePosts(newPosts);
+    if (this._followingFilter && myToken === this._followingFetchToken) {
+      this.renderFeed();
+      utils.toast(`Loaded ${newPosts.length} new post${newPosts.length>1?'s':''} from follows`);
+    }
+  }
+
+  filterByTag(tag) {
+    this.state.activeTag  = tag;
+    this._setRoute('/tag/' + encodeURIComponent(tag));
+    this.state.searchTerm = '#' + tag;
+    this.g('search-input').value = '#' + tag;
+    this._updateSearchClearBtn();
+    this.renderFeed();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  /* Search a trend term from the sidebar "What's happening" card (visible on
+     any page). #tags use the tag filter; plain words do a text search. Routes
+     through Home first when on a self-managed view (Explore, Profile, …) where
+     renderFeed() no-ops, so results actually appear. */
+  _searchTrend(term) {
+    term = (term || '').trim();
+    if (!term) return;
+    const run = () => {
+      if (term.startsWith('#')) { this.filterByTag(term.slice(1)); return; }
+      this.state.activeTag  = null;
+      this.state.searchTerm = term.toLowerCase();
+      const si = this.g('search-input');
+      if (si) si.value = term;
+      this._updateSearchClearBtn?.();
+      this.renderFeed();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+    if (this._selfManagedModes.has(this.state.mode)) {
+      const r = this.goHome();
+      (r && r.then) ? r.then(run) : run();
+    } else {
+      run();
+    }
+  }
+
+  openComposeModal() {
+    const existing = this.g('compose-text').value;
+    this.g('modal-compose-text').value = existing;
+    utils.autoGrow(this.g('modal-compose-text'));
+    utils.updateCharCount(this.g('modal-compose-text'), this.g('modal-char-count'));
+    this._syncPostBtn();
+    this.g('modal-compose-avatar').src = this.state.profile.picUrl || 'image1.jpeg';
+    this.g('compose-modal').classList.add('open');
+    this._trapFocus(this.g('compose-modal'));
+    setTimeout(() => this.g('modal-compose-text').focus(), 100);
+  }
+
+  async publishFromModal() {
+    const text = this.g('modal-compose-text').value.trim();
+    if (!text) return;
+    this.g('compose-text').value = text;
+    const ok = await this.publishPost();
+    if (ok === true) {
+      this.closeModal('compose-modal');
+      this.g('modal-compose-text').value = '';
+      this._syncPostBtn();
+    }
+  }
+
+  async goHome() {
+    this._updateTitle('Home');
+    this._setRoute('/home');
+    if (this.state.mode === 'main' && this.state.channel === MAIN_CHANNEL) {
+      if (this.state.searchTerm || this.state.activeTag) {
+        this.state.searchTerm = '';
+        this.state.activeTag  = null;
+        const si = this.g('search-input');
+        if (si) si.value = '';
+        this._updateSearchClearBtn();
+        this.renderFeed();
+      }
+      window.scrollTo({ top: 0, behavior: 'smooth' }); return;
+    }
+    this.setNav('nav-home','home');
+    this.state.mode    = 'main';
+    this.state.channel = MAIN_CHANNEL;
+    /* Clear any stale search from a prior view so the home feed isn't
+       filtered by it and the search box doesn't keep the old query. */
+    this._clearSearch();
+    /* Home: tabs are the sticky top element, no title header */
+    this.g('feed-tabs').style.display      = 'flex';
+    this.g('feed-tabs').classList.add('tabs-sticky');
+    this.g('compose-area').style.display   = 'flex';
+    this.g('channel-banner').style.display = 'none';
+    this._pendingPageHeader = null;
+    /* Clear feed immediately so previous page's content doesn't flash */
+    const homeF = this.g('feed');
+    if (homeF) homeF.innerHTML = '';
+    this.setChActive('ch-main');
+    this.updateChLabel();
+    await this.resetAndFetch();
+  }
+
+  /* Scan for poll-related notifications:
+       - 'vote': someone voted on a poll I created (VOTE tx to my poll's
+         channel targeting my poll hash, from someone other than me).
+       - 'pollend': a poll I created or voted in has ended since last check.
+     Returns an array of notif objects shaped like the inbound ones. */
+  async _scanPollNotifications() {
+    const me = this.state.signerAddr;
+    if (!me) return [];
+    const lastCheck = parseInt(utils.safeLS.get(LAST_CHECK_KEY, '0'), 10);
+    const notifs = [];
+
+    /* Collect my polls (authored by me) and polls I voted in, from loaded
+       state + IDB cache. We need their hashes + channels. */
+    const myPolls = new Map();   /* pollHash → { post } authored by me */
+    const votedPolls = new Map();/* pollHash → { post } I voted in (any author) */
+    const allCached = await this.cache.getPosts(() => true).catch(() => []);
+    const pool = [...this.state.posts, ...allCached];
+    const seenPoll = new Set();
+    for (const p of pool) {
+      if (p.postType !== 'poll' || !p.poll) continue;
+      if (seenPoll.has(p.txHash)) continue;
+      seenPoll.add(p.txHash);
+      if (p.reporter === me) myPolls.set(p.txHash, p);
+    }
+    if (myPolls.size === 0) return [];
+
+    /* Scan each channel hosting one of my polls for VOTE txs. Group polls
+       by channel to minimize scans. */
+    const channels = new Set();
+    for (const p of myPolls.values()) channels.add((p.to || p.channel || MAIN_CHANNEL));
+    const voteSeen = new Set(); /* dedupe by tx hash */
+    for (const channel of channels) {
+      const scanLimit = Math.min(this._getMaxScanPages(), 10);
+      for (let page = 1; page <= scanLimit; page++) {
+        let raw;
+        try { raw = await this.apiFetch(channel, page); }
+        catch { break; }
+        let recentEnough = true;
+        for (const tx of raw) {
+          if (!tx.input || tx.input === '0x') continue;
+          const voter = tx.from?.toLowerCase();
+          if (!voter || voter === me) continue; /* skip my own votes */
+          let text;
+          try { text = ethers.toUtf8String(tx.input).trim(); }
+          catch { continue; }
+          if (!text.startsWith(VOTE_PREFIX)) continue;
+          const m = text.match(/^VOTE:(0x[a-f0-9]{64}):(\d+)/i);
+          if (!m) continue;
+          const pollHash = m[1].toLowerCase();
+          if (!myPolls.has(pollHash)) continue;
+          const ts = tx.timeStamp ? Number(tx.timeStamp) * 1000 : Date.now();
+          if (ts <= lastCheck) { recentEnough = false; continue; } /* older than last check */
+          const hash = tx.hash.toLowerCase();
+          if (voteSeen.has(hash)) continue;
+          voteSeen.add(hash);
+          const poll = myPolls.get(pollHash).poll;
+          const optIdx = Number(m[2]);
+          const optLabel = poll.options[optIdx] || '';
+          notifs.push({
+            type: 'vote', from: voter, target: pollHash,
+            preview: `voted "${optLabel}" on: ${poll.question.slice(0, 60)}`,
+            timestamp: new Date(ts).toISOString(), txHash: hash,
+          });
+        }
+        if (raw.length < 50) break;
+        if (!recentEnough && page > 2) break; /* mostly old votes — stop */
+      }
+    }
+
+    /* Poll-ended notifications: my polls whose end time passed since the
+       last check. One synthetic notif each. */
+    for (const [hash, p] of myPolls) {
+      if (!p.poll.endMs) continue;
+      if (p.poll.endMs <= Date.now() && p.poll.endMs > lastCheck) {
+        notifs.push({
+          type: 'pollend', from: me, target: hash,
+          preview: `Your poll ended: ${p.poll.question.slice(0, 70)}`,
+          timestamp: new Date(p.poll.endMs).toISOString(), txHash: hash,
+        });
+      }
+    }
+    return notifs;
+  }
+
+  /* Show the disclaimer on first visit (or when reopened from the footer).
+     forceShow=true bypasses the "already acknowledged" check so the footer
+     link always works. */
+  _maybeShowDisclaimer(forceShow = false) {
+    if (!forceShow && utils.safeLS.get(DISCLAIMER_KEY) === '1') return;
+    this.showDisclaimer(forceShow);
+  }
+
+  showDisclaimer(alreadyAck = false) {
+    const body = `
+      <div class="disclaimer-body">
+        <p><strong>Say It DeFi is an open, decentralized front-end.</strong>
+        It is a web interface to a public, permissionless social protocol that
+        lives entirely on the PulseChain blockchain.</p>
+
+        <p>All posts, replies, polls, votes, profiles, and other content are
+        created by users and written directly to the blockchain by their own
+        wallets. They are <strong>public, permanent, and immutable</strong> —
+        no one, including the creators of this interface, can edit or delete
+        them once they are on-chain.</p>
+
+        <p>This site does <strong>not</strong> host, store, control, moderate,
+        endorse, or verify any content. It only reads what already exists on
+        the blockchain and displays it. The creators and operators of this
+        interface are <strong>not responsible or liable</strong> for any
+        content posted by users, for how you use the protocol, or for any
+        transactions you choose to broadcast from your wallet.</p>
+
+        <p>You are solely responsible for your own actions, your wallet, your
+        keys, and anything you post. On-chain transactions cost gas and cannot
+        be reversed. Nothing here is financial, legal, or investment advice.</p>
+
+        <p><strong>Original, independent software.</strong> This application
+        was built from scratch as free, open-source software. It is not
+        affiliated with, endorsed by, or derived from any other platform or
+        company; any resemblance to other applications is purely coincidental
+        and limited to familiar user-interface conventions. The source code is
+        public and may be freely inspected, shared, and built upon.</p>
+
+        <p>By continuing to use this interface, you acknowledge and agree to
+        the above, and you agree that the creators and operators are not liable
+        for anything posted or done on the underlying decentralized network.</p>
+      </div>
+      <div class="btn-row" style="margin-top:16px;justify-content:flex-end">
+        ${alreadyAck
+          ? '<button class="btn-pri" id="disclaimer-close">Close</button>'
+          : '<button class="btn-pri" id="disclaimer-agree">I Understand &amp; Agree</button>'}
+      </div>`;
+    this._showGenericModal('Welcome to Say It DeFi', body);
+    const agree = document.getElementById('disclaimer-agree');
+    if (agree) agree.onclick = () => {
+      utils.safeLS.set(DISCLAIMER_KEY, '1');
+      this._closeGenericModal();
+    };
+    const close = document.getElementById('disclaimer-close');
+    if (close) close.onclick = () => this._closeGenericModal();
+  }
+
+  /* Keyboard shortcuts help overlay (press ?). Lists the shortcuts that
+     already exist so they're discoverable, like X's help dialog. */
+  showShortcutsHelp() {
+    const groups = [
+      { title: 'Navigation', items: [
+        ['g then h', 'Go to Home'],
+        ['g then n', 'Go to Notifications'],
+        ['g then p', 'Open your Profile'],
+        ['g then s', 'Go to your Channel'],
+        ['g then b', 'Go to Bookmarks'],
+        ['/', 'Focus search'],
+      ]},
+      { title: 'Compose', items: [
+        ['n', 'New post'],
+        ['e', 'Open the expanded composer'],
+      ]},
+      { title: 'Timeline', items: [
+        ['j', 'Next post'],
+        ['k', 'Previous post'],
+        ['Enter', 'Open the focused post'],
+      ]},
+      { title: 'Actions on the focused post', items: [
+        ['l', 'Like'],
+        ['r', 'Reply'],
+        ['t', 'Repost / Quote'],
+        ['b', 'Bookmark'],
+        ['u', 'Copy link to post'],
+      ]},
+      { title: 'General', items: [
+        ['?', 'Show this help'],
+        ['Esc', 'Close dialogs / popups'],
+      ]},
+    ];
+    const body = groups.map(gr => `
+      <div class="ks-group">
+        <div class="ks-group-title">${gr.title}</div>
+        ${gr.items.map(([key, desc]) => `
+          <div class="ks-row">
+            <span class="ks-desc">${desc}</span>
+            <span class="ks-keys">${key.split(' then ').map(k =>
+              `<kbd>${k}</kbd>`).join('<span class="ks-then">then</span>')}</span>
+          </div>`).join('')}
+      </div>`).join('');
+    this._showGenericModal('Keyboard shortcuts', `<div class="ks-wrap">${body}</div>`);
+  }
+
+  /* Accumulate a like/reply/repost seen during a feed scan, keyed by its tx
+     hash. Bounded to ~300 recent entries so memory stays flat on busy
+     channels. _engagementNotifs() later filters these to the ones targeting
+     the signed-in user's posts — so engagement notifications cost no extra API
+     calls (they ride along with the feed scan, like poll-vote tallies). */
+  _recordEngagement(type, from, target, preview, tx) {
+    if (!type || !from || !target) return;
+    const me = this.state.signerAddr;
+    if (me && from === me) return;            /* never notify yourself */
+    const txHash = tx.hash?.toLowerCase();
+    if (!txHash) return;
+    this._engagementAccum = this._engagementAccum || new Map();
+    if (this._engagementAccum.has(txHash)) return;
+    const ts = tx.timeStamp ? Number(tx.timeStamp) * 1000 : Date.now();
+    this._engagementAccum.set(txHash, { type, from, target, preview: preview || '', ts, txHash });
+    if (this._engagementAccum.size > 400) {
+      /* Bulk-trim to the 300 newest (cheap, runs only once per 100 over cap). */
+      const keep = [...this._engagementAccum.values()].sort((a, b) => b.ts - a.ts).slice(0, 300);
+      this._engagementAccum = new Map(keep.map(e => [e.txHash, e]));
+    }
+  }
+
+  /* Turn accumulated engagement into notifications for likes/replies/reposts
+     that target MY posts. My post hashes come from loaded state + the IDB
+     cache (no network). Returns [] when nothing matches. */
+  async _engagementNotifs() {
+    const me = this.state.signerAddr;
+    if (!me || !this._engagementAccum || this._engagementAccum.size === 0) return [];
+    const mine = new Set();
+    this.state.posts.forEach(p => { if (p.reporter === me) mine.add(p.txHash); });
+    try {
+      const cached = await this.cache.getPosts(p => p.reporter === me);
+      cached.forEach(p => mine.add(p.txHash));
+    } catch { /* IDB unavailable — use in-memory posts only */ }
+    if (!mine.size) return [];
+    const out = [];
+    for (const e of this._engagementAccum.values()) {
+      if (!mine.has(e.target)) continue;
+      out.push({
+        type: e.type, from: e.from, target: e.target, preview: e.preview || '',
+        timestamp: new Date(e.ts).toISOString(), txHash: e.txHash,
+      });
+    }
+    return out;
+  }
+
+  async goNotifications() {
+    if (!this.signer) { utils.toast('Connect wallet to view Notifications'); return; }
+    this._updateTitle('Notifications');
+    this._setRoute('/notifications');
+    this.setNav('nav-notifs','notifs');
+    const navToken = this._navToken; /* if this changes, user navigated away */
+    this.g('feed-tabs').classList.remove('tabs-sticky');
+    this.g('feed-tabs').style.display      = 'none';
+    this.g('compose-area').style.display   = 'none';
+    this.g('channel-banner').style.display = 'none';
+    /* Inject sticky header at top of feed */
+    this._pendingPageHeader = this._makePageHeader({
+      title: 'Notifications', noBack: true });
+    this.g('new-banner').classList.remove('visible');
+    this.g('loading-more').style.display   = 'none';
+    this.state.mode = 'notifications';
+    /* NOTE: don't stamp LAST_CHECK_KEY here — _scanPollNotifications reads it to
+       window vote/poll-end notifications, so writing "now" before the scan made
+       that window empty every time. We stamp it AFTER the scan (below). */
+    this.clearNotifBadge();
+
+    if (navToken !== this._navToken) return;
+    this.g('feed').innerHTML = this._applyPageHeader() +
+      `<div class="prof-empty"><div class="spinner" aria-hidden="true"></div><h3>Loading notifications…</h3></div>`;
+
+    try {
+      const allNotifs = [];
+      /* Respect user's scan-depth setting but cap at 10 pages (500 txs) —
+         notifications only need recent inbound messages. */
+      const notifLimit = Math.min(this._getMaxScanPages(), 10);
+      for (let page = 1; page <= notifLimit; page++) {
+        let raw;
+        try { raw = await this.apiFetch(this.state.signerAddr, page); }
+        catch { break; }
+        raw.forEach(tx => {
+          const from = tx.from?.toLowerCase();
+          const to   = tx.to?.toLowerCase();
+          if (to !== this.state.signerAddr || from === this.state.signerAddr) return;
+          if (!tx.input || tx.input === '0x') return;
+          try {
+            const text = ethers.toUtf8String(tx.input).trim();
+            if (text.startsWith(PROFILE_PREFIX)) return;
+            if (text.startsWith(BOOKMARK_PREFIX) || text.startsWith(UNBOOKMARK_PREFIX)) return;
+            if (text.startsWith(UNLIKE_PREFIX)) return;
+            const ts = tx.timeStamp ? new Date(Number(tx.timeStamp)*1000).toISOString() : new Date().toISOString();
+            let type = 'message', target = null, preview = '';
+            if (text.startsWith(LIKE_PREFIX)) {
+              type = 'like'; target = text.slice(LIKE_PREFIX.length).trim().toLowerCase();
+            } else if (text.startsWith(FOLLOW_PREFIX)) {
+              type = 'follow'; target = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
+            } else if (text.startsWith(UNFOLLOW_PREFIX)) {
+              return; /* skip unfollows from notifications */
+            } else if (text.match(/^REPLY_TO:(0x[a-f0-9]{64})\n\n/i)) {
+              type = 'reply';
+              const m = text.match(/^REPLY_TO:(0x[a-f0-9]{64})\n\n/i);
+              target  = m[1].toLowerCase();
+              preview = text.slice(m[0].length).trim().slice(0, 100);
+            } else if (text.match(/^REPOST:(0x[a-f0-9]{64})/i)) {
+              type = 'repost';
+              const m = text.match(/^REPOST:(0x[a-f0-9]{64})/i);
+              target  = m[1].toLowerCase();
+            } else {
+              type = 'message'; preview = text.slice(0, 100);
+            }
+            allNotifs.push({ type, from, target, preview, timestamp: ts, txHash: tx.hash.toLowerCase() });
+          } catch { /* skip */ }
+        });
+        if (raw.length < 50) break;
+      }
+
+      /* Poll notifications: votes on my polls + polls I voted in that ended.
+         Votes are channel txs (not inbound), so scan separately. */
+      try {
+        const pollNotifs = await this._scanPollNotifications();
+        if (pollNotifs.length) allNotifs.push(...pollNotifs);
+      } catch (err) { console.warn('Poll notif scan:', err); }
+
+      /* Likes/replies/reposts on my posts — gathered for free from feed scans
+         (no extra channel scan), matched against my posts here. */
+      try {
+        const eng = await this._engagementNotifs();
+        if (eng.length) allNotifs.push(...eng);
+      } catch (err) { console.warn('Engagement notif:', err); }
+
+      /* Dedupe by tx hash, then sort newest-first. */
+      const _seenNotif = new Set();
+      const _deduped = allNotifs.filter(n => n.txHash && !_seenNotif.has(n.txHash) && _seenNotif.add(n.txHash));
+      _deduped.sort((a, b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()));
+      allNotifs.length = 0;
+      allNotifs.push(..._deduped);
+
+      /* User navigated away while we were scanning — don't paint over the
+         new view (this caused a flash of Notifications when returning Home). */
+      if (navToken !== this._navToken) return;
+
+      /* Scan succeeded and we're still here → mark everything up to now as seen
+         (the scanners above used the PREVIOUS value to build their windows). */
+      utils.safeLS.set(LAST_CHECK_KEY, Date.now().toString());
+
+      if (!allNotifs.length) {
+        this.g('feed').innerHTML = this._applyPageHeader() +
+          `<div class="prof-empty"><span>🔔</span><h3>No notifications yet</h3><p>When someone likes, follows, replies, or votes on your poll, it appears here.</p></div>`;
+        return;
+      }
+
+      /* Cache the parsed notifs so tab switching filters in place without
+         rescanning the chain. */
+      this._notifs = allNotifs;
+      this._notifTab = this._notifTab || 'all';
+      this._renderNotifs();
+
+      /* Lazy-refresh avatars/names once profiles load. Single non-recursive update. */
+      const refreshAvatars = () => {
+        if (this.state.mode !== 'notifications') return;
+        document.querySelectorAll('.notif-item').forEach(item => {
+          const addr = item.dataset.from;
+          if (!addr) return;
+          const prof = this.state.profCache[addr];
+          if (prof?.picUrl) {
+            const img = item.querySelector('.notif-avatar');
+            if (img && img.src.endsWith('image1.jpeg') && prof.picUrl !== 'image1.jpeg') {
+              img.src = prof.picUrl;
+            }
+          }
+          if (prof?.username) {
+            const nameEl = item.querySelector('.notif-name');
+            if (nameEl && nameEl.textContent.startsWith('0x')) {
+              nameEl.textContent = prof.username;
+            }
+          }
+        });
+      };
+      /* One-shot refresh after profile fetches resolve */
+      setTimeout(refreshAvatars, 1500);
+      setTimeout(refreshAvatars, 4000);
+
+    } catch (err) {
+      this.g('feed').innerHTML = `<div class="prof-empty"><span>⚠️</span><h3>Error loading</h3><p>${utils.safe(err.message)}</p></div>`;
+    }
+  }
+
+  /* Render notifications with the active tab filter. Tabs: All, Mentions
+     (replies + reposts + messages — things addressed at you), Likes
+     (likes + follows). Filters the cached this._notifs in place. */
+  /* Per-type notification opt-outs (Settings → Notifications). Returns false
+     when the user has muted this notification's category. vote/pollend share
+     one "poll" category. */
+  _notifEnabled(type) {
+    const cat  = (type === 'vote' || type === 'pollend') ? 'poll' : type;
+    const mute = this._getSettings().notifMute || {};
+    return !mute[cat];
+  }
+
+  _renderNotifs() {
+    const all = this._notifs || [];
+    const tab = this._notifTab || 'all';
+    const icons = { like:'❤️', follow:'👤', reply:'💬', repost:'🔁', message:'✉️', vote:'📊', pollend:'🏁' };
+    const labels = {
+      like:'liked your post', follow:'followed you', reply:'replied to you',
+      repost:'reposted your post', message:'sent you a message',
+      vote:'voted on your poll', pollend:'',
+    };
+    /* Tabs partition All cleanly: Likes = plain likes; Mentions = everything
+       else (replies, reposts, messages, poll votes/ends, follows). No type is
+       orphaned to "All"-only. */
+    const inTab = (n) => {
+      if (tab === 'likes')    return n.type === 'like';
+      if (tab === 'mentions') return n.type !== 'like';
+      return true; /* all */
+    };
+    const filtered = all.filter(n => this._notifEnabled(n.type)).filter(inTab);
+    const tabBar = `
+      <div class="notif-tabs">
+        <button class="notif-tab ${tab==='all'?'active':''}" data-notif-tab="all">All</button>
+        <button class="notif-tab ${tab==='mentions'?'active':''}" data-notif-tab="mentions">Mentions</button>
+        <button class="notif-tab ${tab==='likes'?'active':''}" data-notif-tab="likes">Likes</button>
+      </div>`;
+    let body;
+    if (filtered.length === 0) {
+      body = `<div class="prof-empty"><span>🔔</span><h3>Nothing here</h3><p>No ${tab==='all'?'notifications':tab} yet.</p></div>`;
+    } else {
+      body = '<div class="notif-list">' + filtered.map(n => {
+        const time = this.relTime(n.timestamp);
+        const icon = icons[n.type] || '📩';
+        /* Poll-ended is a self-notification — render the preview as the
+           headline with the poll hash opening the thread, no "from" user. */
+        if (n.type === 'pollend') {
+          return `
+            <div class="notif-item" role="button" tabindex="0" data-act="open-thread" data-act-arg="${utils.safe(n.target)}">
+              <div class="notif-icon-wrap">${icon}</div>
+              <div class="notif-body">
+                <span class="notif-label">${utils.safe(n.preview)}</span>
+              </div>
+              <span class="notif-time">${time}</span>
+            </div>`;
+        }
+        const prof = this.state.profCache[n.from];
+        const pic  = utils.safe(utils.safeUrl(prof?.picUrl) || 'image1.jpeg');
+        const name = prof?.username ? utils.safe(prof.username) : this.trunc(n.from);
+        const label = labels[n.type] || 'interacted with you';
+        this.fetchOtherProfile(n.from);
+        /* Engagement on a known post (vote/like/reply/repost) opens that post's
+           thread in-app; types with no post target (message/follow) fall back
+           to the tx on the explorer. */
+        const opensThread = n.target && ['vote', 'like', 'reply', 'repost'].includes(n.type);
+        const clickAttr = opensThread
+          ? `data-act="notif-open" data-act-arg="${utils.safe(n.target)}"`
+          : `data-act="notif-open" data-act-arg="${utils.safe(n.txHash)}" data-act-arg2="tx"`;
+        return `
+          <div class="notif-item" role="button" tabindex="0" data-from="${utils.safe(n.from)}" ${clickAttr}>
+            <div class="notif-icon-wrap">${icon}</div>
+            <img src="${pic}" class="notif-avatar notif-pop" alt="" data-pop-addr="${utils.safe(n.from)}" onerror="this.src='image1.jpeg'">
+            <div class="notif-body">
+              <span class="notif-name notif-pop" data-pop-addr="${utils.safe(n.from)}">${name}</span>
+              <span class="notif-label"> ${label}</span>
+              ${n.preview ? `<div class="notif-preview">${utils.safe(n.preview)}</div>` : ''}
+            </div>
+            <span class="notif-time">${time}</span>
+          </div>`;
+      }).join('') + '</div>';
+    }
+    /* Keep the page header that's already in the feed; replace the rest. */
+    const headerEl = this.g('feed').querySelector('.page-header');
+    const headerHTML = headerEl ? headerEl.outerHTML : this._applyPageHeader();
+    this.g('feed').innerHTML = headerHTML + tabBar + body;
+    /* Wire tab buttons */
+    this.g('feed').querySelectorAll('[data-notif-tab]').forEach(btn => {
+      btn.onclick = () => { this._notifTab = btn.dataset.notifTab; this._renderNotifs(); };
+    });
+    /* Profile popup on a notifier's name/avatar — click opens it; on desktop
+       a 400ms hover does too. stopPropagation so the row's open-tx onclick
+       doesn't also fire. */
+    const list = this.g('feed').querySelector('.notif-list');
+    if (list) {
+      list.addEventListener('click', e => {
+        const t = e.target.closest('.notif-pop');
+        if (!t) return;
+        e.stopPropagation();
+        /* Click navigates to the profile (like the feed / X); hover still
+           shows the hovercard via the mouseover handler below. */
+        if (t.dataset.popAddr) {
+          this.hideProfilePopup();
+          this.goProfilePage(t.dataset.popAddr, t.dataset.popAddr === this.state.signerAddr);
+        }
+      });
+      const isTouch = () => window.matchMedia('(hover: none)').matches;
+      let hov = null;
+      list.addEventListener('mouseover', e => {
+        if (isTouch()) return;
+        const t = e.target.closest('.notif-pop');
+        if (!t || !t.dataset.popAddr) return;
+        clearTimeout(hov);
+        const addr = t.dataset.popAddr;
+        hov = setTimeout(() => this.showProfilePopup(addr, t, 'hover'), 400);
+      });
+      list.addEventListener('mouseout', e => {
+        if (isTouch()) return;
+        const popup = this.g('profile-popup');
+        if (popup?.contains(e.relatedTarget)) return;
+        clearTimeout(hov);
+      });
+    }
+  }
+
+  async goSelf() {
+    if (!this.signer) { utils.toast('Connect wallet to view your channel'); return; }
+    this._updateTitle('My Channel');
+    this._setRoute('/channel/' + this.state.signerAddr);
+    this.setNav('nav-mychannel', null);
+    this.state.mode    = 'self';
+    this.state.channel = this.state.signerAddr;
+    this.g('feed-tabs').classList.remove('tabs-sticky');
+    this.g('feed-tabs').style.display = 'none';
+    const selfTitle = this.state.profile.username || 'My Channel';
+    const selfHandle = this.state.signerAddr ? '@' + this.trunc(this.state.signerAddr) : '';
+    this._pendingPageHeader = this._makePageHeader({
+      title: selfTitle, subtitle: selfHandle, noBack: true });
+    this.g('compose-area').style.display = 'flex';
+    this.setChActive('ch-self');
+    this.updateChLabel();
+    this.showChannelBanner(this.state.signerAddr);
+    await this.resetAndFetch();
+  }
+
+  async goCustom() {
+    const raw = this.g('custom-input').value.trim().toLowerCase();
+    if (!ethers.isAddress(raw)) { utils.toast('Invalid address'); return; }
+    this._setRoute('/channel/' + raw);
+    this.setNav(null, null);
+    this.state.mode    = 'custom';
+    this.state.channel = raw;
+    this.g('feed-tabs').classList.remove('tabs-sticky');
+    this.g('feed-tabs').style.display = 'none';
+    this._pendingPageHeader = this._makePageHeader({
+      title: this.trunc(raw), subtitle: raw, noBack: false });
+    this.g('compose-area').style.display = 'flex';
+    this.setChActive(null);
+    this.updateChLabel();
+    this.showChannelBanner(raw);
+    /* track this channel in history + mark it read (opening it = seen) */
+    this._touchChannelHistory(raw);
+    this._markChannelSeen(raw);
+    await this.resetAndFetch();
+    this._updateChannelSubtitle();
+  }
+
+  /* Search within the current channel. The global search box scopes to
+     whichever feed is loaded, and a channel feed (mode 'custom', not
+     self-managed) is loaded here — so focusing it filters this channel's
+     posts. Mirrors the profile header's search affordance. (On phones the
+     sidebar search is hidden; that's a shared limitation with the profile.) */
+  _channelSearch() { this._focusSearch(); }
+
+  /* Focus the search box. On phones the sidebar search is hidden
+     (offsetParent === null), so there's nothing to focus — route to Explore's
+     always-visible inline search instead of leaving a dead button. */
+  _focusSearch() {
+    const inp = this.g('search-input');
+    if (!inp || inp.offsetParent === null) {
+      this.goExplore('trending');
+      setTimeout(() => this.g('explore-search-input')?.focus(), 120);
+      return;
+    }
+    inp.focus();
+    inp.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  async goOfficialChannel() {
+    this.setNav(null, null);
+    this.state.mode    = 'custom';
+    this.state.channel = OFFICIAL_CHANNEL;
+    this.g('custom-input').value         = OFFICIAL_CHANNEL;
+    this.g('feed-tabs').classList.remove('tabs-sticky');
+    this.g('feed-tabs').style.display = 'none';
+    this._pendingPageHeader = this._makePageHeader({
+      title: 'Say It DeFi Channel', subtitle: 'Official channel', noBack: false });
+    this.g('compose-area').style.display = 'flex';
+    this.setChActive(null);
+    this.updateChLabel();
+    this.showChannelBanner(OFFICIAL_CHANNEL);
+    await this.resetAndFetch();
+    this._updateChannelSubtitle();
+  }
+
+  /* ── New navigation methods ─────────────────────────────────────────── */
+  goExplore(tab = null) {
+    this.state.exploreTab = tab || this.state.exploreTab || 'trending';
+    this._updateTitle('Explore');
+    this._setRoute('/explore' + (this.state.exploreTab !== 'trending' ? '/' + this.state.exploreTab : ''));
+    this.setNav('nav-explore','explore');
+    this.state.mode = 'explore';
+    this.g('feed-tabs').classList.remove('tabs-sticky');
+    this.g('feed-tabs').style.display      = 'none';
+    this.g('compose-area').style.display   = 'none';
+    this.g('channel-banner').style.display = 'none';
+    this._pendingPageHeader = this._makePageHeader({ title: 'Explore', noBack: true });
+    this.g('loading-more').style.display   = 'none';
+    const _exploreHeader = this._applyPageHeader();
+    this._renderExplorePage(_exploreHeader);
+  }
+
+  /* ── Explore page (X-style: search-first, tabbed) ───────────────────────
+     Tabs: Trending (frequent #hashtags + significant words from recent
+     posts), People (who-to-follow), Channels (most-active channels), Latest
+     (recent posts). All derived from the in-memory feed + profile cache —
+     clicks route through Home because Explore is a self-managed mode where
+     renderFeed() no-ops. */
+  _renderExplorePage(_headerHTML = '') {
+    const tab = this.state.exploreTab || 'trending';
+    const tabBtn = (id, label) =>
+      `<button class="explore-tab${tab === id ? ' active' : ''}" data-explore-tab="${id}" role="tab">${label}</button>`;
+    this.g('feed').innerHTML = _headerHTML + `
+      <div class="explore-page">
+        <div class="explore-search-bar">
+          <span class="search-icon" aria-hidden="true">🔎</span>
+          <input type="text" id="explore-search-input" class="xp-search-input"
+            placeholder="Search Say It DeFi" autocomplete="off"
+            aria-label="Search posts and people">
+          <button class="explore-search-clear hidden" id="explore-search-clear"
+            type="button" title="Clear search" aria-label="Clear search">✕</button>
+        </div>
+        <div class="explore-tabs" role="tablist">
+          ${tabBtn('trending', 'Trending')}
+          ${tabBtn('people', 'People')}
+          ${tabBtn('channels', 'Channels')}
+          ${tabBtn('latest', 'Latest')}
+        </div>
+        <div id="explore-tab-content"></div>
+      </div>`;
+    /* Wire tab bar, search input, and a delegated click handler for the rows
+       (terms/people/channels/follow) once the DOM exists. */
+    setTimeout(() => {
+      const feed = this.g('feed');
+      feed.querySelectorAll('[data-explore-tab]').forEach(btn => {
+        btn.onclick = () => this.setExploreTab(btn.dataset.exploreTab);
+      });
+      const host = this.g('explore-tab-content');
+      if (host) {
+        host.addEventListener('click', e => {
+          const fol = e.target.closest('[data-explore-follow]');
+          if (fol) { e.stopPropagation(); this.toggleFollowAddr(fol.dataset.exploreFollow, fol); return; }
+          const term = e.target.closest('[data-explore-term]');
+          if (term) { this._exploreSearch(term.dataset.exploreTerm); return; }
+          const ch = e.target.closest('[data-explore-channel]');
+          if (ch) { this.g('custom-input').value = ch.dataset.exploreChannel; this.goCustom(); return; }
+          const prof = e.target.closest('[data-explore-profile]');
+          if (prof) { const a = prof.dataset.exploreProfile; this.goProfilePage(a, a === this.state.signerAddr); return; }
+        });
+      }
+      this._wireExploreSearch();
+    }, 0);
+    this._renderExploreTab(tab);
+  }
+
+  setExploreTab(tab) {
+    /* Switching tabs exits any active search. */
+    const inp = this.g('explore-search-input');
+    if (inp) inp.value = '';
+    const clr = this.g('explore-search-clear');
+    if (clr) clr.classList.add('hidden');
+    this._exploreSearchToken = (this._exploreSearchToken || 0) + 1; /* cancel pending IDB search */
+    this.state.exploreTab = tab;
+    this._setRoute('/explore' + (tab !== 'trending' ? '/' + tab : ''));
+    const feed = this.g('feed');
+    feed.querySelectorAll('[data-explore-tab]').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.exploreTab === tab);
+    });
+    this._renderExploreTab(tab);
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  }
+
+  _renderExploreTab(tab) {
+    const host = this.g('explore-tab-content');
+    if (!host) return;
+    if (tab === 'people')        host.innerHTML = this._explorePeopleHTML();
+    else if (tab === 'channels') host.innerHTML = this._exploreChannelsHTML();
+    else if (tab === 'latest')   this._exploreRenderLatest(host);
+    else                         host.innerHTML = this._exploreTrendingHTML();
+  }
+
+  /* Run a search/term from Explore (trending tap or a typed query). Results
+     render INLINE on the Explore page — we no longer yank the user back to the
+     main feed or echo the query into the sidebar search box. */
+  _exploreSearch(term) {
+    term = (term || '').trim();
+    if (!term) return;
+    const inp = this.g('explore-search-input');
+    if (inp) inp.value = term;
+    this._exploreApplySearch(term);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  /* Apply the Explore search box: a term shows results in the tab-content
+     area; an empty term restores the active tab. */
+  _exploreApplySearch(term) {
+    term = (term || '').trim();
+    const host = this.g('explore-tab-content');
+    if (!host) return;
+    const clr = this.g('explore-search-clear');
+    if (clr) clr.classList.toggle('hidden', !term);
+    const tabs = this.g('feed').querySelectorAll('[data-explore-tab]');
+    if (!term) {
+      const active = this.state.exploreTab || 'trending';
+      tabs.forEach(b => b.classList.toggle('active', b.dataset.exploreTab === active));
+      this._renderExploreTab(active);
+      return;
+    }
+    /* Searching → results aren't a tab, so drop the tab highlight. */
+    tabs.forEach(b => b.classList.remove('active'));
+    this._exploreRenderResults(host, term);
+  }
+
+  /* Filter loaded posts by the term (text or #tag), falling back to the IDB
+     trigram index when nothing matches in memory. */
+  _exploreRenderResults(host, term) {
+    const lc = term.toLowerCase();
+    const isTag = lc.startsWith('#');
+    const inMem = this.state.posts.filter(p => {
+      if (p.postType && p.postType !== 'post') return false;
+      if (!p.display) return false;
+      if (isTag) return p.display.toLowerCase().includes(lc);
+      return p.display.toLowerCase().includes(lc) || p.reporter?.toLowerCase().includes(lc);
+    });
+    this._exploreRenderPostList(host, inMem, term);
+    const token = (this._exploreSearchToken = (this._exploreSearchToken || 0) + 1);
+    if (!inMem.length && !isTag && term.length >= 3) {
+      this.cache.searchByText(term).then(hashes => {
+        if (token !== this._exploreSearchToken || this.state.mode !== 'explore') return;
+        if (!hashes?.length) return;
+        return Promise.all(hashes.map(h => new Promise(res => {
+          const req = this.cache._db?.transaction('posts', 'readonly')?.objectStore('posts')?.get(h);
+          if (req) { req.onsuccess = () => res(req.result); req.onerror = () => res(null); } else res(null);
+        }))).then(found => {
+          if (token !== this._exploreSearchToken || this.state.mode !== 'explore') return;
+          const posts = (found || []).filter(Boolean);
+          if (posts.length) this._exploreRenderPostList(host, posts, term);
+        });
+      }).catch(() => {});
+    }
+  }
+
+  _exploreRenderPostList(host, posts, term) {
+    if (!posts.length) {
+      host.innerHTML = `<div class="explore-empty">No results for “${utils.safe(term)}”.<br>Try another word, #tag, or address.</div>`;
+      return;
+    }
+    const sorted = posts.slice()
+      .sort((a, b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()));
+    this._exploreRenderPaged(host, sorted, `Results for “${term}”`);
+  }
+
+  /* Render a sorted post list into an Explore host with incremental
+     "Load more" (no more hard 20/30 cap). headText is an optional results
+     header. State lives on _exploreList so the button can append the next
+     batch in place. */
+  _exploreRenderPaged(host, sorted, headText) {
+    this._exploreList = { sorted, host, shown: 0, headText: headText || '' };
+    host.innerHTML = '';
+    this._exploreLoadMore();
+  }
+  _exploreLoadMore() {
+    const st = this._exploreList;
+    if (!st || !st.host) return;
+    const PAGE = 30;
+    const { sorted, host } = st;
+    host.querySelector('.explore-load-more')?.remove();
+    if (st.shown === 0 && st.headText) {
+      const head = document.createElement('div');
+      head.className = 'explore-results-head';
+      head.textContent = st.headText;
+      host.appendChild(head);
+    }
+    const next = sorted.slice(st.shown, st.shown + PAGE);
+    const frag = document.createDocumentFragment();
+    next.forEach(post => {
+      this._postMap.set(post.txHash, post);
+      const el = document.createElement('div');
+      el.className = 'post-item';
+      el.dataset.txhash = post.txHash;
+      el.innerHTML = this.postHTML(post, false, null);
+      frag.appendChild(el);
+    });
+    host.appendChild(frag);
+    st.shown += next.length;
+    next.forEach(p => { if (p.reporter !== this.state.signerAddr) this.fetchOtherProfile(p.reporter); });
+    if (st.shown < sorted.length) {
+      const btn = document.createElement('button');
+      btn.className = 'settings-btn explore-load-more';
+      btn.style.cssText = 'display:block;margin:16px auto';
+      btn.textContent = `Load more (${sorted.length - st.shown})`;
+      btn.onclick = () => this._exploreLoadMore();
+      host.appendChild(btn);
+    }
+  }
+
+  /* Fetch profiles for a set of addresses (once each), then re-render the tab
+     so real names/avatars replace truncated addresses. _exploreProfTried stops
+     addresses with no on-chain profile from looping forever. */
+  _exploreResolveProfiles(addrs, tab) {
+    this._exploreProfTried = this._exploreProfTried || new Set();
+    const todo = addrs.filter(a => !this.state.profCache[a]?.username && !this._exploreProfTried.has(a));
+    if (!todo.length) return;
+    todo.forEach(a => this._exploreProfTried.add(a));
+    Promise.all(todo.map(a => this.fetchOtherProfile(a).catch(() => {}))).then(() => {
+      if (this.state.mode === 'explore' && this.state.exploreTab === tab) this._renderExploreTab(tab);
+    });
+  }
+
+  /* Shared trend computation — ranks #hashtags + significant words across
+     recent posts (binary posts + stopwords excluded). Returns [[term,count]].
+     Used by BOTH the Explore Trending tab and the sidebar "What's happening",
+     so they never disagree. */
+  _computeTrends(maxTerms = 12, sample = 500) {
+    const STOP = this._exploreStopwords || (this._exploreStopwords = new Set(
+      ('the a an and or but if then else for to of in on at by with from as is are was were be been being '
+      + 'this that these those it its has have had will can could would should just so up out get got about '
+      + 'not no yes do does did done you your youre they them their there here what when who how why all any '
+      + 'too very more most some such only own same than now into over also dont cant wont im ive pls www http '
+      + 'https com one will new like via').split(' ')));
+    const counts = new Map();
+    this.state.posts.slice(0, sample).forEach(p => {
+      if (p.postType && p.postType !== 'post') return;
+      if (!p.display) return;
+      /* Skip binary/non-text posts so their decoded garbage (e.g. "arc.txt")
+         doesn't pollute the trend list. */
+      if (this._isLikelyBinary(p.display)) return;
+      (p.display.match(/#[A-Za-z0-9_]{2,30}/g) || []).forEach(t => {
+        const k = t.toLowerCase();
+        counts.set(k, (counts.get(k) || 0) + 1);
+      });
+      const noTags = p.display.replace(/#[A-Za-z0-9_]+/g, ' ');
+      (noTags.toLowerCase().match(/[a-z][a-z0-9]{2,20}/g) || []).forEach(w => {
+        if (STOP.has(w)) return;
+        counts.set(w, (counts.get(w) || 0) + 1);
+      });
+    });
+    const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+    const strong = ranked.filter(([, n]) => n >= 2);
+    return (strong.length ? strong : ranked).slice(0, maxTerms);
+  }
+
+  /* ── Trending tab: ranked terms, each taps through to a search ────────── */
+  _exploreTrendingHTML() {
+    const ranked = this._computeTrends(12);
+    if (!ranked.length) {
+      return `<div class="explore-empty">No trends yet — load the feed, then check back.</div>`;
+    }
+    return ranked.map(([term, count], i) =>
+      `<div class="explore-row" role="button" tabindex="0" data-explore-term="${utils.safe(term)}">
+        <div class="explore-rank">${i + 1}</div>
+        <div class="explore-content">
+          <div class="explore-label">Trending on PulseChain</div>
+          <div class="explore-name">${utils.safe(term)}</div>
+          <div class="explore-meta">${count} post${count > 1 ? 's' : ''}</div>
+        </div>
+        <div class="explore-arrow">→</div>
+      </div>`).join('');
+  }
+
+  /* ── People: who-to-follow, ranked by post activity ───────────────────── */
+  _explorePeopleHTML() {
+    const me = this.state.signerAddr;
+    const counts = new Map();
+    this.state.posts.forEach(p => {
+      if (p.postType && p.postType !== 'post') return;
+      const r = p.reporter?.toLowerCase();
+      if (!r || r === me) return;
+      counts.set(r, (counts.get(r) || 0) + 1);
+    });
+    let ranked = [...counts.entries()]
+      .filter(([, n]) => n >= 2)
+      .sort((a, b) => {
+        const ap = this.state.profCache[a[0]]?.username ? 1 : 0;
+        const bp = this.state.profCache[b[0]]?.username ? 1 : 0;
+        if (ap !== bp) return bp - ap;
+        return b[1] - a[1];
+      });
+    if (!ranked.length) ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+    ranked = ranked.slice(0, 15);
+    if (!ranked.length) {
+      return `<div class="explore-empty">No active posters yet — load the feed first.</div>`;
+    }
+    this._exploreResolveProfiles(ranked.map(([a]) => a), 'people');
+    return ranked.map(([addr, count]) => {
+      const c = this.state.profCache[addr];
+      const name = c?.username ? utils.safe(c.username) : this.trunc(addr);
+      const pic  = utils.safe(utils.safeUrl(c?.picUrl) || 'image1.jpeg');
+      const meta = c?.bio ? utils.safe(c.bio.slice(0, 80)) : `${count} post${count > 1 ? 's' : ''} in feed`;
+      const isFollowing = this.state.following.has(addr);
+      const followBtn = (me && addr !== me)
+        ? `<button class="explore-follow-btn${isFollowing ? ' following' : ''}" data-explore-follow="${utils.safe(addr)}">${isFollowing ? 'Following' : 'Follow'}</button>`
+        : '';
+      return `<div class="explore-row explore-person" role="button" tabindex="0" data-explore-profile="${utils.safe(addr)}">
+        <img src="${pic}" class="explore-avatar" data-pop-addr="${utils.safe(addr)}" onerror="this.src='image1.jpeg'" alt="">
+        <div class="explore-content">
+          <div class="explore-name" data-pop-addr="${utils.safe(addr)}">${name}</div>
+          <div class="explore-meta">${meta}</div>
+        </div>
+        ${followBtn}
+      </div>`;
+    }).join('');
+  }
+
+  /* ── Channels: most-posted-to channels in the feed (excl. the main feed) +
+       recently visited channels ──────────────────────────────────────────── */
+  _exploreChannelsHTML() {
+    const main = MAIN_CHANNEL.toLowerCase();
+    const counts = new Map();
+    this.state.posts.forEach(p => {
+      const to = (p.to || p.channel)?.toLowerCase();
+      if (!to || to === main) return;
+      counts.set(to, (counts.get(to) || 0) + 1);
+    });
+    let ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12);
+    const seen = new Set(ranked.map(([a]) => a));
+    (this.state.channelHistory || []).forEach(ch => {
+      const a = ch.address?.toLowerCase();
+      if (a && a !== main && !seen.has(a)) { ranked.push([a, 0]); seen.add(a); }
+    });
+    if (!ranked.length) {
+      return `<div class="explore-empty">No channels in the feed yet. Open one from a token post or the Channels page.</div>`;
+    }
+    this._exploreResolveProfiles(ranked.map(([a]) => a), 'channels');
+    return ranked.map(([addr, count]) => {
+      const c = this.state.profCache[addr];
+      const hist = (this.state.channelHistory || []).find(h => h.address?.toLowerCase() === addr);
+      const name = c?.username ? utils.safe(c.username) : utils.safe(hist?.label || this.trunc(addr));
+      const pic  = utils.safe(utils.safeUrl(c?.picUrl || hist?.picUrl) || 'image1.jpeg');
+      const meta = count > 0 ? `${count} post${count > 1 ? 's' : ''} in feed` : utils.safe(this.trunc(addr));
+      return `<div class="explore-row" role="button" tabindex="0" data-explore-channel="${utils.safe(addr)}">
+        <img src="${pic}" class="explore-avatar" onerror="this.src='image1.jpeg'" alt="">
+        <div class="explore-content">
+          <div class="explore-name">${name}</div>
+          <div class="explore-meta">${meta}</div>
+        </div>
+        <div class="explore-arrow">→</div>
+      </div>`;
+    }).join('');
+  }
+
+  /* ── Latest: most recent posts, rendered as real post cards. They live
+       inside #feed, so the feed's delegated click handler gives them full
+       reply/like/thread interactivity for free. ─────────────────────────── */
+  _exploreRenderLatest(host) {
+    const posts = this.state.posts
+      .filter(p => !p.postType || p.postType === 'post')
+      .slice()
+      .sort((a, b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()));
+    if (!posts.length) { host.innerHTML = `<div class="explore-empty">No posts loaded yet.</div>`; return; }
+    this._exploreRenderPaged(host, posts, null);
+  }
+
+  /* Wire the Explore search input — same behavior as the sidebar search:
+     typing routes to Home with the search term applied. */
+  /* Wire the Explore search input. Results render inline on the Explore page
+     (via _exploreApplySearch) — this no longer navigates to Home or writes to
+     the sidebar search box. */
+  _wireExploreSearch() {
+    const inp = this.g('explore-search-input');
+    const clr = this.g('explore-search-clear');
+    if (!inp) return;
+    if (clr) clr.classList.toggle('hidden', !inp.value.trim());
+    inp.oninput = utils.debounce(() => this._exploreApplySearch(inp.value.trim()), 250);
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && inp.value) {
+        e.preventDefault();
+        inp.value = '';
+        this._exploreApplySearch('');
+        inp.blur();
+      }
+    });
+    if (clr) {
+      clr.onclick = () => {
+        inp.value = '';
+        this._exploreApplySearch('');
+        inp.focus();
+      };
+    }
+  }
+
+  goBookmarks() {
+    if (!this.signer) { utils.toast('Connect wallet to view Bookmarks'); return; }
+    /* Reset the per-session "tried and failed" set on each open so a transient
+       network blip doesn't permanently mark a bookmark as unloadable. */
+    this._bkFetchAttempted = new Set();
+    this._updateTitle('Bookmarks');
+    this._setRoute('/bookmarks');
+    this.setNav('nav-bookmarks', null);
+    this.state.mode = 'bookmarks';
+    this.g('feed-tabs').classList.remove('tabs-sticky');
+    const bkUser = this.state.profile.username
+      ? '@' + utils.safe(this.state.profile.username)
+      : (this.state.signerAddr ? '@' + this.trunc(this.state.signerAddr) : '');
+    this._pendingPageHeader = this._makePageHeader({
+      title: 'Bookmarks', subtitle: bkUser, noBack: true });
+    this.g('compose-area').style.display = 'none';
+    this.g('channel-banner').style.display = 'none';
+    this.g('feed-tabs').style.display    = 'none';
+    this.g('loading-more').style.display = 'none';
+    const bkHeader = this._applyPageHeader();
+    if (this.state.bookmarks.size === 0) {
+      this.g('feed').innerHTML = bkHeader + `
+        <div class="placeholder-view">
+          <span class="ph-icon">🔖</span>
+          <h2>No bookmarks yet</h2>
+          <p>Save posts by clicking the bookmark icon.</p>
+        </div>`;
+      return;
+    }
+    /* Show a loading state immediately, then resolve bookmarks from
+       memory + IDB. Avoids the dead "Bookmarks loading…" state when the
+       posts aren't in current state.posts. The _bkLoadToken guards against
+       two rapid Bookmarks clicks racing to write feed.innerHTML. */
+    this.g('feed').innerHTML = bkHeader +
+      `<div class="placeholder-view"><div class="spinner" aria-hidden="true" style="margin:0 auto 14px"></div><h2>Loading bookmarks…</h2><p>Pulling from your local cache.</p></div>`;
+    this._bkLoadToken = (this._bkLoadToken || 0) + 1;
+    this._loadBookmarksFromCache(bkHeader, this._bkLoadToken);
+  }
+
+  /* Resolve every bookmark hash against state.posts first, then fall back
+     to IDB. Posts found only in IDB are added to _postMap so action menus
+     work normally. Bookmarks pointing to chain-only data (never cached)
+     are listed as a small placeholder at the end. */
+  async _loadBookmarksFromCache(bkHeader, myToken) {
+    const wantedHashes = [...this.state.bookmarks];
+    const inMemory = new Map();
+    this.state.posts.forEach(p => {
+      if (this.state.bookmarks.has(p.txHash)) inMemory.set(p.txHash, p);
+    });
+    /* Look up hashes not in memory from IDB */
+    const missing = wantedHashes.filter(h => !inMemory.has(h));
+    const fromIDB = new Map();
+    if (missing.length) {
+      try {
+        const cached = await this.cache.getPosts(p => this.state.bookmarks.has(p.txHash));
+        cached.forEach(p => { if (!inMemory.has(p.txHash)) fromIDB.set(p.txHash, p); });
+      } catch { /* IDB unavailable — skip */ }
+    }
+    /* Only proceed if (a) the user is still on Bookmarks AND (b) we haven't
+       been superseded by a later click. Either condition failing means our
+       writes would clobber a more recent state. */
+    if (this.state.mode !== 'bookmarks') return;
+    if (myToken !== this._bkLoadToken) return;
+    /* Combine, sort newest-first by timestamp */
+    const all = [...inMemory.values(), ...fromIDB.values()]
+      .sort((a, b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()));
+    const stillMissing = wantedHashes.filter(h => !inMemory.has(h) && !fromIDB.has(h));
+
+    if (!all.length && !stillMissing.length) {
+      this.g('feed').innerHTML = bkHeader + `
+        <div class="placeholder-view">
+          <span class="ph-icon">🔖</span>
+          <h2>Bookmarks not available</h2>
+          <p>The bookmarked posts aren't in your local cache. Visit the original channels to load them.</p>
+        </div>`;
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    all.forEach(post => {
+      this._postMap.set(post.txHash, post);
+      const el = document.createElement('div');
+      el.className = 'post-item';
+      el.dataset.txhash = post.txHash;
+      el.innerHTML = this.postHTML(post, false, null);
+      frag.appendChild(el);
+    });
+    this.g('feed').innerHTML = bkHeader;
+    this.g('feed').appendChild(frag);
+    /* Any bookmark not in local cache: fetch it directly by tx hash from
+       chain instead of the old "go visit the channel" dead end. Split into
+       not-yet-tried (fetch now) and already-tried-and-failed (genuine dead
+       ends) so a permanently-unreachable tx can't loop. */
+    if (stillMissing.length) {
+      this._bkFetchAttempted ??= new Set();
+      const toFetch     = stillMissing.filter(h => !this._bkFetchAttempted.has(h));
+      const unfetchable = stillMissing.filter(h =>  this._bkFetchAttempted.has(h));
+      if (unfetchable.length) {
+        const note = document.createElement('div');
+        note.className = 'placeholder-view';
+        note.style.cssText = 'padding:24px 16px';
+        note.innerHTML = `<p style="font-size:13px;color:var(--muted)">
+          ${unfetchable.length} bookmark${unfetchable.length > 1 ? 's' : ''} couldn't be loaded from chain (the transaction may no longer be retrievable).
+        </p>`;
+        this.g('feed').appendChild(note);
+      }
+      if (toFetch.length) {
+        const loading = document.createElement('div');
+        loading.className = 'placeholder-view';
+        loading.style.cssText = 'padding:24px 16px';
+        loading.innerHTML = `<p style="font-size:13px;color:var(--muted)">
+          <span class="spinner sp-sm" aria-hidden="true"></span>Loading ${toFetch.length} more bookmark${toFetch.length > 1 ? 's' : ''} from chain…
+        </p>`;
+        this.g('feed').appendChild(loading);
+        this._fetchMissingBookmarks(toFetch, bkHeader, myToken);
+      }
+    }
+  }
+
+  /* Fetch bookmarked posts that aren't cached locally directly by tx hash,
+     persist them to IDB (so they resolve instantly next time), then re-render
+     the Bookmarks list. Bounded concurrency keeps API load modest. Hashes are
+     marked attempted up front so a second pass won't re-fetch failures. */
+  async _fetchMissingBookmarks(hashes, bkHeader, myToken) {
+    this._bkFetchAttempted ??= new Set();
+    const queue   = [...hashes];
+    const fetched = [];
+    const worker  = async () => {
+      while (queue.length) {
+        const h = queue.shift();
+        this._bkFetchAttempted.add(h);
+        const post = await this._fetchTxByHash(h);
+        if (post && this.state.bookmarks.has(post.txHash)) fetched.push(post);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, hashes.length) }, worker));
+    /* Bail if the user navigated away or a newer Bookmarks load superseded us. */
+    if (this.state.mode !== 'bookmarks' || myToken !== this._bkLoadToken) return;
+    if (fetched.length) {
+      try { await this.cache.savePosts(fetched); } catch { /* IDB full/unavailable */ }
+    }
+    /* Re-resolve from memory + IDB: successes now come from cache; failures
+       are in _bkFetchAttempted so they render as dead ends without looping. */
+    this._loadBookmarksFromCache(bkHeader, myToken);
+  }
+
+  async goChannels() {
+    this._updateTitle('Channels');
+    this._setRoute('/channels');
+    this.setNav('nav-channels','channels');
+    this.g('feed-tabs').classList.remove('tabs-sticky');
+    this._pendingPageHeader = this._makePageHeader({ title: 'Channels', noBack: true });
+    this.g('compose-area').style.display = 'none';
+    this.g('channel-banner').style.display = 'none';
+    this.g('feed-tabs').style.display    = 'none';
+    this.g('loading-more').style.display = 'none';
+    this.state.mode = 'channels';
+
+    /* Load cached immediately */
+    const cached = await this.cache.getChannels();
+    this.state.channelHistory = cached;
+    const chHeader = this._applyPageHeader();
+    this.renderChannelHistory(chHeader);
+
+    /* If nothing cached, trigger a rescan from chain */
+    if (cached.length === 0 && this.state.signerAddr) {
+      this.rebuildChannelHistory();
+    }
+  }
+
+  /* The user-data localStorage keys that Export/Import round-trips (settings,
+     mutes, lists, communities). Caches (posts/IDB) and the wallet are excluded. */
+  get _exportableKeys() { return [SETTINGS_KEY, MUTE_KEY, LISTS_KEY, COMMUNITIES_KEY]; }
+
+  _exportData() {
+    const data = {};
+    this._exportableKeys.forEach(k => { const v = localStorage.getItem(k); if (v != null) data[k] = v; });
+    const payload = { app: 'SayIt', version: 1, exportedAt: new Date().toISOString(), data };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url  = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'sayit-backup.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    utils.toast('Backup downloaded ✓');
+  }
+
+  _importData(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(reader.result);
+        if (!parsed || parsed.app !== 'SayIt' || !parsed.data || typeof parsed.data !== 'object') {
+          throw new Error('not a SayIt backup');
+        }
+        let n = 0;
+        for (const [k, v] of Object.entries(parsed.data)) {
+          if (!this._exportableKeys.includes(k) || typeof v !== 'string') continue;
+          try { JSON.parse(v); } catch { continue; }   /* value must be valid JSON */
+          localStorage.setItem(k, v); n++;
+        }
+        if (!n) { utils.toast('Nothing to import from this file'); return; }
+        utils.toast(`Imported ${n} item${n !== 1 ? 's' : ''} — reloading…`);
+        setTimeout(() => location.reload(), 1200);
+      } catch { utils.toast('Invalid backup file'); }
+    };
+    reader.onerror = () => utils.toast('Could not read file');
+    reader.readAsText(file);
+  }
+
+  /* Apply the chosen theme by toggling data-theme on <html> (the [data-theme]
+     CSS-var overrides do the rest). Default 'dark' = no attribute. */
+  _applyTheme(theme) {
+    theme = theme || this._getSettings().theme || 'dark';
+    if (theme === 'dim' || theme === 'light') document.documentElement.setAttribute('data-theme', theme);
+    else document.documentElement.removeAttribute('data-theme');
+  }
+
+  /* ── Local-first deep sync ──────────────────────────────────────────
+     Opt-in archive of the main channel's full history into IndexedDB.
+     Pages oldest cursor → end at a polite rate while the user keeps
+     browsing; the cursor persists (localStorage) so it resumes across
+     sessions; pruneIfStale leaves archived posts alone. Search, threads,
+     and Analytics automatically benefit (they read the same cache). */
+  _deepSyncState() {
+    try { return JSON.parse(localStorage.getItem('sayitDeepSync') || 'null') || { lastPage: 0, saved: 0, done: false }; }
+    catch { return { lastPage: 0, saved: 0, done: false }; }
+  }
+  _setDeepSyncState(st) { try { localStorage.setItem('sayitDeepSync', JSON.stringify(st)); } catch { /* full */ } }
+
+  _deepSyncStatusText(st, active) {
+    if (st.done) return `✓ Complete — ${st.saved.toLocaleString()} posts archived`;
+    if (active) return `Syncing… page ${st.lastPage} · ${st.saved.toLocaleString()} posts so far`;
+    if (st.lastPage > 0) return `Paused at page ${st.lastPage} · ${st.saved.toLocaleString()} posts — resume any time`;
+    return '';
+  }
+
+  async toggleDeepSync() {
+    if (this._deepSyncing) { this._deepSyncing = false; return; } /* pause requested */
+    this._deepSyncing = true;
+    const btn = this.g('set-deep-sync');
+    const status = this.g('deep-sync-status');
+    if (btn) btn.textContent = 'Pause';
+    const st = this._deepSyncState();
+    if (st.done) { st.done = false; st.lastPage = 0; st.saved = 0; } /* re-sync from scratch */
+    try {
+      while (this._deepSyncing) {
+        const page = st.lastPage + 1;
+        let raw;
+        try { raw = await this.apiFetch(MAIN_CHANNEL, page); }
+        catch (err) {
+          if (status) status.textContent = 'Network hiccup — retrying in 5s…';
+          await this._scanDelay(5000);
+          continue;
+        }
+        const posts = [];
+        for (const tx of raw) {
+          const parsed = this._parsePostTx(tx, { mode: 'main' });
+          /* Archive view-scoped like the feed does, so loadCached sees them. */
+          if (parsed) posts.push({ ...parsed, channel: MAIN_CHANNEL, mode: 'main' });
+        }
+        if (posts.length) await this.cache.savePosts(posts);
+        st.lastPage = page;
+        st.saved += posts.length;
+        if (raw.length < 50) { st.done = true; this._deepSyncing = false; }
+        this._setDeepSyncState(st);
+        if (status) status.textContent = this._deepSyncStatusText(st, this._deepSyncing);
+        await this._scanDelay(300); /* polite to the explorer */
+      }
+    } finally {
+      this._deepSyncing = false;
+      const b2 = this.g('set-deep-sync');
+      if (b2) b2.textContent = this._deepSyncState().done ? 'Re-sync' : 'Resume';
+      const s2 = this.g('deep-sync-status');
+      if (s2) s2.textContent = this._deepSyncStatusText(this._deepSyncState(), false);
+    }
+  }
+
+  async _exportPostsSnapshot() {
+    let posts = [];
+    try { posts = await this.cache.getPosts(() => true); } catch { /* empty */ }
+    if (!posts.length) { utils.toast('No cached posts to export'); return; }
+    const payload = { app: 'SayIt', type: 'posts-snapshot', version: 1,
+                      exportedAt: new Date().toISOString(), count: posts.length, posts };
+    const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+    const url  = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `sayit-posts-${new Date().toISOString().slice(0,10)}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    utils.toast(`Exported ${posts.length.toLocaleString()} posts ✓`);
+  }
+
+  _importPostsSnapshot(file) {
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const d = JSON.parse(reader.result);
+        if (d?.app !== 'SayIt' || d?.type !== 'posts-snapshot' || !Array.isArray(d.posts)) {
+          utils.toast('Not a SayIt posts snapshot'); return;
+        }
+        /* Never trust a file: whitelist-rebuild every post and validate the
+           fields that reach render paths (same trust stance as the explorer
+           ingestion gate). */
+        const clean = [];
+        for (const p of d.posts) {
+          if (!p || typeof p !== 'object') continue;
+          if (!/^0x[0-9a-f]{64}$/i.test(p.txHash || '')) continue;
+          if (!/^0x[0-9a-f]{40}$/i.test(p.reporter || '')) continue;
+          if (p.to != null && p.to !== '' && !/^0x[0-9a-f]{40}$/i.test(p.to)) continue;
+          if (p.parentTx != null && !/^0x[0-9a-f]{64}$/i.test(p.parentTx)) continue;
+          if (p.repostOf != null && !/^0x[0-9a-f]{64}$/i.test(p.repostOf)) continue;
+          const ts = new Date(p.timestamp || 0);
+          if (isNaN(ts.getTime())) continue;
+          clean.push({
+            content: String(p.content ?? ''), display: String(p.display ?? ''),
+            parentTx: p.parentTx ? p.parentTx.toLowerCase() : null,
+            repostOf: p.repostOf ? p.repostOf.toLowerCase() : null,
+            direction: null, poll: p.poll && typeof p.poll === 'object' ? {
+              question: String(p.poll.question ?? ''),
+              options: Array.isArray(p.poll.options) ? p.poll.options.slice(0, 4).map(o => String(o).slice(0, 60)) : [],
+              endMs: Number(p.poll.endMs) || 0,
+            } : null,
+            postType: ['post','reply','repost','poll'].includes(p.postType) ? p.postType : 'post',
+            reactionTarget: null,
+            reporter: p.reporter.toLowerCase(), to: p.to ? p.to.toLowerCase() : null,
+            timestamp: ts.toISOString(),
+            txHash: p.txHash.toLowerCase(),
+            channel: /^0x[0-9a-f]{40}$/i.test(p.channel || '') ? p.channel.toLowerCase() : MAIN_CHANNEL,
+            mode: 'main',
+            blockNumber: Number.isFinite(Number(p.blockNumber)) ? Number(p.blockNumber) : null,
+          });
+        }
+        if (!clean.length) { utils.toast('Snapshot contained no valid posts'); return; }
+        /* Batch to keep transactions reasonable. */
+        for (let i = 0; i < clean.length; i += 500) {
+          await this.cache.savePosts(clean.slice(i, i + 500));
+        }
+        utils.toast(`Imported ${clean.length.toLocaleString()} posts ✓`);
+      } catch { utils.toast('Invalid snapshot file'); }
+    };
+    reader.onerror = () => utils.toast('Could not read file');
+    reader.readAsText(file);
+  }
+
+  /* ── Analytics: client-side network stats computed from the local post
+     cache + in-memory engagement maps. No server — the same data any
+     client can derive from the chain. ── */
+  async goAnalytics() {
+    this._updateTitle('Analytics');
+    this._setRoute('/analytics');
+    this.setNav(null, null);
+    this.state.mode = 'analytics';
+    this.g('compose-area').style.display   = 'none';
+    this.g('channel-banner').style.display = 'none';
+    this.g('feed-tabs').style.display      = 'none';
+    this.g('loading-more').style.display   = 'none';
+    this._pendingPageHeader = this._makePageHeader({ title: 'Analytics', noBack: true });
+    const headerHTML = this._applyPageHeader();
+    const feed = this.g('feed');
+    feed.innerHTML = headerHTML + `<div class="prof-empty"><div class="spinner" aria-hidden="true"></div><h3>Crunching the chain…</h3></div>`;
+
+    let posts = [];
+    try { posts = await this.cache.getPosts(() => true); } catch { /* cache empty */ }
+    if (this.state.mode !== 'analytics') return; /* navigated away mid-load */
+    /* Union with the in-memory feed so a fresh session still has data. */
+    const seen = new Set(posts.map(p => p.txHash));
+    this.state.posts.forEach(p => { if (!seen.has(p.txHash)) { posts.push(p); seen.add(p.txHash); } });
+
+    const feedPosts = posts.filter(p => ['post','repost','poll'].includes(p.postType) || p.parentTx);
+    const authors = new Map();
+    const types = { post: 0, reply: 0, repost: 0, poll: 0 };
+    const byDay = new Map();
+    const DAY = 86400000;
+    const today = new Date(); today.setHours(0,0,0,0);
+    for (let i = 13; i >= 0; i--) byDay.set(today.getTime() - i * DAY, 0);
+    feedPosts.forEach(p => {
+      authors.set(p.reporter, (authors.get(p.reporter) || 0) + 1);
+      const t = p.parentTx ? 'reply' : (p.postType in types ? p.postType : 'post');
+      types[t]++;
+      const d = new Date(p.timestamp); d.setHours(0,0,0,0);
+      if (byDay.has(d.getTime())) byDay.set(d.getTime(), byDay.get(d.getTime()) + 1);
+    });
+    const topAuthors = [...authors.entries()].sort((a,b) => b[1]-a[1]).slice(0, 5);
+    const trends = this._computeTrends(5, 500);
+    const maxDay = Math.max(1, ...byDay.values());
+    const fmtDay = ts => new Date(ts).toLocaleDateString('en-US', { month:'short', day:'numeric' });
+
+    const stat = (label, value) => `
+      <div class="ana-stat"><div class="ana-num">${value}</div><div class="ana-label">${label}</div></div>`;
+    const bars = [...byDay.entries()].map(([ts, n]) => `
+      <div class="ana-bar-col" title="${fmtDay(ts)}: ${n} post${n === 1 ? '' : 's'}">
+        <div class="ana-bar" style="height:${Math.round((n / maxDay) * 100)}%"></div>
+        <div class="ana-bar-day">${fmtDay(ts).split(' ')[1]}</div>
+      </div>`).join('');
+    const authorRows = topAuthors.map(([addr, n]) => {
+      const prof = this.state.profCache[addr];
+      const name = prof?.username ? utils.safe(prof.username) : this.trunc(addr);
+      this.fetchOtherProfile(addr);
+      return `<div class="ana-row" role="button" tabindex="0" data-act="open-profile" data-act-arg="${utils.safe(addr)}">
+        <span class="ana-row-name">${name}</span><span class="ana-row-val">${n} posts</span></div>`;
+    }).join('') || '<div class="ana-empty">No author data yet</div>';
+    const tagRows = trends.map(([term, n]) =>
+      `<div class="ana-row" role="button" tabindex="0" data-act="search-trend" data-act-arg="${utils.safe(term)}">
+        <span class="ana-row-name">${utils.safe(term)}</span><span class="ana-row-val">${n}</span></div>`
+    ).join('') || '<div class="ana-empty">No trends yet</div>';
+
+    feed.innerHTML = headerHTML + `
+      <div class="ana-page">
+        <div class="ana-note">Computed locally from your cached slice of the chain — scan more history (scroll feeds, raise scan depth) for deeper numbers.</div>
+        <div class="ana-stats">
+          ${stat('Cached posts', feedPosts.length.toLocaleString())}
+          ${stat('Distinct authors', authors.size.toLocaleString())}
+          ${stat('Replies', types.reply.toLocaleString())}
+          ${stat('Reposts', types.repost.toLocaleString())}
+          ${stat('Polls', types.poll.toLocaleString())}
+        </div>
+        <div class="ana-section"><h3>Posts per day — last 14 days</h3>
+          <div class="ana-chart">${bars}</div></div>
+        <div class="ana-section"><h3>Most active authors</h3>${authorRows}</div>
+        <div class="ana-section"><h3>Trending terms</h3>${tagRows}</div>
+      </div>`;
+  }
+
+  goSettings() {
+    this._updateTitle('Settings');
+    this._setRoute('/settings');
+    this.setNav(null, null);
+    /* Hide the mobile compose FAB here — it has no purpose on Settings and
+       overlapped the API-settings action buttons on phones. */
+    document.body.classList.add('mode-settings');
+    this.state.mode = 'settings';
+    this.g('compose-area').style.display   = 'none';
+    this.g('channel-banner').style.display = 'none';
+    this.g('feed-tabs').style.display      = 'none';
+    this.g('feed-tabs').classList.remove('tabs-sticky');
+    this.g('loading-more').style.display   = 'none';
+    this._pendingPageHeader = this._makePageHeader({ title: 'Settings', noBack: true });
+    const headerHTML = this._applyPageHeader();
+    this.g('feed').innerHTML = headerHTML + this._settingsHTML();
+    this._wireSettingsListeners();
+  }
+
+  /* ── More menu ──────────────────────────────────────────────────────── */
+  toggleMoreMenu() {
+    const p = this.g('more-popup');
+    p.classList.toggle('open');
+  }
+  hideMoreMenu() {
+    this.g('more-popup')?.classList.remove('open');
+  }
+
+  /* ── Channel history ────────────────────────────────────────────────── */
+  async _touchChannelHistory(address) {
+    if (!address || address === MAIN_CHANNEL) return;
+    const existing = this.state.channelHistory.find(c => c.address === address) || {};
+    const prof = this.state.profCache[address];
+    const updated = {
+      address,
+      label:        prof?.username || existing.label || '',
+      picUrl:       prof?.picUrl   || existing.picUrl || 'image1.jpeg',
+      lastActivity: new Date().toISOString(),
+      preview:      existing.preview || '',
+      postCount:    (existing.postCount || 0) + 1,
+    };
+    await this.cache.saveChannel(updated);
+    /* update in-memory list */
+    const idx = this.state.channelHistory.findIndex(c => c.address === address);
+    if (idx >= 0) this.state.channelHistory[idx] = updated;
+    else this.state.channelHistory.unshift(updated);
+    /* Cap history at 50 entries to prevent unbounded IDB growth. Also
+       delete the popped (oldest) entry from IDB — otherwise the in-memory
+       cap is meaningless because getChannels() reloads everything next
+       session. */
+    if (this.state.channelHistory.length > 50) {
+      const popped = this.state.channelHistory.pop();
+      if (popped?.address) {
+        this.cache.deleteChannel(popped.address).catch(() => {});
+      }
+    }
+  }
+
+  async rebuildChannelHistory() {
+    if (!this.state.signerAddr) return;
+    utils.toast('Scanning chain for channel history…', 5000);
+    const seen = new Map(); /* address → {lastActivity, preview, postCount} */
+    try {
+      /* Respect user's scan-depth setting but cap at 20 pages (1000 txs) —
+         most users have far fewer than 20 active channels in their history. */
+      const chLimit = Math.min(this._getMaxScanPages(), 20);
+      for (let page = 1; page <= chLimit; page++) {
+        let raw;
+        try { raw = await this.apiFetch(this.state.signerAddr, page); }
+        catch { break; }
+        raw.forEach(tx => {
+          const from = tx.from?.toLowerCase();
+          const to   = tx.to?.toLowerCase();
+          if (!tx.input || tx.input === '0x') return;
+          /* Interactions: from=me → channel, or from=other → me */
+          const partner = (from === this.state.signerAddr) ? to : from;
+          if (!partner || partner === this.state.signerAddr || partner === MAIN_CHANNEL) return;
+          try {
+            const text = ethers.toUtf8String(tx.input).trim();
+            if (text.startsWith(PROFILE_PREFIX)) return;
+            if (text.startsWith(LIKE_PREFIX) || text.startsWith(UNLIKE_PREFIX)) return;
+            if (text.startsWith(BOOKMARK_PREFIX) || text.startsWith(UNBOOKMARK_PREFIX)) return;
+            if (text.startsWith(FOLLOW_PREFIX) || text.startsWith(UNFOLLOW_PREFIX)) return;
+            const ts = tx.timeStamp ? new Date(Number(tx.timeStamp) * 1000).toISOString() : '';
+            const prev = seen.get(partner);
+            if (!prev || ts > prev.lastActivity) {
+              seen.set(partner, {
+                lastActivity: ts,
+                preview: text.slice(0, 80),
+                postCount: (prev?.postCount || 0) + 1,
+              });
+            }
+          } catch { /* skip */ }
+        });
+        if (raw.length < 50) break;
+      }
+    } catch { /* silent */ }
+
+    /* Merge with existing cache */
+    for (const [address, data] of seen) {
+      const existing = this.state.channelHistory.find(c => c.address === address) || {};
+      const prof = this.state.profCache[address];
+      await this.cache.saveChannel({
+        address,
+        label:        prof?.username || existing.label || '',
+        picUrl:       prof?.picUrl   || existing.picUrl || 'image1.jpeg',
+        lastActivity: data.lastActivity,
+        preview:      data.preview,
+        postCount:    data.postCount,
+      });
+    }
+
+    /* Reload and re-render if still in channels view */
+    this.state.channelHistory = await this.cache.getChannels();
+    utils.safeLS.set(CHANNELS_KEY, Date.now().toString());
+    if (this.state.mode === 'channels') {
+      /* Refresh just the list body so the page header stays in place; if the
+         page body isn't mounted yet, do a full render with a header. */
+      if (this.g('ch-page')) this._renderChannelPage();
+      else this.renderChannelHistory(this._applyPageHeader());
+    }
+    utils.toast('Channel history updated ✓');
+  }
+
+  renderChannelHistory(headerHTML = '') {
+    /* Seed the "seen" baseline on first ever visit so the Unread tab starts
+       quiet (everything read as of now); new activity surfaces after that. */
+    if (utils.safeLS.get('sayitChannelSeen') === null) this._markAllChannelsSeen();
+    this.g('feed').innerHTML = headerHTML + `<div id="ch-page"></div>`;
+    this._renderChannelPage();
+  }
+
+  /* Render (and re-render on tab switch / mark-read) the Channels page body:
+     a new-channel input, the All/Unread/Following tab bar, pinned quick-access
+     rows (Main, your inbox, official), then the channel list for the tab. */
+  _renderChannelPage() {
+    const host = this.g('ch-page');
+    if (!host) return;
+    const tab     = this._channelTab || 'all';
+    const seen    = this._getChannelSeen();
+    const follow  = this.state.following;
+    const history = this.state.channelHistory || [];
+
+    /* Pinned quick-access destinations (not part of scanned history). */
+    const inboxUnread = this._unreadCount || 0;
+    const pinned = [{ special:'main', icon:'🏠', name:'Main Feed', sub:'The public timeline', unread:false }];
+    if (this.state.signerAddr) {
+      pinned.push({ special:'inbox', icon:'📥', name:'Your inbox/channel', sub:'Posts sent to you', unread: inboxUnread > 0, count: inboxUnread });
+    }
+    pinned.push({ special:'official', icon:'⚡', name:'Say It DeFi Channel', sub:'Official updates & tech', unread:false });
+
+    /* Visited/scanned channels, plus synthesized rows for follows not yet visited. */
+    const entries = history.map(ch => ({
+      addr: ch.address,
+      name: ch.label || this.trunc(ch.address),
+      pic:  ch.picUrl || 'image1.jpeg',
+      preview: ch.preview || '',
+      time: ch.lastActivity ? this.relTime(ch.lastActivity) : '',
+      unread: this._channelIsUnread(ch, seen),
+      following: follow.has((ch.address || '').toLowerCase()),
+    }));
+    const have = new Set(history.map(c => (c.address || '').toLowerCase()));
+    for (const addr of follow) {
+      if (have.has(addr)) continue;
+      const prof = this.state.profCache[addr];
+      entries.push({ addr, name: prof?.username || this.trunc(addr),
+        pic: prof?.picUrl || 'image1.jpeg', preview:'', time:'', unread:false, following:true });
+    }
+
+    /* Filter by active tab. */
+    let pins = pinned, list = entries;
+    if (tab === 'unread')        { pins = pinned.filter(p => p.unread); list = entries.filter(e => e.unread); }
+    else if (tab === 'following'){ pins = []; list = entries.filter(e => e.following); }
+
+    const TABS = { all:'All', unread:'Unread', following:'Following' };
+    const row = e => {
+      const left = e.special
+        ? `<div class="ch-pin-icon">${e.icon}</div>`
+        : `<img src="${utils.safe(e.pic)}" class="ch-hist-avatar" alt="" onerror="this.src='image1.jpeg'">`;
+      const right = e.unread
+        ? (e.count ? `<span class="ch-hist-count">${e.count > 99 ? '99+' : e.count}</span>` : `<span class="ch-unread-dot"></span>`)
+        : '';
+      const time = e.time ? `<span class="ch-hist-time">${utils.safe(e.time)}</span>` : '';
+      const open = e.special ? `data-ch-special="${e.special}"` : `data-ch-open="${utils.safe(e.addr)}"`;
+      return `<div class="ch-history-item${e.unread ? ' ch-item-unread' : ''}" role="button" tabindex="0" ${open}>
+        ${left}
+        <div class="ch-hist-body">
+          <div class="ch-hist-top"><span class="ch-hist-name">${utils.safe(e.name)}</span>${time}</div>
+          <div class="ch-hist-preview">${utils.safe(e.special ? e.sub : e.preview)}</div>
+        </div>
+        ${right}
+      </div>`;
+    };
+
+    let html = `
+      <div class="ch-new-row">
+        <input type="text" id="ch-new-input" placeholder="Enter 0x address to open a channel…">
+        <button class="go-btn" id="ch-new-go">Go</button>
+      </div>
+      <div class="ch-tabs">
+        ${Object.keys(TABS).map(t => `<button class="ch-tab${tab === t ? ' active' : ''}" data-ch-tab="${t}">${TABS[t]}</button>`).join('')}
+        <span class="ch-tab-spacer"></span>
+        <button class="ch-tab ch-tab-action" id="ch-mark-read" title="Mark all as read">✓ Read</button>
+        <button class="ch-tab ch-tab-action" id="ch-rescan" title="Rescan the chain for channels">↺</button>
+      </div>`;
+
+    if (!pins.length && !list.length) {
+      const msg = tab === 'unread'    ? 'Nothing unread 🎉'
+        : tab === 'following' ? (this.state.signerAddr ? "You're not following anyone yet" : 'Connect your wallet to see who you follow')
+        : 'No channels yet — post to any address and it shows up here.';
+      html += `<div class="ch-empty-tab">${msg}</div>`;
+    } else {
+      html += pins.map(row).join('') + list.map(row).join('');
+    }
+
+    host.innerHTML = html;
+
+    /* Wiring */
+    const inp = this.g('ch-new-input'), go = this.g('ch-new-go');
+    if (inp && go) {
+      go.onclick = () => this._openChannelFromInput();
+      inp.onkeydown = e => { if (e.key === 'Enter') this._openChannelFromInput(); };
+    }
+    host.querySelectorAll('[data-ch-tab]').forEach(el => {
+      el.onclick = () => { this._channelTab = el.dataset.chTab; this._renderChannelPage(); };
+    });
+    host.querySelectorAll('[data-ch-open]').forEach(el => {
+      el.onclick = () => this._openChannelFromHistory(el.dataset.chOpen);
+    });
+    host.querySelectorAll('[data-ch-special]').forEach(el => {
+      el.onclick = () => this._openChannelSpecial(el.dataset.chSpecial);
+    });
+    const mr = this.g('ch-mark-read'); if (mr) mr.onclick = () => { this._markAllChannelsSeen(); this._renderChannelPage(); };
+    const rs = this.g('ch-rescan');    if (rs) rs.onclick = () => this.rebuildChannelHistory();
+
+    /* Lazy-load missing profile pics/names for channel rows. */
+    history.forEach(ch => {
+      if (!ch.label || ch.picUrl === 'image1.jpeg') {
+        this.fetchOtherProfile(ch.address).then(() => {
+          const prof = this.state.profCache[ch.address];
+          if (prof?.username || prof?.picUrl !== 'image1.jpeg') {
+            this.cache.saveChannel({ ...ch, label: prof.username, picUrl: prof.picUrl });
+          }
+        });
+      }
+    });
+  }
+
+  _openChannelSpecial(kind) {
+    if (kind === 'main')          this.goHome();
+    else if (kind === 'inbox')    this.goSelf();
+    else if (kind === 'official') this.goOfficialChannel();
+  }
+
+  /* ── Per-channel "seen" tracking for the Unread tab ──────────────────────
+     A channel is unread when its recorded lastActivity is newer than the last
+     time we marked it seen. Approximate by design: lastActivity only advances
+     when you open the channel or run a rescan (there's no live backend). */
+  _getChannelSeen() {
+    try { return JSON.parse(utils.safeLS.get('sayitChannelSeen', '{}')) || {}; }
+    catch { return {}; }
+  }
+  _markChannelSeen(address) {
+    if (!address) return;
+    const m = this._getChannelSeen();
+    m[address.toLowerCase()] = new Date().toISOString();
+    utils.safeLS.set('sayitChannelSeen', JSON.stringify(m));
+  }
+  _markAllChannelsSeen() {
+    const m = this._getChannelSeen();
+    const now = new Date().toISOString();
+    (this.state.channelHistory || []).forEach(c => { if (c.address) m[c.address.toLowerCase()] = now; });
+    utils.safeLS.set('sayitChannelSeen', JSON.stringify(m));
+  }
+  _channelIsUnread(ch, seen) {
+    if (!ch || !ch.lastActivity) return false;
+    const s = (seen || this._getChannelSeen())[(ch.address || '').toLowerCase()];
+    return !s || ch.lastActivity > s;
+  }
+
+  async _openChannelFromHistory(address) {
+    this.g('custom-input').value = address;
+    await this.goCustom();
+  }
+
+  _openChannelFromInput() {
+    const val = this.g('ch-new-input')?.value.trim().toLowerCase();
+    if (!val) return;
+    if (!ethers.isAddress(val)) { utils.toast('Invalid address'); return; }
+    this.g('custom-input').value = val;
+    this.goCustom();
+  }
+
+  /* ── Settings page ──────────────────────────────────────────────────── */
+  _getSettings() {
+    try { return JSON.parse(utils.safeLS.get(SETTINGS_KEY, '{}')); }
+    catch { return {}; }
+  }
+  _getPostCap() {
+    const s = this._getSettings();
+    /* No cap by default — block gas limit caps individual post size, and
+       IndexedDB has plenty of room for any realistic feed. Users can set
+       a manual cap in Settings if they want to bound memory usage on
+       very long-lived sessions. */
+    if (s.postCap === 'unlimited' || s.postCap === '0' || s.postCap === 0) return Infinity;
+    return Number(s.postCap) || Infinity;
+  }
+  /* Max API pages for deep scans. 0 = Infinity (unlimited).
+     Default 100 pages = 5000 txs. */
+  _getMaxScanPages() {
+    const s = this._getSettings();
+    const v = Number(s.maxScanPages);
+    if (s.maxScanPages === 0 || s.maxScanPages === '0') return Infinity;
+    return v || 100;
+  }
+  /* Polite rate-limit pause between API pages */
+  _scanDelay(ms = 150) {
+    return new Promise(res => setTimeout(res, ms));
+  }
+  _saveSettings(s) {
+    utils.safeLS.set(SETTINGS_KEY, JSON.stringify(s));
+    this.state.settings = s;
+  }
+
+  _settingsHTML() {
+    const s = this._getSettings();
+    return `
+    <div class="settings-view">
+      <!-- Appearance -->
+      <div class="settings-section">
+        <div class="settings-section-title">Appearance</div>
+        <div class="settings-row">
+          <div class="settings-row-label"><strong>Theme</strong><span>Pure black (Dark) or a softer slate (Dim)</span></div>
+          <select class="settings-btn" id="set-theme" style="padding:9px 12px">
+            <option value="dark" ${(s.theme || 'dark') === 'dark' ? 'selected' : ''}>Dark</option>
+            <option value="dim"  ${s.theme === 'dim' ? 'selected' : ''}>Dim</option>
+            <option value="light" ${s.theme === 'light' ? 'selected' : ''}>Light</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label"><strong>Display size</strong><span>Scale the whole interface up or down</span></div>
+          <select class="settings-btn" id="set-zoom" style="padding:9px 12px">
+            ${[['0.9','Small'],['1','Default'],['1.1','Large'],['1.25','Larger']].map(([v,label]) =>
+              `<option value="${v}" ${String(s.displayZoom || '1') === v ? 'selected' : ''}>${label}</option>`).join('')}
+          </select>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label"><strong>Reduce motion</strong><span>Minimize animations &amp; transitions</span></div>
+          <label class="settings-switch">
+            <input type="checkbox" id="set-reduce-motion" ${s.reduceMotion ? 'checked' : ''}>
+            <span class="settings-switch-slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <!-- API -->
+      <div class="settings-section">
+        <div class="settings-section-title">API Configuration</div>
+        <div class="settings-row" style="flex-direction:column;align-items:flex-start">
+          <div class="settings-row-label">
+            <strong>Primary API URL</strong>
+            <span>PulseScan transaction API endpoint</span>
+          </div>
+          <input class="settings-input" id="set-api-primary"
+            value="${utils.safe(s.apiUrl || 'https://api.scan.pulsechain.com/api')}"
+            placeholder="https://api.scan.pulsechain.com/api">
+        </div>
+        <div class="settings-row" style="flex-direction:column;align-items:flex-start;margin-top:12px">
+          <div class="settings-row-label">
+            <strong>Backup API URL</strong>
+            <span>Fallback if primary fails (optional)</span>
+          </div>
+          <input class="settings-input" id="set-api-backup"
+            value="${utils.safe(s.backupApiUrl || '')}"
+            placeholder="https://…">
+        </div>
+        <div class="settings-row" style="margin-top:12px">
+          <button class="settings-btn primary" id="set-test-api">Test Connection</button>
+          <button class="settings-btn" id="set-save-api">Save API Settings</button>
+        </div>
+      </div>
+
+      <!-- Content & Feed filters -->
+      <div class="settings-section">
+        <div class="settings-section-title">Content &amp; Feed</div>
+        ${[
+          ['set-hide-reposts', 'hideReposts', 'Hide reposts', 'Hide reposts &amp; quotes from the timeline'],
+          ['set-hide-replies', 'hideReplies', 'Hide replies', 'Hide standalone replies from the feed'],
+          ['set-hide-polls',   'hidePolls',   'Hide polls',   'Hide poll posts'],
+          ['set-hide-binary',  'hideBinary',  'Hide non-text posts', 'Hide posts whose content is binary / undecodable'],
+        ].map(([id, key, title, desc]) => `
+          <div class="settings-row">
+            <div class="settings-row-label"><strong>${title}</strong><span>${desc}</span></div>
+            <label class="settings-switch">
+              <input type="checkbox" id="${id}" data-feed-filter ${s[key] ? 'checked' : ''}>
+              <span class="settings-switch-slider"></span>
+            </label>
+          </div>`).join('')}
+        <div class="settings-row">
+          <div class="settings-row-label"><strong>Autoplay videos</strong><span>Play videos automatically as they scroll into view</span></div>
+          <label class="settings-switch">
+            <input type="checkbox" id="set-autoplay" ${s.autoplayMedia === false ? '' : 'checked'}>
+            <span class="settings-switch-slider"></span>
+          </label>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label"><strong>Default tab on launch</strong><span>Where the app opens (when not following a shared link)</span></div>
+          <select class="settings-btn" id="set-default-view" style="padding:9px 12px">
+            ${[['home','Home'],['explore','Explore'],['bookmarks','Bookmarks']].map(([v,label]) =>
+              `<option value="${v}" ${(s.defaultView || 'home') === v ? 'selected' : ''}>${label}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+
+      <!-- Notifications -->
+      <div class="settings-section">
+        <div class="settings-section-title">Notifications</div>
+        ${[
+          ['set-notif-like',    'like',    'Likes',         'Someone likes your post'],
+          ['set-notif-reply',   'reply',   'Replies',       'Someone replies to you'],
+          ['set-notif-repost',  'repost',  'Reposts',       'Someone reposts your post'],
+          ['set-notif-follow',  'follow',  'Follows',       'Someone follows you'],
+          ['set-notif-message', 'message', 'Messages',      'Someone sends you a message'],
+          ['set-notif-poll',    'poll',    'Poll activity', 'Votes on your polls &amp; polls ending'],
+        ].map(([id, cat, title, desc]) => `
+          <div class="settings-row">
+            <div class="settings-row-label"><strong>${title}</strong><span>${desc}</span></div>
+            <label class="settings-switch">
+              <input type="checkbox" id="${id}" data-notif-mute="${cat}" ${!(s.notifMute||{})[cat] ? 'checked' : ''}>
+              <span class="settings-switch-slider"></span>
+            </label>
+          </div>`).join('')}
+      </div>
+
+      <!-- Cache -->
+      <div class="settings-section">
+        <div class="settings-section-title">Cache &amp; Storage</div>
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Post cache age</strong>
+            <span>Posts older than this are pruned daily</span>
+          </div>
+          <select class="settings-btn" id="set-prune-age" style="padding:9px 12px">
+            ${[3,7,14,30].map(d => `<option value="${d}" ${(s.pruneAgeDays||7)==d?'selected':''}>${d} days</option>`).join('')}
+          </select>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Feed post cap</strong>
+            <span>Max posts kept in memory per session. Higher = more history while scrolling, more RAM used.</span>
+          </div>
+          <select class="settings-btn" id="set-post-cap" style="padding:9px 12px">
+            <option value="unlimited" ${(!s.postCap || s.postCap==='unlimited' || s.postCap==='0')?'selected':''}>Unlimited (recommended)</option>
+            ${[500,1000,2000,5000,10000,50000].map(n =>
+              `<option value="${n}" ${s.postCap==n?'selected':''}>${n.toLocaleString()} posts</option>`
+            ).join('')}
+          </select>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Max scan depth</strong>
+            <span>API pages scanned per profile/follower lookup (50 txs per page). Higher finds more history but takes longer.</span>
+          </div>
+          <select class="settings-btn" id="set-max-scan" style="padding:9px 12px">
+            ${[30,100,300,0].map(n =>
+              `<option value="${n}" ${(s.maxScanPages ?? 100) == n ? 'selected' : ''}>${n === 0 ? 'Unlimited' : n + ' pages (' + (n*50).toLocaleString() + ' txs)'}</option>`
+            ).join('')}
+          </select>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Deep sync</strong>
+            <span>Archive the main feed's full history into this browser — search, analytics and threads work from your own complete local copy. Resumes where it left off; new posts still arrive live.</span>
+            <span id="deep-sync-status" style="display:block;margin-top:4px;color:var(--primary-lt)"></span>
+          </div>
+          <button class="settings-btn" id="set-deep-sync">Start</button>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Posts snapshot</strong>
+            <span>Export your synced posts as JSON to share or restore on another device; import merges a snapshot into the local cache.</span>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="settings-btn" id="set-export-posts">Export</button>
+            <button class="settings-btn" id="set-import-posts">Import</button>
+            <input type="file" id="set-import-posts-file" accept="application/json,.json" style="display:none">
+          </div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Clear post cache</strong>
+            <span>Removes all cached posts from IndexedDB (also resets deep-sync progress)</span>
+          </div>
+          <button class="settings-btn danger" id="set-clear-posts">Clear posts</button>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Clear channel history</strong>
+            <span>Removes saved channel list (rebuilt from chain on next visit)</span>
+          </div>
+          <button class="settings-btn danger" id="set-clear-channels">Clear channels</button>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Clear offline queue</strong>
+            <span>Removes posts saved while offline that failed to publish</span>
+          </div>
+          <button class="settings-btn danger" id="set-clear-pending">Clear pending</button>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Export data</strong>
+            <span>Download your settings, muted accounts, lists &amp; communities as a JSON backup. (Your wallet/seed remains your only identity backup.)</span>
+          </div>
+          <button class="settings-btn" id="set-export">Export</button>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Import data</strong>
+            <span>Restore settings/mutes/lists/communities from a previously exported file</span>
+          </div>
+          <button class="settings-btn" id="set-import">Import</button>
+          <input type="file" id="set-import-file" accept="application/json,.json" style="display:none">
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Reset settings</strong>
+            <span>Restore every setting to its default (API endpoints, appearance, filters, scan depth). Cached posts, mutes, lists &amp; communities are kept.</span>
+          </div>
+          <button class="settings-btn danger" id="set-reset-defaults">Reset to defaults</button>
+        </div>
+      </div>
+
+      <!-- About -->
+      <div class="settings-section">
+        <div class="settings-section-title">About</div>
+        <div class="settings-about-logo">
+          <img src="image1.jpeg" alt="Say It DeFi">
+          <div>
+            <strong>Say It DeFi</strong>
+            <span>Uncensorable on-chain social on PulseChain</span>
+          </div>
+        </div>
+        <div style="font-size:14px;color:var(--muted);line-height:1.8">
+          Chain ID: <strong style="color:var(--text)">369 (PulseChain)</strong><br>
+          Main channel: <code style="color:var(--primary-lt);font-size:12px">${MAIN_CHANNEL}</code><br>
+          Storage: IndexedDB + localStorage<br>
+          No server, no backend, no ads.
+        </div>
+        <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+          <a href="https://github.com/GitCoderAccount/SayIt" target="_blank" rel="noopener noreferrer"
+            class="settings-btn" style="text-decoration:none;display:inline-block">GitHub ↗</a>
+          <a href="https://pulsechain.com" target="_blank" rel="noopener noreferrer"
+            class="settings-btn" style="text-decoration:none;display:inline-block">PulseChain ↗</a>
+        </div>
+      </div>
+
+      <!-- Muted accounts -->
+      <div class="settings-section">
+        <div class="settings-section-title">Muted Accounts</div>
+        <div id="muted-list">${this._mutedListHTML()}</div>
+      </div>
+    </div>`;
+  }
+
+  /* Render the muted-accounts list for the Settings page. Each row shows
+     the address (and cached name if known) with an Unmute button. */
+  _mutedListHTML() {
+    const muted = [...this.state.muted];
+    if (muted.length === 0) {
+      return `<div style="padding:16px;color:var(--muted);font-size:14px;text-align:center">
+        No muted accounts. Mute someone from the ··· menu on their posts.</div>`;
+    }
+    return muted.map(addr => {
+      const prof = this.state.profCache[addr];
+      const name = prof?.username ? utils.safe(prof.username) : this.trunc(addr);
+      const pic  = utils.safe(utils.safeUrl(prof?.picUrl) || 'image1.jpeg');
+      return `
+        <div class="settings-row" style="align-items:center" data-muted-addr="${utils.safe(addr)}">
+          <div style="display:flex;align-items:center;gap:12px;flex:1;min-width:0">
+            <img src="${pic}" alt="" onerror="this.src='image1.jpeg'"
+              style="width:36px;height:36px;border-radius:50%;object-fit:cover;flex-shrink:0">
+            <div style="min-width:0">
+              <div style="font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${name}</div>
+              <div style="font-size:12px;color:var(--muted)">@${utils.safe(this.trunc(addr))}</div>
+            </div>
+          </div>
+          <button class="settings-btn" data-unmute="${utils.safe(addr)}"
+            style="flex-shrink:0">Unmute</button>
+        </div>`;
+    }).join('');
+  }
+
+  /* Re-render just the muted list in place (after an unmute). */
+  _refreshMutedList() {
+    const el = this.g('muted-list');
+    if (el) el.innerHTML = this._mutedListHTML();
+  }
+
+  _wireSettingsListeners() {
+    const g = id => document.getElementById(id);
+    /* Unmute buttons in the Muted Accounts section. Delegated so it works
+       after the list re-renders. */
+    const mutedListEl = g('muted-list');
+    if (mutedListEl) {
+      mutedListEl.addEventListener('click', e => {
+        const btn = e.target.closest('[data-unmute]');
+        if (!btn) return;
+        const addr = btn.dataset.unmute;
+        this.unmuteAddress(addr);
+        this._refreshMutedList();
+      });
+    }
+    /* Save API */
+    g('set-save-api')?.addEventListener('click', () => {
+      const s = this._getSettings();
+      const rawPrimary = g('set-api-primary').value.trim();
+      const rawBackup  = g('set-api-backup').value.trim();
+      /* Validate URLs before saving — a bad URL causes confusing fetch errors */
+      const isValidUrl = u => { try { return ['http:', 'https:'].includes(new URL(u).protocol); } catch { return false; } };
+      if (rawPrimary && !isValidUrl(rawPrimary)) {
+        utils.toast('Primary API URL is not a valid URL'); return;
+      }
+      if (rawBackup && !isValidUrl(rawBackup)) {
+        utils.toast('Backup API URL is not a valid URL'); return;
+      }
+      s.apiUrl       = rawPrimary || 'https://api.scan.pulsechain.com/api';
+      s.backupApiUrl = rawBackup;
+      this._saveSettings(s);
+      utils.toast('API settings saved ✓');
+    });
+    /* Export / Import data backup. */
+    g('set-export')?.addEventListener('click', () => this._exportData());
+    g('set-import')?.addEventListener('click', () => g('set-import-file')?.click());
+    g('set-import-file')?.addEventListener('change', e => {
+      const f = e.target.files?.[0];
+      if (f) this._importData(f);
+      e.target.value = '';
+    });
+    /* Reset every setting to defaults. Same reload pattern as import — a
+       clean boot re-applies appearance and re-reads defaults everywhere,
+       with no half-applied state. Only SETTINGS_KEY is touched: cached
+       posts, mutes, lists and communities are intentionally preserved. */
+    g('set-reset-defaults')?.addEventListener('click', () => {
+      if (!confirm('Reset all settings to their defaults? Cached posts, mutes, lists & communities are kept.')) return;
+      localStorage.removeItem(SETTINGS_KEY);
+      utils.toast('Settings reset — reloading…');
+      setTimeout(() => location.reload(), 1000);
+    });
+    /* Theme — apply immediately on change. */
+    g('set-theme')?.addEventListener('change', () => {
+      const s = this._getSettings();
+      s.theme = g('set-theme').value;
+      this._saveSettings(s);
+      this._applyTheme(s.theme);
+    });
+    /* Display size (zoom) — apply immediately. '1' clears the override. */
+    g('set-zoom')?.addEventListener('change', () => {
+      const s = this._getSettings();
+      s.displayZoom = g('set-zoom').value;
+      this._saveSettings(s);
+      document.documentElement.style.zoom = (String(s.displayZoom) !== '1') ? s.displayZoom : '';
+    });
+    /* Reduce motion — toggle the forced-motion class immediately. */
+    g('set-reduce-motion')?.addEventListener('change', () => {
+      const s = this._getSettings();
+      s.reduceMotion = g('set-reduce-motion').checked;
+      this._saveSettings(s);
+      document.documentElement.classList.toggle('force-reduce-motion', s.reduceMotion);
+    });
+    /* Content & Feed filter toggles — save on change; the feed picks them up
+       on the next renderFeed (when the user navigates back to it). */
+    const filterKeys = { 'set-hide-reposts': 'hideReposts', 'set-hide-replies': 'hideReplies',
+      'set-hide-polls': 'hidePolls', 'set-hide-binary': 'hideBinary' };
+    document.querySelectorAll('[data-feed-filter]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const s = this._getSettings();
+        s[filterKeys[cb.id]] = cb.checked;
+        this._saveSettings(s);
+      });
+    });
+    /* Autoplay videos — applies on the next render; re-wire the current feed
+       so the change takes effect immediately. */
+    g('set-autoplay')?.addEventListener('change', () => {
+      const s = this._getSettings();
+      s.autoplayMedia = g('set-autoplay').checked;
+      this._saveSettings(s);
+      const feed = this.g('feed');
+      if (feed) this._wireVideoObserver(feed, true); /* reset: setting changed */
+    });
+    /* Default tab on launch — applied at boot (see init bootstrap). */
+    g('set-default-view')?.addEventListener('change', () => {
+      const s = this._getSettings();
+      s.defaultView = g('set-default-view').value;
+      this._saveSettings(s);
+    });
+    /* Per-type notification opt-outs — checked = show. Re-filter the open
+       notifications view in place (cached, no rescan) and refresh the badge. */
+    document.querySelectorAll('[data-notif-mute]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const s = this._getSettings();
+        s.notifMute = s.notifMute || {};
+        s.notifMute[cb.dataset.notifMute] = !cb.checked;
+        this._saveSettings(s);
+        if (this.state.mode === 'notifications') this._renderNotifs();
+        this.checkNotifBadge();
+      });
+    });
+    /* Test API — mirrors runtime: tries primary, falls back to backup */
+    g('set-test-api')?.addEventListener('click', async () => {
+      const primary = g('set-api-primary').value.trim() || 'https://api.scan.pulsechain.com/api';
+      const backup  = g('set-api-backup').value.trim();
+      const qs = `?module=account&action=txlist&address=${MAIN_CHANNEL}&offset=1&page=1`;
+      utils.toast('Testing connection…', 4000);
+      const tryUrl = async url => {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 10000);
+        try {
+          const res = await fetch(url + qs, { signal: ctrl.signal });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const data = await res.json();
+          return data.status === '1' || Array.isArray(data.result);
+        } finally { clearTimeout(timer); }
+      };
+      try {
+        const ok = await tryUrl(primary);
+        utils.toast(ok ? '✓ Primary API works!' : '⚠ Primary responded but returned no data');
+      } catch (err) {
+        if (!backup) { utils.toast('✗ Primary failed: ' + err.message); return; }
+        utils.toast('Primary failed, trying backup…', 3000);
+        try {
+          const ok = await tryUrl(backup);
+          utils.toast(ok ? '✓ Backup API works (primary down)' : '⚠ Backup responded but returned no data');
+        } catch (err2) { utils.toast('✗ Both APIs failed: ' + err2.message); }
+      }
+    });
+    /* Prune age */
+    g('set-prune-age')?.addEventListener('change', () => {
+      const s = this._getSettings();
+      s.pruneAgeDays = parseInt(g('set-prune-age').value, 10);
+      this._saveSettings(s);
+      utils.toast('Prune age saved ✓');
+    });
+    g('set-post-cap')?.addEventListener('change', () => {
+      const s = this._getSettings();
+      const capVal = g('set-post-cap').value;
+      s.postCap = (capVal === 'unlimited') ? 'unlimited' : (Number(capVal) || 'unlimited');
+      this._saveSettings(s);
+      utils.toast('Feed cap saved ✓');
+    });
+    g('set-max-scan')?.addEventListener('change', () => {
+      const s = this._getSettings();
+      s.maxScanPages = Number(g('set-max-scan').value);
+      this._saveSettings(s);
+      /* Invalidate profile scan cache so next profile visit uses new depth */
+      this._profileScanCache = {};
+      const v = s.maxScanPages;
+      utils.toast('Scan depth: ' + (v === 0 ? 'Unlimited' : v + ' pages') + ' ✓');
+    });
+    /* Clear posts */
+    g('set-clear-posts')?.addEventListener('click', async () => {
+      this._deepSyncing = false;                  /* stop an active sync */
+      localStorage.removeItem('sayitDeepSync');   /* reset its cursor */
+      await this.cache.clearAllPosts();
+      utils.safeLS.remove(PRUNE_KEY);
+      utils.safeLS.remove('sayit_idx_v1'); /* allow search index rebuild */
+      this.state.posts = [];
+      this._postHashSet = new Set();
+      const dss = g('deep-sync-status'); if (dss) dss.textContent = '';
+      const dsb = g('set-deep-sync'); if (dsb) dsb.textContent = 'Start';
+      utils.toast('Post cache cleared ✓');
+    });
+    /* Deep sync + posts snapshot */
+    g('set-deep-sync')?.addEventListener('click', () => this.toggleDeepSync());
+    {
+      const st = this._deepSyncState();
+      const dsb = g('set-deep-sync');
+      if (dsb) dsb.textContent = this._deepSyncing ? 'Pause' : (st.done ? 'Re-sync' : (st.lastPage > 0 ? 'Resume' : 'Start'));
+      const dss = g('deep-sync-status');
+      if (dss) dss.textContent = this._deepSyncStatusText(st, this._deepSyncing);
+    }
+    g('set-export-posts')?.addEventListener('click', () => this._exportPostsSnapshot());
+    g('set-import-posts')?.addEventListener('click', () => g('set-import-posts-file')?.click());
+    g('set-import-posts-file')?.addEventListener('change', e => {
+      const f = e.target.files?.[0];
+      if (f) this._importPostsSnapshot(f);
+      e.target.value = '';
+    });
+    /* Clear channels */
+    g('set-clear-channels')?.addEventListener('click', async () => {
+      await this.cache.clearChannels();
+      this.state.channelHistory = [];
+      utils.safeLS.remove(CHANNELS_KEY);
+      utils.toast('Channel history cleared ✓');
+    });
+    g('set-clear-pending')?.addEventListener('click', async () => {
+      /* Remove all pending posts from IDB and any visual indicators */
+      try {
+        const pending = await this.cache.getPendingPosts();
+        await Promise.all(pending.map(q => this.cache.deletePendingPost(q.queueId)));
+        document.querySelectorAll('.pending-post').forEach(el => el.remove());
+        utils.toast(`Cleared ${pending.length} queued post${pending.length !== 1 ? 's' : ''} ✓`);
+      } catch { utils.toast('Could not clear queue'); }
+    });
+  }
+
+  setNav(desktopId, mobileKey) {
+    this._navToken++;   /* invalidate any in-flight view render */
+    this.hideProfilePopup?.();
+    this._threadBackOverride = false;
+    /* Per-view body marker — views that need view-scoped CSS (e.g. hiding
+       the compose FAB on Settings) re-add their class after calling setNav. */
+    document.body.classList.remove('mode-settings');
+    this._profileScanCache = {}; /* clear stale profile scan data on navigation */
+    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.mn-btn').forEach(b => b.classList.remove('active'));
+    if (desktopId) this.g(desktopId)?.classList.add('active');
+    if (mobileKey) document.querySelector(`[data-mn="${mobileKey}"]`)?.classList.add('active');
+  }
+
+  setChActive(id) {
+    document.querySelectorAll('.ch-btn').forEach(b => b.classList.remove('active'));
+    if (id) this.g(id)?.classList.add('active');
+  }
+
+  updateChLabel() {
+    const { mode, channel, signerAddr } = this.state;
+    const map = {
+      main:          `Main: ${this.trunc(MAIN_CHANNEL)}`,
+      notifications: `To: ${this.trunc(signerAddr || '')}`,
+      self:          `My channel: ${this.trunc(signerAddr || '')}`,
+      custom:        `Channel: ${this.trunc(channel)}`,
+      channels:      'Your channel history',
+      explore:       'Discover on PulseChain',
+      bookmarks:     'Saved posts',
+      settings:      'App configuration',
+      profile:       'Your on-chain profile',
+    };
+    const _chLabel = this.g('ch-label');
+    if (_chLabel) _chLabel.textContent = map[mode] || '';
+  }
+
+  showChannelBanner(address) {
+    const banner = this.g('channel-banner');
+    banner.style.display = 'block';
+    banner.className = '';
+    if (address === this.state.signerAddr) {
+      this.renderBanner(this.state.profile, address); return;
+    }
+    const cached = this.state.profCache[address];
+    if (cached) { this.renderBanner(cached, address); }
+    else {
+      this.renderBanner({ username:'', picUrl:'image1.jpeg', bio:'Loading profile…' }, address);
+      this.fetchOtherProfile(address).then(() => {
+        const loaded = this.state.profCache[address];
+        if (loaded && banner.style.display !== 'none') this.renderBanner(loaded, address);
+      });
+    }
+    /* Token channel: fetch DexScreener identity (Layer 1), the deployer/owner
+       editor set + any deployer/owner-signed profile (Layer 2), then re-render.
+       renderBanner reads these caches, so a profile re-render won't clobber
+       them and precedence is: human self-profile > verified > token > address. */
+    const reRender = () => {
+      if (this.state.channel === address && banner.style.display !== 'none') {
+        this.renderBanner(this.state.profCache[address] || {}, address);
+      }
+    };
+    /* Render each piece as soon as it lands so a slow scan never blocks the
+       rest: DexScreener identity (fast), the deployer/owner editor set (fast —
+       this is what reveals the "Set token profile" button), and finally any
+       existing deployer/owner-verified profile (slower — scans tx history). */
+    this._fetchTokenInfo(address).then(reRender);
+    this._fetchTokenAuth(address).then(reRender);
+    this._fetchVerifiedTokenProfile(address).then(reRender);
+  }
+
+  renderBanner(profile, address) {
+    /* Identity precedence: a human self-profile wins; else a deployer/owner-
+       VERIFIED token profile; else DexScreener token identity; else the raw
+       address. A token contract can't self-publish, so the human case never
+       collides with the token cases. */
+    const lc       = (address || '').toLowerCase();
+    const token    = this._tokenInfoCache?.[lc];
+    const verified = this._verifiedTokenCache?.[lc];
+    const auth     = this._tokenAuthCache?.[lc];
+    const hasHuman = !!(profile && profile.username);
+    const vPic     = verified && utils.safeUrl(verified.picUrl || '');
+    this.g('cb-avatar').src = hasHuman ? (profile.picUrl || 'image1.jpeg')
+      : (vPic || (token && token.logo) || profile?.picUrl || 'image1.jpeg');
+    this.g('cb-name').textContent = hasHuman ? profile.username
+      : (verified && verified.username) ? verified.username
+      : token ? (token.symbol ? `${token.name} (${token.symbol})` : token.name)
+      : this.trunc(address);
+    this.g('cb-bio').textContent = profile?.bio || (verified && verified.bio) || (token ? 'Token on PulseChain' : '');
+    this.g('cb-address').textContent = address || '';
+    /* Sticky page-style header — mirrors the profile: name as the title, and a
+       post-count subtitle (filled by _updateChannelSubtitle once the feed
+       loads), rather than a redundant "Channel" label. */
+    const _hdrTitle = this.g('cb-header-title');
+    if (_hdrTitle) _hdrTitle.textContent = this.g('cb-name').textContent || 'Channel';
+    this._updateChannelSubtitle();
+    const meta = this.g('cb-token-meta');
+    if (meta) meta.innerHTML = (verified || token) ? this._tokenMetaHTML(token, !!verified, verified) : '';
+    /* "Set token profile" — shown only when the connected wallet is the
+       token's deployer or current owner(). */
+    const editBtn = this.g('cb-token-edit-btn');
+    if (editBtn) {
+      const canEdit = !!(auth && this.state.signerAddr && auth.editors && auth.editors.has(this.state.signerAddr));
+      editBtn.style.display = canEdit ? '' : 'none';
+      if (canEdit) editBtn.onclick = e => { e.stopPropagation(); this._openTokenProfileEditor(address); };
+    }
+    /* Follow button for contract/token channel pages (hidden on your own). */
+    const followBtn = this.g('cb-follow-btn');
+    if (followBtn) {
+      const addr = address?.toLowerCase();
+      if (!addr || addr === this.state.signerAddr) {
+        followBtn.style.display = 'none';
+      } else {
+        followBtn.style.display = '';
+        const isF = this.state.following.has(addr);
+        followBtn.textContent = isF ? 'Following' : 'Follow';
+        followBtn.classList.toggle('following', isF);
+        followBtn.onclick = e => { e.stopPropagation(); this.toggleFollowAddr(addr, followBtn); };
+      }
+    }
+    /* "View profile" jumps to the full profile page for this channel's address.
+       (Channel = posts TO an address; profile = that address's identity + posts
+       BY them.) Shown for any address, including your own. */
+    const profileBtn = this.g('cb-profile-btn');
+    if (profileBtn) {
+      if (address) {
+        profileBtn.style.display = '';
+        profileBtn.onclick = e => {
+          e.stopPropagation();
+          this.goProfilePage(address, address.toLowerCase() === this.state.signerAddr);
+        };
+      } else {
+        profileBtn.style.display = 'none';
+      }
+    }
+    /* Show profile cover image in the banner if available. Use
+       utils.cssUrlValue to fully escape for CSS context AND validate
+       the scheme — chain data is attacker-controlled. */
+    const coverEl = document.querySelector('#channel-banner .cb-cover');
+    if (coverEl) {
+      /* Cover precedence: human cover > dev-verified cover > DexScreener banner. */
+      const coverSrc = (profile && profile.coverUrl) || (verified && verified.coverUrl) || (token && token.header) || '';
+      const safeCover = coverSrc ? utils.cssUrlValue(coverSrc) : '';
+      if (safeCover) {
+        coverEl.style.background = `url('${safeCover}') center/cover no-repeat`;
+      } else {
+        /* Reset to default gradient if no cover */
+        coverEl.style.background = '';
+      }
+    }
+  }
+
+  /* Look up token identity for a channel address via DexScreener (name,
+     symbol, logo, website, socials). Cached per address (null = not a
+     DEX-listed token). Best-effort: any failure resolves to null so the
+     banner just falls back to the plain address. */
+  async _fetchTokenInfo(address) {
+    const key = (address || '').toLowerCase();
+    if (!key) return null;
+    this._tokenInfoCache = this._tokenInfoCache || {};
+    if (key in this._tokenInfoCache) return this._tokenInfoCache[key];
+    let result = null;
+    try {
+      const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${key}`);
+      if (r.ok) {
+        const d = await r.json();
+        /* Only treat it as "this token" when it's the BASE token of a pair
+           (otherwise we'd mislabel e.g. DAI when it's just the quote side). */
+        const pair = (d.pairs || []).find(p => p.baseToken?.address?.toLowerCase() === key);
+        if (pair) {
+          const bt = pair.baseToken || {}, info = pair.info || {};
+          result = {
+            name:   bt.name || 'Token',
+            symbol: bt.symbol || '',
+            logo:   utils.safeUrl(info.imageUrl || '') || '',
+            header: utils.safeUrl(info.header || '') || '', /* DexScreener banner (600x200), if the token set one */
+            website:(info.websites || [])[0]?.url || '',
+            socials: Array.isArray(info.socials) ? info.socials : [],
+            dexUrl: pair.url || '',
+          };
+        }
+      }
+    } catch { /* offline or not a token — leave null */ }
+    this._tokenInfoCache[key] = result;
+    return result;
+  }
+
+  /* Badge + website/socials/DexScreener links for a token channel banner.
+     `token` (DexScreener) may be null when only a verified profile exists.
+     All URLs are scheme-validated + escaped (this data is third-party). */
+  _tokenMetaHTML(token, isVerified, verified) {
+    const link = (url, label) => {
+      const u = utils.safeUrl(url || '');
+      return u ? `<a href="${utils.safe(u)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${utils.safe(label)}</a>` : '';
+    };
+    const parts = [ isVerified
+      ? '<span class="cb-token-badge cb-verified-badge">✓ Verified</span>'
+      : '<span class="cb-token-badge">⬡ Token</span>' ];
+    const website = (verified && verified.website) || (token && token.website);
+    if (website) parts.push(link(website, '🌐 Website'));
+    if (token) (token.socials || []).forEach(s => parts.push(link(s.url, (s.type || 'link'))));
+    if (token && token.dexUrl) parts.push(link(token.dexUrl, 'DexScreener ↗'));
+    return parts.filter(Boolean).join('');
+  }
+
+  /* Read-only provider for view calls (owner()) without a connected wallet. */
+  _getReadProvider() {
+    if (!this._readProvider) {
+      const s = this._getSettings();
+      this._readProvider = new ethers.JsonRpcProvider(
+        s.rpcUrl || 'https://rpc.pulsechain.com', PULSE_CHAIN_ID);
+    }
+    return this._readProvider;
+  }
+
+  /* Resolve a token channel's authorized editors: the contract deployer
+     (Blockscout v2 `creator_address_hash`) plus the current `owner()` if the
+     contract is Ownable. Cached. { isContract, deployer, owner, editors:Set }. */
+  async _fetchTokenAuth(address) {
+    const key = (address || '').toLowerCase();
+    if (!key) return null;
+    this._tokenAuthCache = this._tokenAuthCache || {};
+    if (key in this._tokenAuthCache) return this._tokenAuthCache[key];
+    const auth = { isContract:false, deployer:null, owner:null, editors:new Set() };
+    try {
+      const s = this._getSettings();
+      const base = (s.apiUrl || 'https://api.scan.pulsechain.com/api').replace(/\/api\/?$/, '');
+      const r = await fetch(`${base}/api/v2/addresses/${key}`);
+      if (r.ok) {
+        const d = await r.json();
+        auth.isContract = !!d.is_contract;
+        const dep = (d.creator_address_hash || '').toLowerCase();
+        if (dep) { auth.deployer = dep; auth.editors.add(dep); }
+      }
+    } catch { /* not reachable — leave defaults */ }
+    if (auth.isContract) {
+      try {
+        const c = new ethers.Contract(key, ['function owner() view returns (address)'], this._getReadProvider());
+        const o = (await c.owner()).toLowerCase();
+        if (o && !/^0x0{40}$/.test(o)) { auth.owner = o; auth.editors.add(o); }
+      } catch { /* not Ownable / reverted — fine */ }
+    }
+    this._tokenAuthCache[key] = auth;
+    return auth;
+  }
+
+  /* Latest token profile (PROFILE_FOR:<token>) published by an authorized
+     editor (deployer/owner). The publish sends the tx TO the token, so it
+     lives in the token's channel; scan a few pages for it. Cached per token. */
+  async _fetchVerifiedTokenProfile(address) {
+    const key = (address || '').toLowerCase();
+    if (!key) return null;
+    this._verifiedTokenCache = this._verifiedTokenCache || {};
+    if (key in this._verifiedTokenCache) return this._verifiedTokenCache[key];
+    let result = null;
+    const auth = await this._fetchTokenAuth(key);
+    if (auth && auth.editors.size) {
+      /* Scan each editor's OWN tx history for the latest PROFILE_FOR:<token>
+         they published. Targeted + reliable: it's their own outgoing tx, so
+         it's near the top of their list — far better than scanning a hot
+         token's channel where it could be buried under thousands of txs. */
+      for (const editor of auth.editors) {
+        try {
+          for (let page = 1; page <= 3; page++) {
+            let raw;
+            try { raw = await this.apiFetch(editor, page); } catch { break; }
+            for (const tx of raw) {
+              if (tx.from?.toLowerCase() !== editor || !tx.input || tx.input === '0x') continue;
+              let text;
+              try { text = ethers.toUtf8String(tx.input).trim(); } catch { continue; }
+              if (!text.startsWith(TOKEN_PROFILE_PREFIX)) continue;
+              const m = text.match(/^PROFILE_FOR:(0x[a-f0-9]{40})\n\n([\s\S]+)$/i);
+              if (!m || m[1].toLowerCase() !== key) continue;
+              let json; try { json = JSON.parse(m[2]); } catch { continue; }
+              const ts = Number(tx.timeStamp) || 0;
+              if (!result || ts > result._ts) result = { ...json, _ts: ts, by: editor };
+            }
+            if (raw.length < 50) break;
+          }
+        } catch { /* ignore this editor */ }
+      }
+    }
+    this._verifiedTokenCache[key] = result;
+    return result;
+  }
+
+  /* Form for a token's deployer/owner to set its channel profile. */
+  _openTokenProfileEditor(address) {
+    if (!this.signer) { utils.toast('Connect wallet'); return; }
+    const lc = (address || '').toLowerCase();
+    const v  = this._verifiedTokenCache?.[lc] || {};
+    const t  = this._tokenInfoCache?.[lc] || {};
+    const val = s => utils.safe(s || '');
+    const body = `
+      <div class="tp-form">
+        <label class="tp-l">Name<input id="tp-name" class="tp-in" maxlength="60" value="${val(v.username || t.name)}"></label>
+        <label class="tp-l">Bio<textarea id="tp-bio" class="tp-in" rows="3" maxlength="300">${val(v.bio)}</textarea></label>
+        <label class="tp-l">Logo image URL<input id="tp-pic" class="tp-in" value="${val(v.picUrl || t.logo)}"></label>
+        <label class="tp-l">Banner image URL<input id="tp-cover" class="tp-in" value="${val(v.coverUrl || t.header)}"></label>
+        <label class="tp-l">Website<input id="tp-web" class="tp-in" value="${val(v.website)}"></label>
+        <div class="tp-note">Published on-chain from your wallet (the token's deployer/owner) — anyone can verify it. Gas only; no value sent.</div>
+        <button class="btn-pri" id="tp-save">Publish token profile</button>
+      </div>`;
+    this._showGenericModal('Set token profile', body);
+    const save = document.getElementById('tp-save');
+    if (save) save.onclick = () => {
+      const data = {
+        username: document.getElementById('tp-name').value.trim(),
+        bio:      document.getElementById('tp-bio').value.trim(),
+        picUrl:   document.getElementById('tp-pic').value.trim(),
+        coverUrl: document.getElementById('tp-cover').value.trim(),
+        website:  document.getElementById('tp-web').value.trim(),
+      };
+      this._closeGenericModal();
+      this._publishTokenProfile(lc, data);
+    };
+  }
+
+  /* Publish a PROFILE_FOR:<token> tx (to the token address). */
+  async _publishTokenProfile(address, data) {
+    if (!this.signer) { utils.toast('Connect wallet'); return; }
+    const token = (address || '').toLowerCase();
+    const body  = `${TOKEN_PROFILE_PREFIX}${token}\n\n${JSON.stringify(data)}`;
+    try {
+      const d   = ethers.hexlify(ethers.toUtf8Bytes(body));
+      const gas = await this._estimateGasSafe({ to: token, value: '0', data: d }, (d.length - 2) / 2);
+      const tx  = await this.signer.sendTransaction({ to: token, value: '0', data: d, gasLimit: gas });
+      utils.toast('Publishing token profile… confirming on-chain');
+      await tx.wait();
+      if (this._verifiedTokenCache) delete this._verifiedTokenCache[token];
+      await this._fetchVerifiedTokenProfile(token);
+      if (this.state.channel === token) this.renderBanner(this.state.profCache[token] || {}, token);
+      utils.toast('Token profile published ✓');
+    } catch (err) {
+      const msg = err.reason || err.message || 'Unknown error';
+      const rejected = err.code === 4001 || err.code === 'ACTION_REJECTED' || /user (denied|rejected)/i.test(msg);
+      utils.toast(rejected ? 'Cancelled' : 'Failed: ' + msg);
+    }
+  }
+
+  /* (poll notifs are included in the badge via _scanPollNotifications
+     called from checkNotifBadge below) */
+  async checkNotifBadge() {
+    if (!this.state.signerAddr) return;
+    const lastCheck = parseInt(utils.safeLS.get(LAST_CHECK_KEY, '0'), 10);
+    try {
+      const raw   = await this.apiFetch(this.state.signerAddr, 1);
+      /* Inbound txs sent TO me, newer than last check. In practice this is
+         follows (sent to the target) and direct messages — likes/replies/
+         reposts are addressed to the channel, not me, so they're counted
+         separately below via the engagement accumulator. */
+      let count = raw.filter(tx => {
+        if (tx.to?.toLowerCase()   !== this.state.signerAddr) return false;
+        if (tx.from?.toLowerCase() === this.state.signerAddr) return false;
+        if (!tx.input || tx.input === '0x') return false;
+        if (Number(tx.timeStamp) * 1000 <= lastCheck) return false;
+        try {
+          const text = ethers.toUtf8String(tx.input).trim();
+          if (text.startsWith(PROFILE_PREFIX)) return false;
+          if (text.startsWith(BOOKMARK_PREFIX)) return false;
+          if (text.startsWith(UNBOOKMARK_PREFIX)) return false;
+          if (text.startsWith(UNLIKE_PREFIX)) return false;
+          if (text.startsWith(UNFOLLOW_PREFIX)) return false;
+          if (!text.length) return false;
+          /* Inbound txs are follows (sent to the target) or messages; honor the
+             per-type opt-outs so a muted category doesn't inflate the badge. */
+          return this._notifEnabled(text.startsWith(FOLLOW_PREFIX) ? 'follow' : 'message');
+        } catch { return false; }
+      }).length;
+      /* Likes/replies/reposts on my posts (gathered from feed scans). Disjoint
+         from the inbound set above (those are channel txs), so no double-count. */
+      try {
+        const eng = await this._engagementNotifs();
+        count += eng.filter(e => new Date(e.timestamp).getTime() > lastCheck && this._notifEnabled(e.type)).length;
+      } catch { /* engagement is best-effort */ }
+      this.setNotifBadge(count);
+    } catch { /* silent */ }
+  }
+
+  setNotifBadge(n) {
+    const b  = this.g('notif-badge');
+    const mb = this.g('mn-dot');
+    if (n > 0) {
+      b.textContent = n > 99 ? '99+' : String(n);
+      b.classList.add('on'); mb?.classList.add('on');
+    } else {
+      b.classList.remove('on'); mb?.classList.remove('on');
+    }
+    /* Mirror the count into the tab title (N) prefix and favicon dot so
+       the user sees pending notifications even when the tab is in the
+       background. */
+    this._unreadCount = n;
+    this._updateTitle();   /* recompose with current suffix + new count */
+    this._updateFavicon();
+  }
+  clearNotifBadge() { this.setNotifBadge(0); }
+
+  _registerWalletListeners() {
+    if (this._walletReg) return;
+    this._walletReg = true;
+    const eth = this._getEthereum();
+    if (!eth || typeof eth.on !== 'function') return;
+    eth.on('accountsChanged', accounts => {
+      if (accounts.length === 0) { this.disconnect(); return; }
+      /* Ignore the accountsChanged that fires during our own connect(). */
+      if (this._connecting) return;
+      if (accounts[0].toLowerCase() !== this.state.signerAddr) {
+        utils.toast('Account changed — reconnecting…');
+        this.disconnect();
+        setTimeout(() => this.connect(), 500);
+      }
+    });
+    eth.on('chainChanged', chainId => {
+      /* Ignore switches WE triggered (connect / _ensurePulseChain). Reacting to
+         our own switch — plus hard-disconnecting on any non-369 chain — is what
+         made the wallet connect then disconnect repeatedly on mobile. */
+      if (this._switchingChain) return;
+      const onPulse = parseInt(chainId, 16) === PULSE_CHAIN_ID;
+      this._wrongChain = !onPulse;
+      this._reflectChainState();
+      if (onPulse) {
+        /* Back on PulseChain — refresh the signer on a provider that sees it.
+           (v6: getSigner is async; this handler is sync, so chain the promise.) */
+        new ethers.BrowserProvider(eth).getSigner()
+          .then(s => { this.signer = s; })
+          .catch(() => {});
+      } else {
+        /* Don't disconnect — keep the session. Posting is guarded by
+           _ensureOnPulseForTx, which offers to switch back on demand. */
+        utils.toast('Wrong network — switch to PulseChain to post');
+      }
+    });
+  }
+
+  /* Safely get the current ethereum provider. Some browser extensions
+     (evmAsk, Brave Wallet) conflict with MetaMask by trying to redefine
+     window.ethereum after it's already been set as non-configurable.
+     We cache a reference at first access and use that throughout. */
+  _getEthereum() {
+    if (!this._cachedEthereum) {
+      try { this._cachedEthereum = window.ethereum; }
+      catch { this._cachedEthereum = null; }
+    }
+    return this._cachedEthereum;
+  }
+
+  async tryAutoReconnect() {
+    const eth = this._getEthereum();
+    if (!eth) return;
+    try {
+      const prov = new ethers.BrowserProvider(eth);
+      const accs = await prov.listAccounts();
+      if (accs.length && utils.safeLS.get('sayitConnected') === '1') {
+        /* Don't auto-reconnect on the wrong network. connect() switches the
+           wallet to PulseChain and verifies it, but auto-reconnect runs
+           silently at load and must not assume the wallet is still on 369.
+           The chainChanged handler only fires on a CHANGE, so a wallet left on
+           (say) Ethereum mainnet emits no event — reconnecting here would
+           leave an active signer on the wrong chain, and the next post/like
+           would fire a tx there (wasted gas; never appears in-app). Stay
+           disconnected; the user can click Connect, which runs the switch. */
+        /* v6: chainId is a bigint — compare as Number. */
+        if (Number((await prov.getNetwork()).chainId) !== PULSE_CHAIN_ID) return;
+        this.signer = await prov.getSigner();
+        this.state.signerAddr = (await this.signer.getAddress()).toLowerCase();
+        this._registerWalletListeners();
+        await this.afterConnect();
+      }
+    } catch (err) { console.warn('Auto-reconnect failed', err); }
+  }
+
+  async toggleWallet() { this.signer ? this.disconnect() : await this.connect(); }
+
+  /* Show the connected user's avatar on the mobile Profile nav button so the
+     connected identity is visible in the bottom nav (the sidebar account pill
+     is hidden on mobile). Reverts to the person icon on disconnect. */
+  _updateMobileProfileAvatar() {
+    const btn = document.querySelector('#mobile-nav [data-mn="profile"] .mn-icon');
+    if (!btn) return;
+    if (this.signer && this.state.signerAddr) {
+      const pic = this.state.profile?.picUrl || 'image1.jpeg';
+      btn.innerHTML = `<img src="${utils.safe(pic)}" alt="" class="mn-avatar" onerror="this.src='image1.jpeg'">`;
+    } else {
+      btn.innerHTML = `<svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 11c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zm0-6C9.239 5 7 7.239 7 10s2.239 5 5 5 5-2.239 5-5-2.239-5-5-5zM5.651 19h12.698c-.337-1.8-1.023-2.891-1.929-3.4-1.285-.736-3.574-1.1-4.42-1.1-.845 0-3.135.364-4.42 1.1-.906.509-1.592 1.6-1.929 3.4z"/></svg>`;
+    }
+  }
+
+  /* Read the wallet's current chain id via a live eth_chainId call. We avoid
+     ethers' Web3Provider.getNetwork() here because it caches the network and
+     reads stale right after a switch (a big source of the mobile flakiness). */
+  async _readChainId(eth) {
+    try { return parseInt(await eth.request({ method: 'eth_chainId' }), 16); }
+    catch { return null; }
+  }
+
+  /* Poll eth_chainId until the wallet reports PulseChain — switches are async
+     on mobile and can take a moment. Returns the last value read (~2s max). */
+  async _readChainWithRetry(eth, tries = 8) {
+    let id = null;
+    for (let i = 0; i < tries; i++) {
+      id = await this._readChainId(eth);
+      if (id === PULSE_CHAIN_ID) return id;
+      await new Promise(r => setTimeout(r, 250));
+    }
+    return id;
+  }
+
+  /* Make sure the wallet is on PulseChain before sending a transaction. Mobile
+     wallets often sit on Ethereum; a tx there wastes gas and never shows up
+     here. Tries to switch and refreshes the signer; returns false (with a
+     toast) if it can't, so the caller aborts the send. */
+  async _ensureOnPulseForTx() {
+    const eth = this._getEthereum();
+    if (!eth) return true;
+    let chainId = await this._readChainId(eth);
+    if (chainId === PULSE_CHAIN_ID) return true;
+    utils.toast('Switching to PulseChain…');
+    try { await this._ensurePulseChain(eth); } catch { /* handled below */ }
+    chainId = await this._readChainWithRetry(eth);
+    if (chainId === PULSE_CHAIN_ID) {
+      this.signer = await new ethers.BrowserProvider(eth).getSigner();
+      this._wrongChain = false;
+      this._reflectChainState();
+      return true;
+    }
+    utils.toast('Please switch your wallet to PulseChain (chain 369), then try again.');
+    return false;
+  }
+
+  /* Show/hide the persistent wrong-network bar (only while connected). */
+  _reflectChainState() {
+    document.getElementById('wrong-chain-bar')?.classList.toggle('on', !!this._wrongChain && !!this.signer);
+  }
+  /* "Switch" button on the wrong-network bar. */
+  async _switchToPulse() {
+    await this._ensureOnPulseForTx();
+    this._reflectChainState();
+  }
+
+  /* Switch the wallet to PulseChain. If the chain isn't known to the wallet
+     (EIP-1193 error 4902), add it first with the canonical RPC params, then
+     the wallet switches to it automatically. _switchingChain guards the
+     chainChanged listener so OUR switches don't trigger its handler. */
+  async _ensurePulseChain(eth) {
+    this._switchingChain = true;
+    try {
+      try {
+        await eth.request({ method:'wallet_switchEthereumChain', params:[{ chainId:'0x171' }] });
+      } catch (err) {
+        const code = err?.code ?? err?.data?.originalError?.code;
+        if (code === 4902 || /unrecognized chain|add this network|wallet_addEthereumChain/i.test(err?.message || '')) {
+          await eth.request({
+            method:'wallet_addEthereumChain',
+            params:[{
+              chainId:'0x171',
+              chainName:'PulseChain',
+              nativeCurrency:{ name:'Pulse', symbol:'PLS', decimals:18 },
+              rpcUrls:['https://rpc.pulsechain.com'],
+              blockExplorerUrls:['https://scan.pulsechain.com'],
+            }],
+          });
+          /* Adding a chain usually switches to it; make the switch explicit. */
+          try { await eth.request({ method:'wallet_switchEthereumChain', params:[{ chainId:'0x171' }] }); }
+          catch {}
+        } else {
+          throw err;
+        }
+      }
+    } finally {
+      /* Keep the guard up briefly — the chainChanged event can arrive a moment
+         after the request resolves; we don't want it treated as external. */
+      setTimeout(() => { this._switchingChain = false; }, 1500);
+    }
+  }
+
+  async connect() {
+    const eth = this._getEthereum();
+    if (!eth) {
+      /* No injected provider. On mobile this almost always means the user is
+         in a normal browser (Safari/Chrome) rather than a wallet's built-in
+         dApp browser, where there's nothing to connect to. */
+      const isMobile = window.innerWidth <= 768 ||
+        /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+      utils.toast(isMobile
+        ? 'No wallet found. Open this site inside your wallet app\'s browser (e.g. Rabby, MetaMask) to connect.'
+        : 'No wallet detected. Install a PulseChain-compatible wallet extension to connect.');
+      return;
+    }
+    this._connecting = true;
+    try {
+      const prov = new ethers.BrowserProvider(eth);
+      /* Request accounts FIRST. Mobile wallets (MetaMask/Rabby) often won't
+         honor a network switch until the dApp is actually connected, and doing
+         it first avoids the switch-then-connect ordering that made mobile
+         flaky. */
+      await prov.send('eth_requestAccounts', []);
+      /* Ensure PulseChain, reading the live chain id (not ethers' cached
+         network) and polling until the async switch lands. */
+      let chainId = await this._readChainId(eth);
+      if (chainId !== PULSE_CHAIN_ID) {
+        await this._ensurePulseChain(eth);
+        chainId = await this._readChainWithRetry(eth);
+        if (chainId !== PULSE_CHAIN_ID) {
+          utils.toast('Couldn\'t switch to PulseChain. In your wallet, switch to PulseChain (chain 369), then tap Connect again.');
+          return;
+        }
+      }
+      /* Fresh provider so the signer/network reflect the (just-switched) chain. */
+      const liveProv = new ethers.BrowserProvider(eth);
+      this.signer = await liveProv.getSigner();
+      this.state.signerAddr = (await this.signer.getAddress()).toLowerCase();
+      this._wrongChain = false;
+      this._reflectChainState();
+      utils.safeLS.set('sayitConnected', '1');
+      this._registerWalletListeners();
+      await this.afterConnect();
+      utils.toast('Wallet connected ✓');
+    } catch (err) {
+      const msg = err.message || String(err);
+      /* User rejected the MetaMask popup. EIP-1193 code 4001 or
+         'ACTION_REJECTED' / common message patterns. Show a friendly
+         toast instead of dumping the raw error text. */
+      const isRejection = err.code === 4001 ||
+        err.code === 'ACTION_REJECTED' ||
+        /user (denied|rejected)/i.test(msg) ||
+        /rejected (the )?(transaction|request)/i.test(msg);
+      if (isRejection) {
+        utils.toast('Connection cancelled');
+        return;
+      }
+      /* Extension conflict errors look like "Cannot redefine property" —
+         they come from third-party extensions, not from our code. */
+      if (msg.includes('redefine') || msg.includes('defineProperty')) {
+        utils.toast('Wallet extension conflict detected. Try disabling other wallet extensions and reload.');
+      } else {
+        utils.toast('Connect failed: ' + msg);
+      }
+    } finally {
+      this._connecting = false;
+    }
+  }
+
+  async afterConnect() {
+    const addr = this.state.signerAddr;
+    document.body.classList.add('wallet-connected');
+    this.g('account-pill').style.display = 'flex';
+    this._updateMobileProfileAvatar();
+    this.g('connect-btn').style.display  = 'none';
+    this.g('ap-addr').textContent        = this.trunc(addr);
+    this.g('ch-self').style.display      = 'block';
+    this.g('nav-mychannel').style.display = '';
+    this._syncNavLinks();
+    const mnMy = document.getElementById('mn-mychannel');
+    if (mnMy) mnMy.style.display = '';
+    /* Retry any posts that failed while offline */
+    setTimeout(() => this._retryPendingPosts(), 2000);
+    const cached = await this.cache.getProfile(addr);
+    if (cached) this.applyProfile(cached);
+    /* Load profile + reactions in parallel */
+    await Promise.all([
+      this.fetchMyProfile(),
+      this.fetchMyReactions(),
+    ]);
+    this.checkNotifBadge();
+    /* Background: rebuild channel history if not scanned recently */
+    const lastScan = parseInt(utils.safeLS.get(CHANNELS_KEY, '0'), 10);
+    if (Date.now() - lastScan > 86_400_000) {
+      setTimeout(() => this.rebuildChannelHistory(), 3000);
+    }
+    /* Only re-render feed if we're actually on a feed view */
+    const feedModes = ['main', 'self', 'custom'];
+    if (feedModes.includes(this.state.mode)) this.renderFeed();
+    /* Refresh the sidebar panels (Who to follow, trending, polls) now that
+       we know who the user follows — otherwise Who-to-follow stays empty
+       until the next render (which is why it needed a reload before). */
+    this._refreshSidebarPanels();
+    /* Auto-restore lists/communities from chain if we have none locally —
+       silent (no toasts), best-effort, so a returning user on a new device
+       gets their lists back without manually clicking Restore. */
+    if (this.state.lists.length === 0 && this.state.communities.length === 0) {
+      setTimeout(() => this._autoRestoreLists(), 4000);
+    }
+  }
+
+  /* Load likes, bookmarks, follows from chain */
+  async fetchMyReactions() {
+    if (!this.state.signerAddr) return;
+    this.state.likes.clear();
+    this.state.bookmarks.clear();
+    this.state.following.clear();
+    /* Last-write-wins resolution. API returns newest-first; we mark the
+       first action seen per target as authoritative and skip older actions
+       for the same target. This makes UNLIKE/UNBOOKMARK/UNFOLLOW work
+       correctly — the most recent decision wins.
+
+       Previously: UNFOLLOW followed by an older FOLLOW (newest-first iteration)
+       would re-add to following. That was a pre-existing bug. */
+    const seenLike     = new Set();
+    const seenBookmark = new Set();
+    const seenFollow   = new Set();
+    try {
+      /* Cap at 40 pages (2000 txs) — covers heavy reactors generously */
+      const rxLimit = Math.min(this._getMaxScanPages(), 40);
+      for (let page = 1; page <= rxLimit; page++) {
+        let raw;
+        try { raw = await this.apiFetch(this.state.signerAddr, page); }
+        catch { break; }
+        raw.forEach(tx => {
+          const from = tx.from?.toLowerCase();
+          const to   = tx.to?.toLowerCase();
+          if (from !== this.state.signerAddr) return; /* only my sent txs */
+          if (!tx.input || tx.input === '0x') return;
+          try {
+            const text = ethers.toUtf8String(tx.input).trim();
+            /* UNLIKE check before LIKE (defensive ordering — neither
+               startsWith would clash but readability matters). */
+            if (text.startsWith(UNLIKE_PREFIX)) {
+              const h = text.slice(UNLIKE_PREFIX.length).trim().toLowerCase();
+              if (!seenLike.has(h)) seenLike.add(h);
+            } else if (text.startsWith(LIKE_PREFIX)) {
+              const h = text.slice(LIKE_PREFIX.length).trim().toLowerCase();
+              if (!seenLike.has(h)) { seenLike.add(h); this.state.likes.add(h); }
+            } else if (text.startsWith(UNBOOKMARK_PREFIX) && to === from) {
+              const h = text.slice(UNBOOKMARK_PREFIX.length).trim().toLowerCase();
+              if (!seenBookmark.has(h)) seenBookmark.add(h);
+            } else if (text.startsWith(BOOKMARK_PREFIX) && to === from) {
+              const h = text.slice(BOOKMARK_PREFIX.length).trim().toLowerCase();
+              if (!seenBookmark.has(h)) { seenBookmark.add(h); this.state.bookmarks.add(h); }
+            } else if (text.startsWith(UNFOLLOW_PREFIX)) {
+              const a = text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase();
+              if (!seenFollow.has(a)) seenFollow.add(a);
+            } else if (text.startsWith(FOLLOW_PREFIX)) {
+              const a = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
+              if (!seenFollow.has(a)) { seenFollow.add(a); this.state.following.add(a); }
+            }
+          } catch { /* skip */ }
+        });
+        if (raw.length < 50) break;
+      }
+    } catch (err) { console.warn('Reactions fetch error', err); }
+  }
+
+  disconnect() {
+    this.signer = null;
+    this.state.signerAddr = null;
+    this._wrongChain = false;
+    this._reflectChainState();
+    this.state.profile    = { username:'', picUrl:'image1.jpeg', bio:'' };
+    document.body.classList.remove('wallet-connected');
+    this._updateMobileProfileAvatar();
+    this.g('account-pill').style.display = 'none';
+    this.g('connect-btn').style.display  = 'block';
+    this.g('compose-avatar').src         = 'image1.jpeg';
+    this.g('ch-self').style.display      = 'none';
+    this.g('nav-mychannel').style.display = 'none';    /* desktop */
+    const mnMyHide = document.getElementById('mn-mychannel');
+    if (mnMyHide) mnMyHide.style.display = 'none';   /* mobile */
+    this.g('ap-avatar').src          = 'image1.jpeg';
+    this.g('ap-name').textContent    = 'My Wallet';
+    this.g('ap-addr').textContent    = '';
+    this.clearNotifBadge();
+    utils.safeLS.remove('sayitConnected');
+    this.renderFeed();
+    utils.toast('Wallet disconnected');
+  }
+
+  async fetchMyProfile() {
+    if (!this.state.signerAddr) return;
+    /* Scan every page of this wallet's tx history until we either find the
+       PROFILE_DATA self-send or exhaust all pages. Profile-save txs are
+       self-sends (from === to === signerAddr) so they only appear once in
+       history; on an active wallet it could be many pages deep. */
+    try {
+      /* Hard cap as defense-in-depth against an API that returns stale
+         pages forever. 2000 pages = 100k txs — covers anyone realistic. */
+      const MAX_PROFILE_SCAN = 2000;
+      for (let page = 1; page <= MAX_PROFILE_SCAN; page++) {
+        let raw;
+        try { raw = await this.apiFetch(this.state.signerAddr, page); }
+        catch (err) { console.warn('fetchMyProfile API error (p' + page + '):', err); break; }
+        if (!raw || !raw.length) break; /* end of tx history */
+        for (const tx of raw) {
+          if (tx.from?.toLowerCase() !== this.state.signerAddr) continue;
+          if (tx.to?.toLowerCase()   !== this.state.signerAddr) continue;
+          try {
+            const text = ethers.toUtf8String(tx.input).trim();
+            if (!text.startsWith(PROFILE_PREFIX)) continue;
+            const data = JSON.parse(text.slice(PROFILE_PREFIX.length).trim());
+            this.applyProfile(data);
+            await this.cache.saveProfile({ address: this.state.signerAddr, ...data });
+            /* Profile found — update the open profile page header in-place
+               without a full re-render (preserves the already-loaded feed). */
+            if (this.state.mode === 'profile' &&
+                this.state.channel === this.state.signerAddr) {
+              const nameEl   = document.getElementById('prof-display-name');
+              const avatarEl = document.getElementById('prof-page-avatar');
+              if (nameEl)   nameEl.textContent = data.username || this.trunc(this.state.signerAddr);
+              if (avatarEl) avatarEl.src = data.picUrl || 'image1.jpeg';
+              const bioEl = document.querySelector('.prof-bio');
+              if (bioEl && data.bio) bioEl.textContent = data.bio;
+              const coverEl = document.querySelector('.prof-cover');
+              if (coverEl && data.coverUrl) {
+                const safeCover = utils.cssUrlValue(data.coverUrl);
+                if (safeCover) coverEl.style.background = `url('${safeCover}') center/cover no-repeat`;
+              }
+            }
+            /* Update My Channel page-header title if user is on that page */
+            if (this.state.mode === 'self' && data.username) {
+              const hdrTitle = this.g('feed')?.querySelector('.page-header-title');
+              if (hdrTitle && (hdrTitle.textContent === 'My Channel' || !hdrTitle.textContent)) {
+                hdrTitle.textContent = data.username;
+              }
+            }
+            return; /* found — stop */
+          } catch { continue; }
+        }
+        if (raw.length < 50) break; /* last page — stop regardless */
+      }
+    } catch (err) { console.warn('fetchMyProfile error:', err); }
+  }
+
+  async fetchOtherProfile(address) {
+    if (!address) return;
+    /* Skip if in profCache, unless it's a stale empty record (>24h old) */
+    if (address in this.state.profCache) {
+      const cached = this.state.profCache[address];
+      if (cached === null) return; /* fetch already in progress */
+      if (cached?.username) {
+        /* Found profile — re-fetch after 1 hour so profile updates propagate */
+        const ONE_HOUR = 3_600_000;
+        if (!cached._cachedAt || (Date.now() - cached._cachedAt) < ONE_HOUR) return;
+        /* Stale found profile — fall through and re-fetch */
+        delete this.state.profCache[address];
+      } else {
+        /* Empty placeholder: re-scan after 24h */
+        const TWENTY_FOUR_H = 86_400_000;
+        if (cached?._emptyAt && (Date.now() - cached._emptyAt) < TWENTY_FOUR_H) return;
+        /* Stale empty — fall through and re-scan */
+        delete this.state.profCache[address];
+      }
+    }
+    /* Mark in-progress immediately — prevents duplicate concurrent fetches. */
+    this.state.profCache[address] = null;
+    const work = async () => {
+      this._profInFlight++;
+      try {
+        /* 1. Try IndexedDB cache first — fast, no API call needed. */
+        const db = await this.cache.getProfile(address);
+        if (db) {
+          /* Store ALL available fields — popup and profile page need bio,
+             coverUrl, location, website — not just username + picUrl. */
+          this.state.profCache[address] = {
+            username: db.username  || '',
+            picUrl:   db.picUrl    || 'image1.jpeg',
+            bio:      db.bio       || '',
+            coverUrl: db.coverUrl  || '',
+            location: db.location  || '',
+            website:  db.website   || '',
+          };
+          this._pruneProfileCache();
+          this._debouncedRender();
+          return;
+        }
+        /* 2. Scan the FULL tx history of this address until we find
+              a PROFILE_DATA self-send or run out of pages.
+              - profInFlight cap (3 concurrent) prevents API flooding.
+              - _debouncedRender() fires immediately on find, so the UI
+                updates progressively — user sees names/avatars appear
+                as each profile is located rather than waiting for all.
+              - Cached permanently in IndexedDB so subsequent sessions
+                are instant regardless of how deep the scan went. */
+        /* Hard cap as defense-in-depth. 2000 pages = 100k txs.
+           Real history will exit via the empty-page break long before this. */
+        const MAX_PROFILE_SCAN = 2000;
+        for (let page = 1; page <= MAX_PROFILE_SCAN; page++) {
+          let raw;
+          try { raw = await this.apiFetch(address, page); }
+          catch (err) {
+            console.warn(`fetchOtherProfile(${this.trunc(address)}) API err p${page}:`, err);
+            break;
+          }
+          if (!raw || !raw.length) break; /* end of tx history */
+          let found = false;
+          for (const tx of raw) {
+            if (tx.from?.toLowerCase() !== address ||
+                tx.to?.toLowerCase()   !== address) continue;
+            try {
+              const text = ethers.toUtf8String(tx.input).trim();
+              if (!text.startsWith(PROFILE_PREFIX)) continue;
+              const data = JSON.parse(text.slice(PROFILE_PREFIX.length).trim());
+              this.state.profCache[address] = {
+                username: data.username || '',
+                picUrl:   data.picUrl   || 'image1.jpeg',
+                bio:      data.bio      || '',
+                coverUrl: data.coverUrl || '',
+                location: data.location || '',
+                website:  data.website  || '',
+                _cachedAt: Date.now(),   /* TTL: re-fetch after 1h */
+              };
+              await this.cache.saveProfile({ address, ...data });
+              this._pruneProfileCache();
+              this._debouncedRender();
+              found = true;
+              break;
+            } catch { continue; }
+          }
+          if (found) return;
+          if (raw.length < 50) break; /* last page — stop */
+        }
+        /* No profile found — store empty placeholder with timestamp so we can
+           re-scan after 24h (user may publish a profile in the future). */
+        this.state.profCache[address] = { username:'', picUrl:'image1.jpeg',
+                                          bio:'', coverUrl:'', location:'', website:'',
+                                          _emptyAt: Date.now() };
+      } catch {
+        this.state.profCache[address] = { username:'', picUrl:'image1.jpeg',
+                                          bio:'', coverUrl:'', location:'', website:'',
+                                          _emptyAt: Date.now() };
+      } finally {
+        this._profInFlight--;
+        this._drainProfileQueue();
+      }
+    };
+    if (this._profInFlight < 3) work();
+    else this._profQueue.push(work);
+  }
+
+  _drainProfileQueue() {
+    /* Wrap synchronous invocation: if work() throws before its inner async
+       runs (e.g. cache reference goes null mid-shutdown), we still keep
+       draining the queue instead of deadlocking _profInFlight. */
+    while (this._profInFlight < 3 && this._profQueue.length > 0) {
+      const work = this._profQueue.shift();
+      try { work(); } catch (err) { console.warn('Profile drain error:', err); }
+    }
+  }
+
+  applyProfile(data) {
+    /* Sanitize URL fields at write time — chain data may contain
+       javascript:/data:/etc URIs that we never want to render anywhere.
+       safeUrl returns '' for blocked schemes so the field falls back to default. */
+    const cleanPic   = utils.safeUrl(data.picUrl || data.profilePicUrl) || 'image1.jpeg';
+    const cleanCover = utils.safeUrl(data.coverUrl);
+    const cleanSite  = utils.safeUrl(data.website);
+    this.state.profile = {
+      username:  data.username  || '',
+      picUrl:    cleanPic,
+      bio:       data.bio       || '',
+      coverUrl:  cleanCover,
+      location:  data.location  || '',
+      website:   cleanSite,
+      joinedTs:  data.joinedTs  || null,
+    };
+    this.g('compose-avatar').src       = this.state.profile.picUrl;
+    this.g('modal-compose-avatar').src = this.state.profile.picUrl;
+    this.g('ap-avatar').src       = this.state.profile.picUrl || 'image1.jpeg';
+    this.g('ap-name').textContent = this.state.profile.username || this.trunc(this.state.signerAddr || '');
+    /* Keep the mobile Profile nav avatar in sync once the real pic loads. */
+    this._updateMobileProfileAvatar();
+  }
+
+  /* ── Profile page (full in-column view) ──────────────────────────────── */
+  /* Premium — placeholder for now. A future subscription will unlock Articles
+     (long-form on-chain posts), unlimited post length, profile Highlights, etc. */
+  goPremium() {
+    this._showGenericModal('Premium', `
+      <div style="text-align:center;padding:8px 4px">
+        <div style="font-size:46px;margin-bottom:6px;color:var(--primary-lt)">✦</div>
+        <h3 style="margin:0 0 10px;font-size:20px">Say It Premium — coming soon</h3>
+        <p style="color:var(--muted);font-size:14px;line-height:1.6;margin-bottom:16px">
+          A future subscription unlocking long-form <strong>Articles</strong> (essays, guides,
+          even whole books on-chain), unlimited post length, profile <strong>Highlights</strong>,
+          and more — all settled on-chain.
+        </p>
+        <button class="btn-ghost" id="premium-close-btn">Got it</button>
+      </div>
+    `);
+    const b = document.getElementById('premium-close-btn');
+    if (b) b.onclick = () => this._closeGenericModal();
+  }
+
+  openProfileModal() {
+    /* Own profile: go to profile page */
+    if (this.state.signerAddr) {
+      this.goProfilePage(this.state.signerAddr, true);
+    } else {
+      utils.toast('Connect wallet to view your profile');
+    }
+  }
+
+  async goProfilePage(address, isOwn = false) {
+    this._setRoute('/profile/' + address);
+    this.setNav(isOwn ? 'nav-profile' : null, isOwn ? 'profile' : null);
+    /* Title placeholder until profile resolves. Refined below if cached. */
+    const cachedName = this.state.profCache[address]?.username
+      || (isOwn ? this.state.profile?.username : null);
+    this._updateTitle(cachedName ? '@' + cachedName : 'Profile');
+    this.state.mode    = 'profile';
+    this.state.channel = address; /* prevent renderFeed from overwriting this page */
+    /* Bump the fetch token so any in-flight main-feed fetchPosts becomes a
+       no-op — otherwise its guarded "Load more from chain" button write
+       (guarded only by myToken === _fetchToken) lands on top of this
+       profile page. */
+    this._fetchToken++;
+    this.state.loading = false;
+    this.g('compose-area').style.display   = 'none';
+    this.g('channel-banner').style.display = 'none';
+    this.g('feed-tabs').style.display      = 'none';
+    this.g('new-banner').classList.remove('visible');
+    this.g('loading-more').style.display   = 'none';
+    this.g('loading-more').innerHTML       = '<div class="spinner sp-feed" aria-hidden="true"></div>Scanning the chain…'; /* reset any leftover button */
+    /* Set a real title so the header isn't blank */
+    /* page header via _makePageHeader handles the title now */
+
+    /* Profile data resolution:
+       - Own profile: always start with state.profile (may be partial — has
+         picUrl + bio even without username). Then try cache. Always render
+         what we have; trigger a fresh on-chain fetch in the background. */
+    let prof;
+    if (isOwn) {
+      /* state.profile is initialized at construction so always truthy. Use
+         whatever fields are populated rather than gate-keeping on username. */
+      prof = this.state.profile || {};
+      const hasAnyData = !!(prof.username || prof.bio || prof.coverUrl ||
+                            (prof.picUrl && prof.picUrl !== 'image1.jpeg'));
+      if (!hasAnyData) {
+        /* Try IndexedDB cache fallback */
+        try {
+          const cached = await this.cache.getProfile(address);
+          if (cached) { this.applyProfile(cached); prof = this.state.profile; }
+        } catch (err) { console.warn('Profile cache miss:', err); }
+      }
+    } else {
+      /* Don't BLOCK on the profile-data fetch — render the page and start
+         loading posts immediately, then let the profile fill in async. Awaiting
+         here meant other users' profiles sat through a full profile-data scan
+         before their posts even began loading (looked like "just scanning"). */
+      prof = this.state.profCache[address] || {};
+      if (!this.state.profCache[address]) this.fetchOtherProfile(address);
+    }
+    if (!prof) prof = {};
+
+    /* Initialize profile-page pagination state. This is what enables
+       infinite scroll on profile pages — see _onProfileScroll. */
+    this._profilePageState = {
+      address: address.toLowerCase(),
+      isOwn,
+      tab: 'posts',
+      pagesScanned: 0,
+      loading: false,
+      hasMore: true,
+      rawTxs: [],
+      visibleTxHashes: new Set(),
+    };
+
+    this.g('feed-tabs').classList.remove('tabs-sticky');
+    /* Profile header: back arrow + Name + post count + search icon.
+       Post count starts empty (may not be loaded yet) and updates
+       in-place after loadProfileTab finishes. */
+    const profHeaderHTML = this._makePageHeader({
+      title: prof.username || this.trunc(address),
+      subtitle: '',   /* filled in by _updateProfileSubtitle after tab loads */
+      back: true,
+      searchAddr: address,
+    });
+    this.g('feed').innerHTML = profHeaderHTML + this._profilePageHTML(address, prof, isOwn);
+    this._wireProfilePageListeners(address, isOwn);
+    /* If this profile is a token contract, fill in its identity (logo, name,
+       banner, verified profile, links) the same way the channel banner does. */
+    if (!isOwn) this._applyTokenIdentityToProfile(address);
+
+    /* Profile scan depth comes from the global Max scan pages setting.
+       This way users who bump it to 200 or unlimited get correspondingly
+       deeper profile history without having to set per-page values.
+       Other users get scanned a bit less aggressively (half the cap) to
+       avoid pounding the API on every profile visit. */
+    const globalLimit = this._getMaxScanPages();
+    const maxPages    = isOwn ? globalLimit : Math.min(globalLimit, Math.max(50, Math.floor(globalLimit / 2)));
+    this.loadProfileTab(address, isOwn, 'posts', maxPages).then(() => {
+      this._updateProfileSubtitle(address);
+    }).catch(() => {});
+
+    /* Background-refresh own profile from chain. When it lands, re-render
+       the page header in-place. We DON'T save/restore the feed's innerHTML
+       — doing so used to capture a transient scan-progress block and freeze
+       it on screen (the "page 4 — 150 txs" bug). Instead we only touch the
+       header, leaving the already-rendered tab content untouched. */
+    if (isOwn) {
+      this.fetchMyProfile().then(() => {
+        if (this.state.mode !== 'profile' || this.state.channel !== address) return;
+        const feed = this.g('feed');
+        if (!feed || !feed.querySelector('.prof-page')) return;
+        /* Patch only the header text bits in-place — name, avatar, bio —
+           without rebuilding the whole page (which would disturb the feed
+           and any in-flight scan progress). */
+        const nameEl = feed.querySelector('.prof-display-name');
+        if (nameEl && this.state.profile.username) {
+          nameEl.textContent = this.state.profile.username;
+        }
+        const titleEl = feed.querySelector('.page-header-title');
+        if (titleEl && this.state.profile.username) {
+          titleEl.textContent = this.state.profile.username;
+        }
+        const avatarEl = feed.querySelector('.prof-page-avatar');
+        if (avatarEl && this.state.profile.picUrl && this.state.profile.picUrl !== 'image1.jpeg') {
+          avatarEl.src = this.state.profile.picUrl;
+        }
+        const bioEl = feed.querySelector('.prof-bio');
+        if (bioEl && this.state.profile.bio) {
+          bioEl.textContent = this.state.profile.bio;
+        }
+      }).catch(() => {});
+    } else {
+      /* Other user's profile: the fetch was kicked off non-blocking above —
+         when it lands, patch the header in place (name/avatar/bio). */
+      this.fetchOtherProfile(address).then(() => {
+        if (this.state.mode !== 'profile' || this.state.channel !== address) return;
+        const p = this.state.profCache[address];
+        const feed = this.g('feed');
+        if (!p || !feed || !feed.querySelector('.prof-page')) return;
+        const nameEl = feed.querySelector('.prof-display-name');
+        if (nameEl && p.username) nameEl.textContent = p.username;
+        const titleEl = feed.querySelector('.page-header-title');
+        if (titleEl && p.username) titleEl.textContent = p.username;
+        const avatarEl = feed.querySelector('.prof-page-avatar');
+        if (avatarEl && p.picUrl && p.picUrl !== 'image1.jpeg') avatarEl.src = p.picUrl;
+        const bioEl = feed.querySelector('.prof-bio');
+        if (bioEl && p.bio) bioEl.textContent = p.bio;
+      }).catch(() => {});
+    }
+  }
+
+  _profilePageHTML(address, prof, isOwn) {
+    const name     = utils.safe(prof.username || this.trunc(address));
+    const handle   = utils.safe(address);
+    const bio      = utils.safe(prof.bio || '');
+    const location = utils.safe(prof.location || '');
+    /* website handled via safeUrl below — see metaItems */
+    const joined   = prof.joinedTs
+      ? new Date(prof.joinedTs).toLocaleDateString('en-US',{month:'long',year:'numeric'})
+      : '';
+    /* picUrl: validate scheme to block javascript:/data: URIs in <img src>.
+       <img src> + javascript: doesn't execute in modern browsers but defense
+       in depth never hurts. Falls back to default avatar on invalid URL. */
+    const picUrlSafe = utils.safeUrl(prof.picUrl) || 'image1.jpeg';
+    const picUrl   = utils.safe(picUrlSafe);
+    /* coverUrl: validate AND CSS-escape for url() context */
+    const coverCss = prof.coverUrl ? utils.cssUrlValue(prof.coverUrl) : '';
+
+    const coverStyle = coverCss
+      ? `background:url('${coverCss}') center/cover no-repeat`
+      : `background:linear-gradient(135deg,rgba(124,77,255,0.55),rgba(179,136,255,0.25),rgba(43,134,197,0.15))`;
+
+    const followBtn = isOwn
+      ? `<button class="prof-edit-btn" id="prof-edit-trigger">Edit profile</button>`
+      : this.state.following.has(address.toLowerCase())
+        ? `<button class="prof-following-btn" id="prof-follow-btn">Following</button>`
+        : `<button class="prof-follow-btn" id="prof-follow-btn">Follow</button>`;
+
+    /* Re-validate URL at render time. Chain data is attacker-controlled
+       and client-side saveProfile validation can be bypassed by publishing
+       a PROFILE_DATA tx directly. safeUrl() blocks javascript:, data:, etc. */
+    const websiteHref = prof.website ? utils.safeUrl(prof.website) : '';
+    const websiteHrefSafe = websiteHref ? utils.safe(websiteHref) : '';
+    const websiteDisplay = websiteHref ? utils.safe(websiteHref.replace(/^https?:\/\//, '')) : '';
+    const metaItems = [
+      location ? `<span class="prof-meta-item">📍 ${location}</span>` : '',
+      websiteHrefSafe ? `<span class="prof-meta-item">🔗 <a href="${websiteHrefSafe}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${websiteDisplay}</a></span>` : '',
+      joined   ? `<span class="prof-meta-item">📅 Joined ${utils.safe(joined)}</span>` : '',
+    ].filter(Boolean).join('');
+
+    return `
+    <div class="prof-page">
+      <div class="prof-cover" style="${coverStyle}"></div>
+      <div class="prof-avatar-row">
+        <img src="${picUrl}" class="prof-page-avatar" id="prof-page-avatar"
+          alt="" onerror="this.src='image1.jpeg'">
+        <div class="prof-actions">
+          <button class="prof-edit-btn" title="Share profile" aria-label="Share profile" style="padding:6px 10px"
+            data-act="share-profile" data-act-arg="${utils.safe(address)}">
+            <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.48-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>
+          </button>
+          <a class="prof-edit-btn" title="Open channel / message" aria-label="Open this address's channel" style="padding:6px 10px;display:inline-flex;align-items:center"
+            href="#/channel/${utils.safe(address)}"
+            data-act="open-channel" data-act-arg="${utils.safe(address)}">
+            <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M1.998 5.5c0-1.381 1.119-2.5 2.5-2.5h15c1.381 0 2.5 1.119 2.5 2.5v13c0 1.381-1.119 2.5-2.5 2.5h-15c-1.381 0-2.5-1.119-2.5-2.5v-13zm2.5-.5a.5.5 0 00-.5.5v2.764l8 3.638 8-3.638V5.5a.5.5 0 00-.5-.5h-15zM19.998 10.236l-8 3.636-8-3.636V18.5a.5.5 0 00.5.5h15a.5.5 0 00.5-.5v-8.264z"/></svg>
+          </a>
+          <button id="prof-token-edit-btn" class="prof-edit-btn" style="display:none">Set token profile</button>
+          ${followBtn}
+        </div>
+      </div>
+      <div class="prof-info">
+        <div class="prof-display-name" id="prof-display-name">${name}</div>
+        <div class="prof-handle" id="prof-handle-addr"
+          title="Click to copy" data-addr="${handle}">${handle}</div>
+        ${bio ? `<div class="prof-bio">${bio}</div>` : ''}
+        ${metaItems ? `<div class="prof-meta-row">${metaItems}</div>` : ''}
+        <div id="prof-token-meta"></div>
+        <div class="prof-counts-row">
+          <span class="prof-count-item" id="prof-following-count">
+            <strong>—</strong> Following
+          </span>
+          <span class="prof-count-item" id="prof-follower-count">
+            <strong>?</strong> Followers
+          </span>
+        </div>
+      </div>
+      <div class="prof-tabs">
+        <button class="prof-tab active" data-ptab="posts">Posts</button>
+        <button class="prof-tab" data-ptab="replies">Replies</button>
+        <button class="prof-tab" data-ptab="highlights">Highlights</button>
+        <button class="prof-tab" data-ptab="articles">Articles</button>
+        <button class="prof-tab" data-ptab="media">Media</button>
+        ${isOwn ? `<button class="prof-tab" data-ptab="likes">Likes</button>` : ''}
+      </div>
+      <div class="prof-feed" id="prof-feed">
+        <div class="prof-empty">
+          <div class="spinner" aria-hidden="true"></div>
+          <h3>Loading…</h3>
+          <p>Fetching from chain</p>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  /* Fill in a token contract's identity on its profile page (avatar, name,
+     banner, bio, badge + links), mirroring the channel banner. The fast
+     DexScreener identity (Layer 1) is applied first; the deployer/owner
+     verified profile (Layer 2, may scan the channel) upgrades it when ready.
+     No-op for EOAs or once a human profile has loaded. */
+  async _applyTokenIdentityToProfile(address) {
+    const lc = (address || '').toLowerCase();
+    const token = await this._fetchTokenInfo(lc);
+    if (token) this._patchProfileIdentity(lc, token, null);
+    /* Fast path: reveal the "Set token profile" button for the deployer/owner
+       without waiting on the (slower) verified-profile scan. */
+    this._fetchTokenAuth(lc).then(auth => this._patchProfileTokenEdit(lc, auth));
+    const verified = await this._fetchVerifiedTokenProfile(lc);
+    if (token || verified) this._patchProfileIdentity(lc, token, verified);
+  }
+
+  /* Toggle the profile page's "Set token profile" button for the deployer/owner. */
+  _patchProfileTokenEdit(lc, auth) {
+    if (this.state.mode !== 'profile') return;
+    if (this._profilePageState && this._profilePageState.address !== lc) return;
+    const btn = document.getElementById('prof-token-edit-btn');
+    if (!btn) return;
+    const canEdit = !!(auth && this.state.signerAddr && auth.editors && auth.editors.has(this.state.signerAddr));
+    btn.style.display = canEdit ? '' : 'none';
+    if (canEdit) btn.onclick = e => { e.stopPropagation(); this._openTokenProfileEditor(lc); };
+  }
+
+  _patchProfileIdentity(lc, token, verified) {
+    /* Bail if we've navigated away or a human profile took over. */
+    if (this.state.mode !== 'profile') return;
+    if (this._profilePageState && this._profilePageState.address !== lc) return;
+    if (this.state.profCache[lc] && this.state.profCache[lc].username) return;
+    const page = document.querySelector('.prof-page');
+    if (!page) return;
+    const name = (verified && verified.username)
+      || (token ? (token.symbol ? `${token.name} (${token.symbol})` : token.name) : '');
+    if (name) {
+      const nameEl = document.getElementById('prof-display-name');
+      if (nameEl) nameEl.textContent = name;
+      const titleEl = document.querySelector('.page-header-title');
+      if (titleEl) titleEl.textContent = name;
+      this._updateTitle(name);
+    }
+    const avatar = (verified && utils.safeUrl(verified.picUrl || '')) || (token && token.logo);
+    if (avatar) { const av = document.getElementById('prof-page-avatar'); if (av) av.src = avatar; }
+    const coverSrc = (verified && verified.coverUrl) || (token && token.header) || '';
+    if (coverSrc) {
+      const css = utils.cssUrlValue(coverSrc);
+      const coverEl = page.querySelector('.prof-cover');
+      if (css && coverEl) coverEl.style.background = `url('${css}') center/cover no-repeat`;
+    }
+    const bioText = (verified && verified.bio) || (token ? 'Token on PulseChain' : '');
+    if (bioText) {
+      let bioEl = page.querySelector('.prof-bio');
+      if (!bioEl) {
+        bioEl = document.createElement('div');
+        bioEl.className = 'prof-bio';
+        document.getElementById('prof-handle-addr')?.insertAdjacentElement('afterend', bioEl);
+      }
+      bioEl.textContent = bioText;
+    }
+    const meta = document.getElementById('prof-token-meta');
+    if (meta) meta.innerHTML = this._tokenMetaHTML(token, !!verified, verified);
+  }
+
+  _wireProfilePageListeners(address, isOwn) {
+    /* Follow/Unfollow button on the full profile page header. */
+    const fbtn = document.getElementById('prof-follow-btn');
+    if (fbtn && !isOwn) {
+      fbtn.onclick = (e) => {
+        e.stopPropagation();
+        this.toggleFollowAddr(address, fbtn);
+      };
+    }
+    /* Tab switching — same depth rule as initial load. */
+    const _globalLimit = this._getMaxScanPages();
+    const maxPages = isOwn ? _globalLimit : Math.min(_globalLimit, Math.max(50, Math.floor(_globalLimit / 2)));
+    document.querySelectorAll('.prof-tab').forEach(btn => {
+      btn.onclick = () => {
+        document.querySelectorAll('.prof-tab').forEach(t => t.classList.remove('active'));
+        btn.classList.add('active');
+        /* Update pagination state's current tab so fetchProfileMore filters
+           correctly. Reset visibleTxHashes since the new tab has a different
+           filtered set of the same raw txs. */
+        if (this._profilePageState) {
+          this._profilePageState.tab = btn.dataset.ptab;
+          this._profilePageState.visibleTxHashes = new Set();
+        }
+        /* Clear the previous tab's count immediately so it can't linger stale
+           while the new tab loads; refresh it once the load resolves. */
+        const sub = this.g('feed')?.querySelector('.page-header-subtitle');
+        if (sub) sub.textContent = '';
+        this.loadProfileTab(address, isOwn, btn.dataset.ptab, maxPages)
+          .then(() => this._updateProfileSubtitle(address)).catch(() => {});
+      };
+    });
+
+    /* Address copy */
+    const handleEl = document.getElementById('prof-handle-addr');
+    if (handleEl) {
+      handleEl.onclick = () => utils.copyToClipboard(address, 'Address copied!');
+    }
+
+    /* Edit profile button (own profile) */
+    const editBtn = document.getElementById('prof-edit-trigger');
+    if (editBtn) editBtn.onclick = () => this.showEditForm();
+
+    /* Follow/Unfollow (other profiles) */
+    const followBtn = document.getElementById('prof-follow-btn');
+    if (followBtn) {
+      followBtn.onclick = () => this.toggleFollow(address, followBtn);
+    }
+
+    /* Count following and fetch follower count. Following count is
+       address-aware: own profile reads state.following; others are scanned. */
+    this._showFollowingCount(address, isOwn);
+    this._fetchFollowerCount(address);
+
+    /* Follower/Following counts → open list screen (Twitter/X pattern) */
+    const followingCountEl = document.getElementById('prof-following-count');
+    const followerCountEl  = document.getElementById('prof-follower-count');
+    if (followingCountEl) followingCountEl.onclick = () => this._showFollowingList(address, isOwn);
+    if (followerCountEl)  followerCountEl.onclick  = () => this._showFollowerList(address);
+  }
+
+  /* Show a Twitter/X-style list of accounts this address follows.
+     For own profile: read state.following (already loaded).
+     For others: scan their sent txs for FOLLOW: prefixes. */
+  async _showFollowingList(address, isOwn) {
+    this.state.mode = 'followlist';
+    this._clearSearch();
+    this.g('compose-area').style.display = 'none';
+    this.g('channel-banner').style.display = 'none';
+    this.g('new-banner')?.classList.remove('visible');
+    this.g('new-pill')?.classList.remove('visible');
+    const feed = this.g('feed');
+    if (!feed) return;
+    const headerHTML = this._makePageHeader({ title: 'Following', back: true });
+    feed.innerHTML = headerHTML + `<div class="prof-empty"><div class="spinner" aria-hidden="true"></div><h3>Loading…</h3></div>`;
+
+    const backBtn = feed.querySelector('.page-header-back');
+    if (backBtn) backBtn.onclick = () => this.goProfilePage(address, isOwn);
+
+    let addrs = [];
+    if (isOwn && this.state.signerAddr === address.toLowerCase()) {
+      addrs = [...this.state.following];
+    } else {
+      /* Scan their SENT txs for FOLLOW:/UNFOLLOW: — latest action per target
+         wins (txs arrive newest-first; an unfollow→refollow must resolve to
+         the most recent action regardless of page order). */
+      try {
+        const targetAddr = address.toLowerCase();
+        const lastAction = new Map(); /* target → { action, order } */
+        const flimit = this._getMaxScanPages();
+        const emptyD = feed.querySelector('.prof-empty');
+        const progFL = emptyD ? document.createElement('p') : null;
+        if (emptyD && progFL) emptyD.appendChild(progFL);
+        for (let page = 1; (flimit === Infinity || page <= flimit); page++) {
+          if (progFL) progFL.textContent = `Scanning page ${page}…`;
+          let raw = [];
+          try { raw = await this.apiFetch(targetAddr, page); }
+          catch { break; }
+          raw.forEach(tx => {
+            if (tx.from?.toLowerCase() !== targetAddr) return; /* only their sent txs */
+            if (!tx.input || tx.input === '0x') return;
+            /* Composite on-chain order: block timestamps are per-SECOND, so
+               an unfollow + re-follow in the same block share a ts and the
+               tie-break becomes ambiguous (scan-order dependent). blockNumber
+               then transactionIndex give the true, deterministic order. */
+            const order = (Number(tx.blockNumber) || 0) * 100000
+                        + (Number(tx.transactionIndex) || 0);
+            try {
+              const text = ethers.toUtf8String(tx.input).trim();
+              let tgt = null, action = null;
+              if (text.startsWith(FOLLOW_PREFIX)) {
+                tgt = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase(); action = 'follow';
+              } else if (text.startsWith(UNFOLLOW_PREFIX)) {
+                tgt = text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase(); action = 'unfollow';
+              }
+              if (tgt && action) {
+                const prev = lastAction.get(tgt);
+                if (!prev || order >= prev.order) lastAction.set(tgt, { action, order });
+              }
+            } catch {}
+          });
+          if (raw.length < 50) break;
+          await this._scanDelay(150);
+        }
+        addrs = [...lastAction.entries()].filter(([,v]) => v.action === 'follow').map(([a]) => a);
+      } catch {}
+    }
+    this._renderFollowList(feed, headerHTML, address, isOwn, addrs, 'Following', backBtn);
+  }
+
+  /* Show a list of addresses that follow this profile.
+     Reads from the follower scan data we already have (or re-scans). */
+  async _showFollowerList(address) {
+    const feed = this.g('feed');
+    if (!feed) return;
+    /* Dedicated mode so pollNew / main-feed renders don't paint over this
+       page (which previously made the compose box reappear at the top and
+       could wipe the freshly-scanned follower list). */
+    this.state.mode = 'followlist';
+    this._clearSearch();
+    const navToken = (this._navToken = (this._navToken || 0) + 1);
+    this.g('compose-area').style.display = 'none';
+    this.g('channel-banner').style.display = 'none';
+    this.g('new-banner')?.classList.remove('visible');
+    this.g('new-pill')?.classList.remove('visible');
+    const isOwn = address.toLowerCase() === this.state.signerAddr?.toLowerCase();
+    const headerHTML = this._makePageHeader({ title: 'Followers', back: true });
+
+    const addr = address.toLowerCase();
+    this._followerCache = this._followerCache || new Map();
+    const cached = this._followerCache.get(addr);
+
+    if (cached) {
+      /* Show the cached result immediately — no loading spinner on revisit —
+         then refresh quietly in the background and update only if changed. */
+      const backBtnC = this._renderFollowList(feed, headerHTML, address, isOwn, cached, 'Followers', null);
+      const fresh = await this._scanFollowers(addr, navToken, null);
+      if (fresh && this.state.mode === 'followlist' && navToken === this._navToken) {
+        if (fresh.length !== cached.length || fresh.some((a, i) => a !== cached[i])) {
+          this._followerCache.set(addr, fresh);
+          this._renderFollowList(feed, headerHTML, address, isOwn, fresh, 'Followers', null);
+        }
+      }
+      return;
+    }
+
+    /* No cache yet — show the loading UI and scan. */
+    feed.innerHTML = headerHTML + `<div class="prof-empty"><div class="spinner" aria-hidden="true"></div><h3>Loading…</h3></div>`;
+    const backBtn = feed.querySelector('.page-header-back');
+    if (backBtn) backBtn.onclick = () => this.goProfilePage(address, isOwn);
+    const progEl = feed.querySelector('.prof-empty');
+    const prog   = progEl ? document.createElement('p') : null;
+    if (progEl && prog) progEl.appendChild(prog);
+
+    const addrs = await this._scanFollowers(addr, navToken, prog);
+    if (!addrs || this.state.mode !== 'followlist' || navToken !== this._navToken) return;
+    this._followerCache.set(addr, addrs);
+    this._renderFollowList(feed, headerHTML, address, isOwn, addrs, 'Followers', backBtn);
+  }
+
+  /* Raw follower scan → returns the resolved follower address array, or null
+     if it was aborted by navigation. Shared by the cached entry point above. */
+  async _scanFollowers(addr, navToken, prog) {
+    /* Track the LATEST action per follower (txs arrive newest-first; an
+       unfollow→refollow must resolve to the most recent action). */
+    const lastAction = new Map(); /* from → { action, order } */
+    try {
+      const flimit2 = this._getMaxScanPages();
+      for (let page = 1; (flimit2 === Infinity || page <= flimit2); page++) {
+        if (prog) prog.textContent = `Scanning page ${page}…`;
+        if (navToken !== this._navToken) return null; /* navigated away */
+        let raw = [];
+        try { raw = await this.apiFetch(addr, page); }
+        catch { break; }
+        raw.forEach(tx => {
+          if (!tx.input || tx.input === '0x') return;
+          const from = tx.from?.toLowerCase();
+          const to   = tx.to?.toLowerCase();
+          if (from === addr) return; /* a follow FROM this addr isn't a follower */
+          /* Composite on-chain order — see note in the following-list scan:
+             same-block unfollow+refollow share a per-second ts, so we order by
+             blockNumber then transactionIndex for a deterministic latest action. */
+          const order = (Number(tx.blockNumber) || 0) * 100000
+                      + (Number(tx.transactionIndex) || 0);
+          try {
+            const text = ethers.toUtf8String(tx.input).trim();
+            let action = null;
+            if (text.startsWith(FOLLOW_PREFIX)) {
+              const target = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
+              /* Strict: the PAYLOAD must name this address. A tx merely
+                 sent here whose payload follows someone else must not
+                 count as a follower of this address. */
+              if (target === addr) action = 'follow';
+            } else if (text.startsWith(UNFOLLOW_PREFIX)) {
+              const target = text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase();
+              if (target === addr) action = 'unfollow';
+            }
+            if (action) {
+              const prev = lastAction.get(from);
+              if (!prev || order >= prev.order) lastAction.set(from, { action, order });
+            }
+          } catch {}
+        });
+        if (raw.length < 50) break;
+        await this._scanDelay(150);
+      }
+    } catch {}
+    return [...lastAction.entries()].filter(([,v]) => v.action === 'follow').map(([a]) => a);
+  }
+
+  /* Render a single row for the Followers/Following list. Used by both
+     the initial render (_renderFollowList) and the "Show more" expand
+     (_renderFollowListMore) so both pages produce identical row markup. */
+  _renderFollowRow(addr) {
+    const c           = this.state.profCache[addr] || {};
+    const name        = c.username ? utils.safe(c.username) : this.trunc(addr);
+    const pic         = utils.safe(utils.safeUrl(c.picUrl) || 'image1.jpeg');
+    const isFollowing = this.state.following.has(addr);
+    const isSelf      = addr === this.state.signerAddr?.toLowerCase();
+    const followBtn   = (!isSelf && this.signer)
+      ? `<button class="prof-follow-btn${isFollowing ? ' following' : ''}"
+          data-act="follow-toggle" data-act-arg="${utils.safe(addr)}"
+          style="padding:6px 16px;font-size:13px">${isFollowing ? 'Following' : 'Follow'}</button>`
+      : '';
+    const bioLine = c.bio
+      ? `<div style="font-size:13px;color:var(--text);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${utils.safe(c.bio.slice(0,80))}</div>`
+      : '';
+    return `
+      <div class="post-item follow-list-row" data-follow-addr="${utils.safe(addr)}"
+        style="cursor:pointer;display:flex;align-items:center;gap:12px;padding:12px 16px"
+        data-act="open-profile" data-act-arg="${utils.safe(addr)}" data-act-arg2="${isSelf ? '1' : ''}">
+        <img class="follow-list-avatar" alt="" src="${pic}" data-pop-addr="${utils.safe(addr)}"
+          style="width:40px;height:40px;border-radius:50%;object-fit:cover;flex-shrink:0"
+          onerror="this.src='image1.jpeg'" loading="lazy">
+        <div style="flex:1;min-width:0">
+          <div class="follow-list-name" data-pop-addr="${utils.safe(addr)}" style="font-weight:700;font-size:15px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${name}</div>
+          <div style="font-size:13px;color:var(--muted)">@${utils.safe(this.trunc(addr))}</div>
+          ${bioLine}
+        </div>
+        ${followBtn}
+      </div>`;
+  }
+
+  /* Lazy-load profile data for a row, then patch its name+avatar in-place
+     once the profile resolves. Shared by both pages of the follow list. */
+  _hydrateFollowRow(feed, addr) {
+    const c = this.state.profCache[addr] || {};
+    if (c.username) return;
+    this.fetchOtherProfile(addr).then(() => {
+      const row = feed.querySelector(`[data-follow-addr="${addr}"]`);
+      if (!row) return;
+      const prof = this.state.profCache[addr];
+      if (!prof?.username) return;
+      const nameEl = row.querySelector('.follow-list-name');
+      const imgEl  = row.querySelector('.follow-list-avatar');
+      if (nameEl) nameEl.textContent = prof.username;
+      if (imgEl && prof.picUrl !== 'image1.jpeg') imgEl.src = prof.picUrl;
+    }).catch(() => {});
+  }
+
+  /* Shared renderer for Followers/Following list screens.
+     Shows avatar, name, handle, follow button — exactly like X. */
+  _renderFollowList(feed, headerHTML, profileAddr, profileIsOwn, addrs, title, backBtn) {
+    if (!addrs.length) {
+      feed.innerHTML = headerHTML + `<div class="prof-empty"><span>👥</span><h3>No ${title}</h3><p>None yet.</p></div>`;
+      const nb = feed.querySelector('.page-header-back');
+      if (nb) nb.onclick = () => this.goProfilePage(profileAddr, profileIsOwn);
+      return;
+    }
+    /* Paginate: first 50 visible, then "Show more" */
+    const PAGE_SIZE = 50;
+    const renderPage = (start) => {
+      const slice = addrs.slice(start, start + PAGE_SIZE);
+      let listHTML = slice.map(addr => this._renderFollowRow(addr)).join('');
+      /* "Show more" button if more pages exist */
+      const hasMore = (start + PAGE_SIZE) < addrs.length;
+      if (hasMore) {
+        const remaining = addrs.length - (start + PAGE_SIZE);
+        listHTML += `<div style="padding:16px;text-align:center">
+          <button class="btn-ghost" data-act="follow-more" data-act-arg="${start + PAGE_SIZE}"
+            style="padding:10px 24px">
+            Show ${Math.min(remaining, PAGE_SIZE)} more (${remaining} remaining)
+          </button>
+        </div>`;
+      }
+      if (start === 0) {
+        feed.innerHTML = headerHTML + listHTML;
+      } else {
+        /* Append: remove old "show more" and append new rows */
+        const oldBtn = feed.querySelector('[onclick*="_renderFollowListMore"]')?.closest('div');
+        if (oldBtn) oldBtn.remove();
+        feed.insertAdjacentHTML('beforeend', listHTML);
+      }
+      /* Hydrate profile names/avatars asynchronously */
+      slice.forEach(addr => this._hydrateFollowRow(feed, addr));
+      /* Wire back button */
+      const newBack = feed.querySelector('.page-header-back');
+      if (newBack) newBack.onclick = () => this.goProfilePage(profileAddr, profileIsOwn);
+    };
+
+    /* Store context for "show more" button */
+    this._followListCtx = { feed, headerHTML, profileAddr, profileIsOwn, addrs, title };
+    renderPage(0);
+  }
+
+  _renderFollowListMore(btn, nextStart) {
+    const ctx = this._followListCtx;
+    if (!ctx) return;
+    const { feed, addrs } = ctx;
+    const PAGE_SIZE = 50;
+    const slice = addrs.slice(nextStart, nextStart + PAGE_SIZE);
+    let listHTML = slice.map(addr => this._renderFollowRow(addr)).join('');
+    const hasMore = (nextStart + PAGE_SIZE) < addrs.length;
+    if (hasMore) {
+      const remaining = addrs.length - (nextStart + PAGE_SIZE);
+      listHTML += `<div style="padding:16px;text-align:center">
+        <button class="btn-ghost" data-act="follow-more" data-act-arg="${nextStart + PAGE_SIZE}"
+          style="padding:10px 24px">
+          Show ${Math.min(remaining, PAGE_SIZE)} more (${remaining} remaining)
+        </button>
+      </div>`;
+    }
+    const oldBtnEl = btn.closest('div');
+    if (oldBtnEl) oldBtnEl.remove();
+    feed.insertAdjacentHTML('beforeend', listHTML);
+    /* Hydrate profile data for the new rows */
+    slice.forEach(addr => this._hydrateFollowRow(feed, addr));
+  }
+
+  async _showFollowingCount(address = null, isOwn = false) {
+    const el = document.getElementById('prof-following-count');
+    if (!el) return;
+    /* Own profile: state.following is already loaded and authoritative. */
+    if (isOwn || (address && address.toLowerCase() === this.state.signerAddr)) {
+      el.innerHTML = `<strong>${this.state.following.size}</strong> Following`;
+      return;
+    }
+    if (!address) { el.innerHTML = `<strong>0</strong> Following`; return; }
+    /* Other profile: scan THEIR outgoing FOLLOW/UNFOLLOW txs, latest action
+       per target wins (composite blockNumber+txIndex order). */
+    const navAddr = address.toLowerCase();
+    const lastAction = new Map(); /* target → { action, order } */
+    try {
+      const limit = this._getMaxScanPages();
+      for (let page = 1; (limit === Infinity || page <= limit); page++) {
+        let raw = [];
+        try { raw = await this.apiFetch(navAddr, page); }
+        catch { break; }
+        raw.forEach(tx => {
+          if (tx.from?.toLowerCase() !== navAddr) return; /* only their sent txs */
+          if (!tx.input || tx.input === '0x') return;
+          const order = (Number(tx.blockNumber) || 0) * 100000
+                      + (Number(tx.transactionIndex) || 0);
+          try {
+            const text = ethers.toUtf8String(tx.input).trim();
+            let tgt = null, action = null;
+            if (text.startsWith(FOLLOW_PREFIX)) {
+              tgt = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase(); action = 'follow';
+            } else if (text.startsWith(UNFOLLOW_PREFIX)) {
+              tgt = text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase(); action = 'unfollow';
+            }
+            if (tgt && action) {
+              const prev = lastAction.get(tgt);
+              if (!prev || order >= prev.order) lastAction.set(tgt, { action, order });
+            }
+          } catch {}
+        });
+        /* Live update as pages come in (only while still on this profile). */
+        if (this.state.mode === 'profile' && this.state.channel === navAddr) {
+          const live = [...lastAction.values()].filter(v => v.action === 'follow').length;
+          const elNow = document.getElementById('prof-following-count');
+          if (elNow) elNow.innerHTML = `<strong>${live}</strong> Following`;
+        }
+        if (raw.length < 50) break;
+        await this._scanDelay(150);
+      }
+    } catch {}
+    if (this.state.mode === 'profile' && this.state.channel === navAddr) {
+      const n = [...lastAction.values()].filter(v => v.action === 'follow').length;
+      const elNow = document.getElementById('prof-following-count');
+      if (elNow) elNow.innerHTML = `<strong>${n}</strong> Following`;
+    }
+  }
+
+  async _fetchFollowerCount(address) {
+    /* FOLLOW txs are sent TO the target address. Scan that address's
+       received txs for FOLLOW/UNFOLLOW markers.
+       Key insight: scan ascending (oldest first) — FOLLOW txs tend to be
+       early in an address's history. Descending would bury them on later pages. */
+    const el = document.getElementById('prof-follower-count');
+    if (!el) return;
+    try {
+      const addr = address.toLowerCase();
+      const follows = new Map(); /* follower address → 'follow'|'unfollow' */
+
+      /* Respect the user's scan-depth setting fully (unlimited if they set
+         it to 0). Follows can appear anywhere in history — recent followers
+         live in recent txs — so we no longer cap or early-exit aggressively. */
+      /* Use apiFetch (retry/backoff + consistent parsing). The previous
+         manual fetch could fail silently on a transient error or unexpected
+         status field — the likely reason the count showed 0 despite real
+         followers. Accept a follow if the payload names this address OR the
+         tx was sent to it. */
+      /* Track the LATEST action per follower. Txs arrive newest-first
+         (sort=desc), and an address may follow→unfollow→refollow. Keeping
+         the highest-timestamp action (not last-write) is the only correct
+         way to resolve the final state regardless of scan/page order. */
+      const lastAction = new Map(); /* from → { action, order } */
+      const fcLimit = this._getMaxScanPages();
+      for (let page = 1; (fcLimit === Infinity || page <= fcLimit); page++) {
+        let raw = [];
+        try { raw = await this.apiFetch(addr, page); }
+        catch { break; }
+
+        raw.forEach(tx => {
+          const from = tx.from?.toLowerCase();
+          const to   = tx.to?.toLowerCase();
+          if (from === addr) return; /* a follow FROM this addr isn't a follower */
+          if (!tx.input || tx.input === '0x') return;
+          /* Composite on-chain order — see note in the following-list scan:
+             same-block unfollow+refollow share a per-second ts, so we order by
+             blockNumber then transactionIndex for a deterministic latest action. */
+          const order = (Number(tx.blockNumber) || 0) * 100000
+                      + (Number(tx.transactionIndex) || 0);
+          try {
+            const text = ethers.toUtf8String(tx.input).trim();
+            let action = null;
+            if (text.startsWith(FOLLOW_PREFIX)) {
+              const target = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
+              if (target === addr || to === addr) action = 'follow';
+            } else if (text.startsWith(UNFOLLOW_PREFIX)) {
+              const target = text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase();
+              if (target === addr || to === addr) action = 'unfollow';
+            }
+            if (action) {
+              const prev = lastAction.get(from);
+              if (!prev || order >= prev.order) lastAction.set(from, { action, order });
+            }
+          } catch {}
+        });
+
+        /* Rebuild the follows map from latest actions; update live count. */
+        follows.clear();
+        for (const [f, { action }] of lastAction) follows.set(f, action);
+        const live = [...follows.values()].filter(v => v === 'follow').length;
+        const elNow = document.getElementById('prof-follower-count');
+        if (elNow) elNow.innerHTML = `<strong>${live}</strong> Followers`;
+
+        if (raw.length < 50) break; /* last page — reached the end */
+      }
+    } catch { /* silent */ }
+  }
+
+  async toggleFollow(address, btn) {
+    if (!this.signer) { utils.toast('Connect wallet to follow'); return; }
+    const addr = address.toLowerCase();
+    /* Address-level guard: the passed btn is disabled below, but the popup
+       calls this with btn=null and the same address can have several visible
+       buttons — guard by address so a double-tap can't double-fire. */
+    if (!this._reactionBusy('follow:' + addr)) return;
+    try {
+    const isFollowing = this.state.following.has(addr);
+    /* Send FOLLOW/UNFOLLOW TO the target address (not self-send).
+       This lets the target count followers by scanning their received txs.
+       You find your following list by scanning your own sent FOLLOW: txs. */
+    const prefix = isFollowing ? UNFOLLOW_PREFIX : FOLLOW_PREFIX;
+    /* Optimistic UI: update immediately, revert on failure */
+    if (btn) {
+      btn.disabled    = true;
+      btn.textContent = isFollowing ? 'Unfollowing…' : 'Following…';
+    }
+    const ok = await this.publish(prefix + addr, null, addr);
+    if (btn) btn.disabled = false;
+    if (ok) {
+      /* Toggle the .following modifier — don't replace className, which stripped
+         the base class off non-profile buttons (e.g. .explore-follow-btn). */
+      if (isFollowing) {
+        this.state.following.delete(addr);
+        if (btn) { btn.textContent = 'Follow'; btn.classList.remove('following'); }
+      } else {
+        this.state.following.add(addr);
+        if (btn) { btn.textContent = 'Following'; btn.classList.add('following'); }
+      }
+      this._showFollowingCount();
+      /* A follow/unfollow changes follower lists — drop cached scans so the
+         next visit re-scans fresh. */
+      this._followerCache?.delete(addr);
+      this._followerCache?.delete(this.state.signerAddr);
+      /* Refresh Who-to-follow (drops the followed account) and sync any other
+         visible follow buttons for this address. */
+      setTimeout(() => {
+        this.renderWhoToFollow?.();
+        document.querySelectorAll(`[data-follow-addr="${addr}"], [data-explore-follow="${addr}"]`).forEach(b => {
+          const following = this.state.following.has(addr);
+          b.textContent = following ? 'Following' : 'Follow';
+          b.classList.toggle('following', following);
+        });
+      }, 1200);
+    } else {
+      /* Revert on failure — restore original text/state */
+      if (btn) {
+        btn.textContent = isFollowing ? 'Following' : 'Follow';
+        btn.classList.toggle('following', isFollowing);
+      }
+    }
+    } finally {
+      this._pendingTx.delete('follow:' + addr);
+    }
+  }
+
+  /* ── Profile tab content ────────────────────────────────────────────── */
+  /* Returns a Promise that resolves when the initial tab content is rendered */
+  async loadProfileTab(address, isOwn, tab, maxPages = 50) {
+    const feedEl = document.getElementById('prof-feed');
+    if (!feedEl) return;
+    feedEl.innerHTML = `<div class="prof-empty"><div class="spinner" aria-hidden="true"></div><h3>Loading…</h3></div>`;
+
+    if (tab === 'likes' && !isOwn) {
+      feedEl.innerHTML = `<div class="prof-empty"><span>🔒</span><h3>Private</h3><p>Likes are only visible to the account holder.</p></div>`;
+      /* Non-paginated placeholder tab — stop infinite-scroll from paging in
+         the owner's real posts under this placeholder. */
+      if (this._profilePageState) { this._profilePageState.tab = tab; this._profilePageState.hasMore = false; }
+      return;
+    }
+
+    /* Highlights / Articles — placeholders for now. Articles will be a Premium
+       feature for long-form, on-chain posts (essays, guides, even books);
+       Highlights will let users pin standout posts. */
+    if (tab === 'highlights' || tab === 'articles') {
+      const isArt = tab === 'articles';
+      feedEl.innerHTML = `<div class="prof-empty"><span>${isArt ? '📰' : '✨'}</span>
+        <h3>${isArt ? 'Articles' : 'Highlights'}</h3>
+        <p>${isArt
+          ? 'Long-form articles are coming soon — a Premium feature for posting essays, guides, or even whole books on-chain.'
+          : 'Highlighted posts are coming soon.'}</p></div>`;
+      if (this._profilePageState) { this._profilePageState.tab = tab; this._profilePageState.hasMore = false; }
+      return;
+    }
+
+    try {
+      let posts = [];
+      let scannedHasMore = false; /* set below: were there more pages past the initial scan? */
+
+      if (tab === 'likes') {
+        /* Likes: resolve txHashes from state.likes */
+        const fromCache = this.state.posts.filter(p => this.state.likes.has(p.txHash));
+        const cachedSet = new Set(fromCache.map(p => p.txHash));
+        posts = fromCache;
+        const missing = [...this.state.likes].filter(h => !cachedSet.has(h)).slice(0, 20);
+        for (const hash of missing) {
+          try {
+            const cached = await this.cache.getPost(hash);
+            if (cached) posts.push(cached);
+          } catch { /* skip */ }
+        }
+        posts.sort((a,b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()));
+      } else {
+        /* Posts / Replies / Media: scan once, cache, reuse across tabs */
+        this._profileScanCache = this._profileScanCache || {};
+        /* Use settings-derived limit as cache key (maxPages may be null) */
+        const _limit  = this._getMaxScanPages();
+        const cacheKey = `${address}_${_limit}`;
+        let raw = this._profileScanCache[cacheKey];
+        if (!raw) {
+          /* Initial paint: a sent-only fetch (guarantees the profile's own
+             latest posts even when received engagement floods the mixed
+             txlist pages) merged with a shallow page scan; deeper history
+             streams in via fetchProfileMore (scroll / fill). */
+          const [sent, paged] = await Promise.all([
+            this._apiFetchSentTxs(address),
+            this._scanProfilePages(address, PROFILE_INIT_PAGES),
+          ]);
+          if (sent?.length) {
+            const seen = new Set(sent.map(t => t.hash.toLowerCase()));
+            raw = [...sent, ...(paged || []).filter(t => !seen.has(t.hash?.toLowerCase()))];
+            raw.sort((a, b) => Number(b.timeStamp || 0) - Number(a.timeStamp || 0));
+          } else {
+            raw = paged;
+          }
+          /* Cache for 60s — covers all tab switching */
+          this._profileScanCache[cacheKey] = raw;
+          setTimeout(() => { delete this._profileScanCache[cacheKey]; }, 60_000);
+        }
+        /* If the initial scan filled all its pages, there's likely more. */
+        scannedHasMore = raw.length >= PROFILE_INIT_PAGES * 50;
+
+        raw.forEach(tx => {
+          const from = tx.from?.toLowerCase();
+          const to   = tx.to?.toLowerCase();
+          if (from !== address.toLowerCase()) return;
+          if (!tx.input || tx.input === '0x') return;
+          try {
+            /* Canonical parse — identical poll/vote/repost/reply handling
+               to the main feed. Returns null for non-post txs (profile,
+               reactions, votes). */
+            const parsed = this._parsePostTx(tx, { mode: 'profile' });
+            if (!parsed) return;
+            const isReply = !!parsed.parentTx;
+            if (tab === 'posts'   &&  isReply) return;
+            if (tab === 'replies' && !isReply) return;
+            if (tab === 'media' && !this._postHasMedia(parsed.display)) return;
+            posts.push(parsed);
+          } catch { /* skip */ }
+        });
+      }
+
+      if (!posts.length) {
+        /* No matching posts in the initial pages, but more history remains —
+           don't show the empty state yet; keep scanning deeper pages. */
+        if (scannedHasMore && tab !== 'likes') {
+          if (this._profilePageState) {
+            this._profilePageState.tab = tab;
+            this._profilePageState.pagesScanned = Math.max(this._profilePageState.pagesScanned, PROFILE_INIT_PAGES);
+            this._profilePageState.hasMore = true;
+            this._profilePageState.visibleTxHashes = new Set();
+          }
+          feedEl.innerHTML = `<div class="prof-empty" id="prof-loading-deep"><div class="spinner" aria-hidden="true"></div><h3>Loading…</h3></div>`;
+          this._fillProfileViewport();
+          return;
+        }
+        const empties = {
+          posts:   ['📝','No posts yet',   'Posts will appear here.'],
+          replies: ['💬','No replies yet', 'Replies to others appear here.'],
+          media:   ['🖼','No media yet',   'Posts with images appear here.'],
+          likes:   ['🤍','No likes yet',   'Posts you like appear here.'],
+        };
+        const [icon, title, desc] = empties[tab] || ['📡','Nothing here',''];
+        feedEl.innerHTML = `<div class="prof-empty"><span>${icon}</span><h3>${title}</h3><p>${desc}</p></div>`;
+        return;
+      }
+
+      if (tab === 'media') {
+        const imgUrls = [];
+        posts.forEach(p => {
+          this._mediaImageUrls(p.display).forEach(url => imgUrls.push({ url, txHash: p.txHash }));
+        });
+        feedEl.innerHTML = `<div class="prof-media-grid">${
+          imgUrls.slice(0,60).map(({ url, txHash }) =>
+            `<img src="${utils.safe(url)}" class="prof-media-thumb" loading="lazy"
+              onerror="this.style.display='none'"
+              data-act="open-tx" data-act-arg="${utils.safe(txHash)}" style="cursor:pointer">`
+          ).join('')
+        }</div>`;
+        return;
+      }
+
+      /* Posts / Replies / Likes: standard post list */
+      const replyMap = new Map();
+      posts.forEach(p => { if (p.parentTx) replyMap.set(p.parentTx, (replyMap.get(p.parentTx)||0)+1); });
+      const frag = document.createDocumentFragment();
+      posts.forEach(p => {
+        this._postMap.set(p.txHash, p);
+        const el = document.createElement('div');
+        el.className      = 'post-item';
+        el.dataset.txhash = p.txHash;
+        el.innerHTML      = this.postHTML(p, false, replyMap, null);
+        frag.appendChild(el);
+        if (p.reporter !== this.state.signerAddr) this.fetchOtherProfile(p.reporter);
+      });
+      feedEl.innerHTML = '';
+      feedEl.appendChild(frag);
+      /* Tally any polls just rendered so their results fill in. */
+      if (posts.some(pp => pp.poll)) {
+        setTimeout(() => this._tallyVisiblePolls(), 100);
+      }
+      /* Gather community notes for these posts (covers profile view). */
+      this._scanChannelNotes();
+      /* Seed pagination state so infinite scroll won't re-show these posts. */
+      if (this._profilePageState) {
+        this._profilePageState.tab = tab;
+        this._profilePageState.pagesScanned = Math.max(this._profilePageState.pagesScanned, PROFILE_INIT_PAGES);
+        this._profilePageState.hasMore = scannedHasMore;
+        this._profilePageState.visibleTxHashes = new Set(posts.map(p => p.txHash));
+      }
+      /* If the initial posts don't fill the screen, auto-load more so the user
+         sees a full feed without having to scroll a short page. */
+      if (tab !== 'likes' && scannedHasMore) this._fillProfileViewport();
+
+    } catch (err) {
+      feedEl.innerHTML = `<div class="prof-empty"><span>⚠️</span><h3>Error loading tab</h3><p>${utils.safe(err.message)}</p></div>`;
+    }
+  }
+
+  async _scanProfilePages(address, maxPages = null) {
+    /* null means "use settings". Caller can pass explicit value to override. */
+    const limit = (maxPages !== null && maxPages !== undefined)
+      ? maxPages
+      : this._getMaxScanPages();
+    const all = [];
+    /* Show progress as a small sticky pill at the top of the profile feed
+       — never a big block that displaces posts. The pill is inserted once,
+       updated in place, and removed when the scan completes. */
+    const feedEl = document.getElementById('prof-feed');
+    let pill = null, pillStatus = null;
+    const showPill = (feedEl && (limit > 30 || limit === Infinity));
+    if (showPill) {
+      /* If the feed only has the "Loading…" placeholder, clear it so the
+         pill sits above real content as it streams in. */
+      const ph = feedEl.querySelector('.prof-empty');
+      if (ph && /Loading…/.test(ph.textContent)) feedEl.innerHTML = '';
+      pill = document.getElementById('prof-scan-pill');
+      if (!pill) {
+        pill = document.createElement('div');
+        pill.id = 'prof-scan-pill';
+        pill.className = 'scan-pill';
+        pill.innerHTML = `<span class="scan-spin"></span><span id="prof-scan-status">Scanning chain…</span>`;
+        feedEl.prepend(pill);
+      }
+      pillStatus = document.getElementById('prof-scan-status');
+    }
+    for (let page = 1; (limit === Infinity || page <= limit); page++) {
+      if (pillStatus) pillStatus.textContent = `Scanning chain… ${all.length} posts`;
+      let raw;
+      try { raw = await this.apiFetch(address, page); }
+      catch { break; }
+      all.push(...raw);
+      if (raw.length < 50) break; /* last page */
+      await this._scanDelay(150);
+    }
+    /* Remove the pill — loadProfileTab will render the final post list. */
+    const donePill = document.getElementById('prof-scan-pill');
+    if (donePill) donePill.remove();
+    return all;
+  }
+
+  /* ── Edit profile modal ─────────────────────────────────────────────── */
+  showEditForm() {
+    const p = this.state.profile;
+    const g = this.g.bind(this);
+    g('pe-name').value     = p.username  || '';
+    g('pe-bio').value      = p.bio       || '';
+    g('pe-location').value = p.location  || '';
+    g('pe-website').value  = p.website   || '';
+    g('pe-pic').value      = (p.picUrl && p.picUrl !== 'image1.jpeg') ? p.picUrl : '';
+    g('pe-cover').value    = p.coverUrl  || '';
+    g('pe-preview').src    = p.picUrl    || 'image1.jpeg';
+    /* Reset the NFT sub-form fully so a prior session's contract/token-id don't
+       linger (only the status line was being cleared). */
+    g('nft-contract').value = '';
+    g('nft-token-id').value = '';
+    g('nft-status').textContent = '';
+
+    /* Bio counter */
+    const n = g('pe-bio').value.length;
+    g('pe-bio-count').textContent = n ? `${n}/160` : '';
+
+    /* Cover preview */
+    const prev = g('pe-cover-preview');
+    if (p.coverUrl) {
+      prev.style.backgroundImage    = `url('${utils.cssUrlValue(p.coverUrl)}')`;
+      prev.style.backgroundSize     = 'cover';
+      prev.style.backgroundPosition = 'center';
+      prev.classList.add('has-cover');
+    } else {
+      prev.style.backgroundImage = '';
+      prev.classList.remove('has-cover');
+    }
+
+    g('profile-modal').classList.add('open');
+    this._trapFocus(g('profile-modal'));
+  }
+
+  async saveProfile() {
+    const g = this.g.bind(this);
+    const username = g('pe-name').value.trim();
+    let   picUrl   = g('pe-pic').value.trim();
+    let   coverUrl = g('pe-cover').value.trim();
+    const bio      = g('pe-bio').value.trim().slice(0, 160);
+    const location = g('pe-location').value.trim().slice(0, 30);
+    const website  = g('pe-website').value.trim().slice(0, 100);
+
+    if (picUrl && !picUrl.startsWith('https://')) {
+      utils.toast('Profile picture must be an https:// URL'); return;
+    }
+    if (coverUrl && !coverUrl.startsWith('https://')) {
+      utils.toast('Cover photo must be an https:// URL'); return;
+    }
+    /* Website: must be http(s)://, or empty. Renders are defensively
+       sanitized via utils.safeUrl in round 34, but catching it here gives
+       the user feedback instead of silently dropping their entry. */
+    if (website && !/^https?:\/\//i.test(website)) {
+      utils.toast('Website must start with http:// or https://'); return;
+    }
+    if (picUrl) {
+      /* Check image loads AND is not excessively large (> 8MB of pixels) */
+      const loadOk = await new Promise(r => {
+        const img = new Image(); img.onload = ()=>r(true); img.onerror = ()=>r(false); img.src = picUrl;
+      });
+      if (!loadOk) {
+        picUrl = ''; utils.toast('Profile image could not load -- using default');
+      } else {
+        const sizeOk = await utils.checkImageSize(picUrl);
+        if (!sizeOk) { picUrl = ''; utils.toast('Profile image is too large (> 8 MB) -- using default'); }
+      }
+    }
+    picUrl = picUrl || 'image1.jpeg';
+
+    const joinedTs = this.state.profile.joinedTs || Date.now();
+    const data = { username, picUrl, coverUrl, bio, location, website, joinedTs };
+    this.applyProfile(data);
+    await this.cache.saveProfile({ address: this.state.signerAddr, ...data });
+    /* Keep profCache in sync so the popup reflects the new profile immediately
+       without waiting for the next fetchOtherProfile scan. */
+    if (this.state.signerAddr) {
+      this.state.profCache[this.state.signerAddr] = {
+        username: data.username || '',
+        picUrl:   data.picUrl   || 'image1.jpeg',
+        bio:      data.bio      || '',
+        coverUrl: data.coverUrl || '',
+        location: data.location || '',
+        website:  data.website  || '',
+      };
+    }
+    const ok = await this.publish(PROFILE_PREFIX + JSON.stringify(data), null, this.state.signerAddr);
+    if (ok) {
+      this.closeModal('profile-modal');
+      /* Refresh profile page if currently on it */
+      if (this.state.mode === 'profile') {
+        this.goProfilePage(this.state.signerAddr, true);
+      }
+      utils.toast('Profile saved on-chain ✓');
+    }
+  }
+
+  async fetchNFTImage() {
+    const contractAddr = this.g('nft-contract').value.trim().toLowerCase();
+    const tokenIdRaw   = this.g('nft-token-id').value.trim();
+    const status       = this.g('nft-status');
+    if (!ethers.isAddress(contractAddr)) { status.textContent = '✗ Invalid contract'; return; }
+    if (!tokenIdRaw || isNaN(tokenIdRaw))       { status.textContent = '✗ Invalid token ID'; return; }
+    if (!this.signer)                            { status.textContent = '✗ Connect wallet first'; return; }
+    status.innerHTML = '<span class="spinner sp-sm" aria-hidden="true"></span>Fetching…';
+    try {
+      const contract = new ethers.Contract(contractAddr, ERC721_ABI, this.signer.provider);
+      let owner;
+      try { owner = (await contract.ownerOf(tokenIdRaw)).toLowerCase(); }
+      catch { status.textContent = '✗ Token not found'; return; }
+      if (owner !== this.state.signerAddr) { status.textContent = "✗ You don't own this token"; return; }
+      let tokenUri;
+      try { tokenUri = await contract.tokenURI(tokenIdRaw); }
+      catch { status.textContent = '✗ tokenURI() failed'; return; }
+      let imageUrl = null;
+      if (tokenUri.startsWith('data:application/json;base64,')) {
+        try {
+          const meta = JSON.parse(atob(tokenUri.slice('data:application/json;base64,'.length)));
+          imageUrl = utils.safeUrl(utils.resolveIPFS(meta.image)) || null;
+        } catch { status.textContent = '✗ Could not parse metadata'; return; }
+      } else {
+        try {
+          const res  = await fetch(utils.resolveIPFS(tokenUri));
+          const meta = await res.json();
+          imageUrl = utils.safeUrl(utils.resolveIPFS(meta.image)) || null;
+        } catch { status.textContent = '✗ Could not fetch metadata'; return; }
+      }
+      if (!imageUrl) { status.textContent = '✗ No image found'; return; }
+      this.g('pe-pic').value   = imageUrl;
+      this.g('pe-preview').src = imageUrl;
+      status.textContent = '✓ NFT image loaded!';
+    } catch (err) { status.textContent = '✗ ' + (err.message || err); }
+  }
+
+  async apiFetch(address, page) {
+    const s       = this._getSettings();
+    const primary = s.apiUrl      || 'https://api.scan.pulsechain.com/api';
+    const backup  = s.backupApiUrl || '';
+    const qs = `?module=account&action=txlist&address=${address}&offset=50&page=${page}&sort=desc`;
+
+    /* fetchWithRetry: up to 3 attempts with exponential backoff (1s, 2s).
+       Retries on network errors, timeouts, 429 (rate limit), and 5xx.
+       Stops immediately on other 4xx (client errors a retry won't fix). */
+    const fetchWithRetry = async url => {
+      let lastErr;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt > 0) {
+          const delay = Math.pow(2, attempt - 1) * 1000; /* 1s, 2s */
+          await new Promise(res => setTimeout(res, delay));
+        }
+        /* 15s timeout per attempt prevents a hung explorer from indefinitely
+           holding state.loading=true and breaking the rest of the UI. */
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 15000);
+        let res;
+        try {
+          res = await fetch(url + qs, { signal: ctrl.signal });
+        } catch (err) {
+          /* Network error or timeout (AbortError) — retry. */
+          lastErr = err;
+          continue;
+        } finally {
+          clearTimeout(timer);
+        }
+        if (res.ok) {
+          try {
+            const data = await res.json();
+            /* Ingestion gate: drop malformed txs so no explorer-supplied
+               value can reach a render path unvalidated. */
+            return (data.status === '1' && Array.isArray(data.result)) ? utils.sanitizeTxs(data.result) : [];
+          } catch (err) {
+            lastErr = err; /* malformed JSON — retry */
+            continue;
+          }
+        }
+        lastErr = new Error(`API ${res.status}`);
+        /* Don't retry 4xx (except 429) — they won't improve with a retry. */
+        if (res.status >= 400 && res.status < 500 && res.status !== 429) break;
+        /* 429 / 5xx → loop retries after backoff. */
+      }
+      throw lastErr;
+    };
+
+    try {
+      return await fetchWithRetry(primary);
+    } catch (err) {
+      if (backup) {
+        try { return await fetchWithRetry(backup); }
+        catch { /* fall through */ }
+      }
+      throw err;
+    }
+  }
+
+  /* Fetch only an address's SENT transactions via the Blockscout v2 API
+     (filter=from), newest first. The etherscan-compat txlist mixes sent and
+     received txs, and a popular account's received engagement (every like/
+     follow/reply lands as a tx TO them) buries their own posts beyond any
+     reasonable page window — the root cause of Following feeds and profiles
+     showing only some accounts. One filtered request covers an account's
+     last 50 posts regardless of how much engagement they receive.
+     Returns a sanitized etherscan-shaped array, or null when the configured
+     endpoint doesn't speak v2 (caller falls back to the compat txlist). */
+  async _apiFetchSentTxs(addr) {
+    if (!/^0x[0-9a-f]{40}$/i.test(addr || '')) return null;
+    const s = this._getSettings();
+    const base = (s.apiUrl || 'https://api.scan.pulsechain.com/api').replace(/\/api\/?$/, '');
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 15000);
+      let res;
+      try {
+        res = await fetch(`${base}/api/v2/addresses/${addr}/transactions?filter=from`,
+          { signal: ctrl.signal });
+      } finally { clearTimeout(timer); }
+      if (!res.ok) return null;
+      const d = await res.json();
+      if (!Array.isArray(d?.items)) return null;
+      /* Map the v2 shape onto the etherscan-compat shape every parser
+         expects, then through the standard ingestion gate. */
+      return utils.sanitizeTxs(d.items.map(it => ({
+        hash:  it.hash,
+        from:  it.from?.hash,
+        to:    it.to?.hash ?? null,
+        input: it.raw_input,
+        timeStamp: it.timestamp
+          ? String(Math.floor(new Date(it.timestamp).getTime() / 1000)) : undefined,
+        blockNumber: it.block_number ?? it.block ?? undefined,
+        transactionIndex: it.position ?? undefined,
+      })));
+    } catch { return null; }
+  }
+
+  queryAddr() {
+    const { mode, signerAddr, channel } = this.state;
+    return (mode === 'notifications' || mode === 'self')
+      ? signerAddr : channel;
+  }
+
+  async fetchOnePage(page) {
+    const addr = this.queryAddr();
+    if (!addr) return [];
+    return this.apiFetch(addr, page);
+  }
+
+  async fetchPosts(reset = false) {
+    if (this.state.loading) return;
+    this.state.loading = true;
+    /* Capture token at entry. If a channel switch / refresh bumps it during
+       our await, we abort writes to prevent cross-channel post leakage. */
+    const myToken = this._fetchToken;
+    if (reset) { this.state.nextPage = 1; this.state.hasMore = true; }
+    const loadingEl = this.g('loading-more');
+    loadingEl.style.display = 'block';
+    /* Spinner div contributes no text, so the textContent comparison in the
+       finally block below still matches exactly. */
+    loadingEl.innerHTML = '<div class="spinner sp-feed" aria-hidden="true"></div>Scanning the chain…';
+
+    let found = 0, pages = 0;
+    try {
+      while (found < POSTS_TARGET && this.state.hasMore && pages < MAX_PAGES) {
+        let raw;
+        try { raw = await this.fetchOnePage(this.state.nextPage); }
+        catch (err) {
+          /* Don't toast on aborted fetches — they're intentional. */
+          if (myToken === this._fetchToken) utils.toast('Fetch error — ' + err.message);
+          break;
+        }
+        /* Stale fetch — channel changed mid-flight. Abandon silently. */
+        if (myToken !== this._fetchToken) return;
+        this.state.nextPage++;
+        pages++;
+        /* End-of-history is "API returned fewer than the page size" — robust
+           against a single 49-result page that the old equality check would
+           misread as "definitive end". */
+        if (raw.length < 50) this.state.hasMore = false;
+        const parsed = this.parseTxs(raw);
+        if (parsed.length > 0) {
+          /* Dedup within this batch AND against already-loaded posts */
+          const unique = parsed.filter(p => !this._postHashSet.has(p.txHash));
+          if (unique.length > 0) {
+            unique.forEach(p => this._postHashSet.add(p.txHash));
+            this.state.posts = [...this.state.posts, ...unique]
+              .sort((a, b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()))
+              .slice(0, this._getPostCap()); /* cap — configurable in Settings */
+            await this.cache.savePosts(unique);
+            if (myToken !== this._fetchToken) return;
+            found += unique.length;
+            this.renderFeed();
+            this._refreshSidebarPanels();
+          }
+        }
+        if (this.state.mode === 'notifications') break;
+      }
+      /* MAX_PAGES cap with more history likely available: surface a manual
+         "Load more" button so the user can keep going on dense channels
+         instead of silently stalling. */
+      if (pages >= MAX_PAGES && this.state.hasMore && myToken === this._fetchToken) {
+        loadingEl.innerHTML =
+          `<button class="settings-btn" style="margin:8px auto;display:block" ` +
+          `onclick="pulse.fetchPosts(false)">Load more from chain</button>`;
+        loadingEl.style.display = 'block';
+        return;
+      }
+      if (this.state.posts.length === 0 && myToken === this._fetchToken) this.renderFeed();
+    } finally {
+      if (myToken === this._fetchToken) this.state.loading = false;
+      /* Only hide the loader if we left it as text — don't clobber the
+         "Load more" button we may have installed. */
+      if (loadingEl.textContent === 'Scanning the chain…') loadingEl.style.display = 'none';
+      /* A deep scan can capture many VOTE txs in one go — bound the poll maps
+         here too (no-op when under the cap). */
+      this._prunePollMaps();
+    }
+  }
+
+  /* ── Canonical single-tx parser ──────────────────────────────────────
+     Returns a normalized post object for one tx, or null if the tx should
+     not appear in a feed (profile updates, reactions, votes, empty posts).
+     This is the SINGLE SOURCE OF TRUTH for poll/vote/repost/reply parsing —
+     secondary feed paths should call this instead of re-implementing the
+     logic (which historically drifted and leaked raw data). opts lets each
+     caller set mode and any extra fields. */
+  _parsePostTx(tx, opts = {}) {
+    const hash = tx.hash?.toLowerCase();
+    if (!hash) return null;
+    if (!tx.input || tx.input === '0x') return null;
+    /* Callers that already decoded the payload (parseTxs) pass it via
+       opts._text to avoid a second UTF-8 decode per tx. */
+    let text = opts._text;
+    if (text === undefined) {
+      try { text = ethers.toUtf8String(tx.input).trim(); }
+      catch { return null; }
+    }
+    if (!text) return null;
+    /* Non-post payloads that never render as feed items. */
+    if (text.startsWith(PROFILE_PREFIX)) return null;
+    if (text.startsWith(VOTE_PREFIX)) { this._captureVote(text, tx); return null; }
+    if (text.startsWith(TOKEN_PROFILE_PREFIX)) return null; /* token-profile metadata, not a feed post */
+    /* Community notes + ratings are not feed posts — gathered via _scanChannelNotes. */
+    if (text.startsWith(NOTE_PREFIX) || text.startsWith(NOTERATE_PREFIX)) return null;
+    if (text.startsWith(LIKE_PREFIX) || text.startsWith(UNLIKE_PREFIX)
+      || text.startsWith(BOOKMARK_PREFIX) || text.startsWith(UNBOOKMARK_PREFIX)
+      || text.startsWith(FOLLOW_PREFIX) || text.startsWith(UNFOLLOW_PREFIX)) return null;
+
+    let parentTx = null, repostOf = null, poll = null, postType = 'post', display;
+    const replyM = text.match(/^REPLY_TO:(0x[a-f0-9]{64})\n\n/i);
+    if (text.startsWith(POLL_PREFIX)) {
+      poll = this._parsePoll(text);
+      display = poll ? poll.question : text;
+      if (poll) postType = 'poll';
+    } else {
+      const repostM = text.match(/^REPOST:(0x[a-f0-9]{64})(?:\n\n([\s\S]*))?$/i);
+      if (repostM) {
+        repostOf = repostM[1].toLowerCase();
+        display  = repostM[2]?.trim() || '';
+        postType = 'repost';
+      } else if (replyM) {
+        parentTx = replyM[1].toLowerCase();
+        display  = text.slice(replyM[0].length).trim();
+      } else {
+        display = text;
+      }
+    }
+    if (!display && !repostOf) return null;
+
+    return {
+      content: text, display, parentTx, repostOf, poll, postType,
+      reactionTarget: null, direction: null,
+      reporter: tx.from?.toLowerCase(),
+      to: tx.to?.toLowerCase() ?? null,
+      channel: tx.to?.toLowerCase(),
+      timestamp: tx.timeStamp
+        ? new Date(Number(tx.timeStamp) * 1000).toISOString()
+        : new Date().toISOString(),
+      txHash: hash,
+      blockNumber: tx.blockNumber ? Number(tx.blockNumber) : null,
+      mode: opts.mode || 'main',
+      ...opts.extra,
+    };
+  }
+
+  parseTxs(txs) {
+    const { mode, channel, signerAddr } = this.state;
+    const lastCheck = parseInt(utils.safeLS.get(LAST_CHECK_KEY, '0'), 10);
+    return txs.reduce((acc, tx) => {
+      if (!tx.input || tx.input === '0x') return acc;
+      const from = tx.from?.toLowerCase();
+      const to   = tx.to?.toLowerCase();
+      let raw;
+      try { raw = ethers.toUtf8String(tx.input).trim(); }
+      catch { return acc; }
+      if (!raw) return acc;
+
+      /* Mode-based address filtering — applies identically to reactions
+         and posts, so it runs before either branch. */
+      if (mode === 'notifications') {
+        /* Notifications: txs TO me, not FROM me, newer than lastCheck */
+        if (to !== signerAddr || from === signerAddr) return acc;
+        if (Number(tx.timeStamp) * 1000 <= lastCheck) return acc;
+      } else if (mode === 'self') {
+        if (to !== signerAddr) return acc;
+      } else {
+        /* main / custom / wave — must be to this channel */
+        if (to !== channel) return acc;
+      }
+
+      /* Reactions: LIKE/UNLIKE/FOLLOW/UNFOLLOW — parsed as typed feed items
+         here (renderFeed skips them from display; the notifications tab
+         shows them). Everything else routes through the canonical
+         _parsePostTx so post/reply/repost/poll/vote semantics live in
+         exactly one place. UN* checks first to avoid prefix collisions. */
+      let postType = null;
+      let reactionTarget = null;
+      if (raw.startsWith(UNLIKE_PREFIX)) {
+        postType = 'unlike';
+        reactionTarget = raw.slice(UNLIKE_PREFIX.length).trim().toLowerCase();
+      } else if (raw.startsWith(LIKE_PREFIX)) {
+        postType = 'like';
+        reactionTarget = raw.slice(LIKE_PREFIX.length).trim().toLowerCase();
+      } else if (raw.startsWith(UNFOLLOW_PREFIX)) {
+        postType = 'unfollow';
+        reactionTarget = raw.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase();
+      } else if (raw.startsWith(FOLLOW_PREFIX)) {
+        postType = 'follow';
+        reactionTarget = raw.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
+      }
+
+      if (postType) {
+        /* Defense-in-depth: a reaction's target is sliced raw from chain
+           data — validate its shape before it can pollute engagement or
+           notifications. Malformed control txs are dropped. */
+        if ((postType === 'like' || postType === 'unlike') && !/^0x[a-f0-9]{64}$/.test(reactionTarget)) return acc;
+        if ((postType === 'follow' || postType === 'unfollow') && !/^0x[a-f0-9]{40}$/.test(reactionTarget)) return acc;
+        /* Piggyback engagement detection on the feed scan (no extra API
+           calls) — matched to my posts later in _engagementNotifs(). */
+        if (postType === 'like') this._recordEngagement('like', from, reactionTarget, '', tx);
+        acc.push({
+          content: raw, display: raw, parentTx: null, repostOf: null,
+          direction: null, poll: null, postType, reactionTarget,
+          reporter: from, to: to ?? null,
+          timestamp: tx.timeStamp
+            ? new Date(Number(tx.timeStamp) * 1000).toISOString()
+            : new Date().toISOString(),
+          txHash: tx.hash.toLowerCase(), channel, mode,
+          blockNumber: tx.blockNumber ? Number(tx.blockNumber) : null,
+        });
+        return acc;
+      }
+
+      /* Posts / replies / reposts / polls — and the silent capture of
+         VOTE txs — all happen inside the single canonical parser.
+         (This also drops non-self bookmark/profile control txs that the
+         old inline logic let through as raw-text posts.) */
+      const base = this._parsePostTx(tx, { mode, _text: raw });
+      if (!base) return acc;
+
+      /* Engagement piggyback for replies and reposts (see note above). */
+      if (base.postType === 'repost' && base.repostOf) {
+        this._recordEngagement('repost', from, base.repostOf, base.display.slice(0, 100), tx);
+      } else if (base.parentTx) {
+        this._recordEngagement('reply', from, base.parentTx, base.display.slice(0, 100), tx);
+      }
+
+      /* channel/mode are view-scoped (used by the IDB cache filter), not
+         tx-scoped — override the canonical parser's tx-derived values. */
+      acc.push({ ...base, channel, mode, direction: null });
+      return acc;
+    }, []);
+  }
+
+  startPolling() {
+    this.stopPolling();
+    if (typeof requestIdleCallback !== 'undefined') {
+      const scheduleNext = () => {
+        this._pollTimeout = setTimeout(() => {
+          requestIdleCallback(() => {
+            if (!this._pollStopped) { this.pollNew(); scheduleNext(); }
+          }, { timeout: POLL_MS * 2 });
+        }, POLL_MS);
+      };
+      this._pollStopped = false;
+      scheduleNext();
+    } else {
+      this.pollTimer = setInterval(() => this.pollNew(), POLL_MS);
+    }
+  }
+  stopPolling() {
+    clearInterval(this.pollTimer);
+    clearTimeout(this._pollTimeout);
+    this.pollTimer    = null;
+    this._pollTimeout = null;
+    this._pollStopped = true;
+  }
+
+  async pollNew() {
+    /* Skip on pages where the "Show N posts" banner makes no sense —
+       user is on a specific channel, not the main timeline. */
+    if (this._noBannerModes.has(this.state.mode)) return;
+    if (!this.state.channel || this.state.loading) return;
+    /* Skip polling when tab is hidden — saves bandwidth and rate limit.
+       visibilitychange handler in init() resumes immediately on tab focus. */
+    if (typeof document !== 'undefined' && document.hidden) return;
+    const latestTs = this.state.posts[0] ? new Date(this.state.posts[0].timestamp) : new Date(0);
+    try {
+      const raw       = await this.fetchOnePage(1);
+      /* Reuse _postMap rather than rebuilding a Set every poll cycle.
+         _postMap is the canonical post lookup, kept in sync by renderFeed. */
+      const inPending = new Set(this.state.pending.map(p => p.txHash));
+      /* Use _postHashSet (O(1)) if available, fall back to _postMap.has */
+      const inFeed = this._postHashSet || null;
+      const fresh = this.parseTxs(raw).filter(p =>
+        /* >= not >: PulseScan timestamps are per-second, so a genuinely new
+           post mined in the same second as the newest loaded post would be
+           dropped. The hash-set + pending checks below reject true dupes. */
+        new Date(p.timestamp) >= latestTs &&
+        !(inFeed ? inFeed.has(p.txHash) : this._postMap.has(p.txHash)) &&
+        !inPending.has(p.txHash)
+      );
+      if (fresh.length) {
+        this.state.pending = [...fresh, ...this.state.pending];
+        this._updateNewBanner();
+      }
+      /* parseTxs above captured any VOTE txs into the poll maps. Bound them on
+         this recurring path too — previously they were only pruned on the
+         cold-scan fallback, so a long session that never cold-opened a poll
+         grew _voteAccum without limit. (No-op when under the cap.) */
+      this._prunePollMaps();
+      if (this.state.signerAddr) this.checkNotifBadge();
+    } catch (err) { console.warn('Poll error', err); }
+  }
+
+  /* Update the floating "new posts" pill — populates the avatars
+     (up to 3 unique posters from pending) and the count text. Called
+     whenever state.pending changes via pollNew. */
+  _updateNewBanner() {
+    const btn       = this.g('new-banner');
+    const avatarsEl = this.g('new-banner-avatars');
+    const textEl    = this.g('new-banner-text');
+    if (!btn || !avatarsEl || !textEl) return;
+    const n = this.state.pending.length;
+    if (n === 0) {
+      btn.classList.remove('visible');
+      return;
+    }
+    /* Up to 3 unique posters, newest first. Dedupe by reporter address. */
+    const seen = new Set();
+    const unique = [];
+    for (const post of this.state.pending) {
+      const addr = (post.reporter || '').toLowerCase();
+      if (!addr || seen.has(addr)) continue;
+      seen.add(addr);
+      const profile = this.state.profCache[addr];
+      const pic = profile?.picUrl || 'image1.jpeg';
+      unique.push({ addr, pic });
+      if (unique.length >= 3) break;
+    }
+    avatarsEl.innerHTML = unique.map(u =>
+      `<img src="${utils.safe(u.pic)}" alt="" onerror="this.src='image1.jpeg'">`
+    ).join('');
+    textEl.textContent = `Show ${n} post${n > 1 ? 's' : ''}`;
+    btn.classList.add('visible');
+    /* Keep the floating pill's label in sync; visibility is scroll-driven. */
+    const pillText = this.g('new-pill-text');
+    if (pillText) pillText.textContent = `Show ${n} post${n > 1 ? 's' : ''}`;
+    this._updateFloatingPill();
+  }
+
+  /* Show the floating pill when there are pending posts and the stationary
+     bar has scrolled out of view; hide it otherwise. */
+  _updateFloatingPill() {
+    const pill = this.g('new-pill');
+    if (!pill) return;
+    const n = this.state.pending.length;
+    /* Fast path: no pending posts → never show the pill, and skip the
+       getBoundingClientRect() layout read entirely. This avoids a forced
+       reflow on every scroll frame during normal scrolling (the common
+       case), which the browser was flagging as a performance violation. */
+    if (n === 0) { pill.classList.remove('visible'); return; }
+    /* Cheap scroll-position check first; only measure the bar when we've
+       scrolled far enough that it could plausibly be out of view. */
+    if (window.scrollY <= 200) { pill.classList.remove('visible'); return; }
+    const bar = this.g('new-banner');
+    const barOutOfView = bar ? bar.getBoundingClientRect().bottom < 60 : true;
+    if (barOutOfView) pill.classList.add('visible');
+    else pill.classList.remove('visible');
+  }
+
+  /* Update all visible relative timestamps in place. Reads the raw
+     timestamp from each .post-time[data-ts] and recomputes relTime. */
+  _tickRelativeTimes() {
+    const els = document.querySelectorAll('.post-time[data-ts]');
+    if (!els.length) return;
+    els.forEach(el => {
+      const ts = el.dataset.ts;
+      if (!ts) return;
+      const fresh = this.relTime(ts);
+      if (el.textContent !== fresh) el.textContent = fresh;
+    });
+  }
+
+  loadPending() {
+    /* Keep the dedup set in sync, otherwise the next pagination fetch treats
+       these just-promoted posts as unseen and re-appends duplicates. */
+    this.state.pending.forEach(p => this._postHashSet.add(p.txHash));
+    this.state.posts   = [...this.state.pending, ...this.state.posts];
+    this.state.pending = [];
+    this.g('new-banner').classList.remove('visible');
+    this.g('new-pill')?.classList.remove('visible');
+    this.renderFeed();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    /* Wire video autoplay observer for newly prepended posts */
+    const feedEl = this.g('feed');
+    /* Additive (no reset): renderFeed just rebuilt the observer; a second
+       reset here would re-fire initial entries against mid-rebuild nodes. */
+    if (feedEl) this._wireVideoObserver(feedEl);
+  }
+
+  async refreshFeed() {
+    /* Bump token to cancel any in-flight fetch from before refresh. */
+    this._fetchToken++;
+    this.state.posts     = [];
+    this.state.pending   = [];
+    this.state.nextPage  = 1;
+    this.state.hasMore   = true;
+    this._postHashSet    = new Set(); /* invalidate O(1) dedup cache */
+    /* Match resetAndFetch — refresh should give the user a clean slate,
+       not preserve a stale search filter or expanded posts. */
+    this.state.expanded.clear();
+    this.state.activeTag  = null;
+    this.state.searchTerm = '';
+    const search = this.g('search-input');
+    if (search) search.value = '';
+    this.g('new-banner').classList.remove('visible');
+    /* Loading flag may have been left true by a fetch we just cancelled. */
+    this.state.loading = false;
+    await this.fetchPosts(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+  }
+
+  async resetAndFetch() {
+    this.stopPolling();
+    /* Save current draft before channel switch, then restore the new
+       channel's draft after the channel address changes. */
+    this._saveDraft();
+    this._fetchToken++;
+    this.state.loading   = false;
+    this.state.posts     = [];
+    this.state.pending   = [];
+    this.state.nextPage  = 1;
+    this.state.hasMore   = true;
+    this._postHashSet    = new Set();
+    this._postMap.clear();
+    this._fetchingQuotes = new Set(); /* clear in-flight quote fetches */
+    /* Clear feed DOM and show skeleton placeholders so old channel's
+       posts don't flash while new channel's posts are loading. The skeleton
+       gets replaced when the first batch lands via loadCached/fetchPosts.
+       Also disconnect the virtualization observer so we don't leak
+       references to the old channel's elements. */
+    const feedEl = this.g('feed');
+    if (feedEl && !this._selfManagedModes.has(this.state.mode)) {
+      if (this._vfObserver) { this._vfObserver.disconnect(); this._vfObserver = null; }
+      this._renderSkeleton(4);
+    }
+    this.state.expanded.clear();
+    this.state.activeTag  = null;
+    this.state.searchTerm = '';
+    this.g('search-input').value = '';
+    this._updateSearchClearBtn();
+    this.g('new-banner').classList.remove('visible');
+    /* Restore draft for the new channel (set by caller before resetAndFetch) */
+    this.g('compose-text').value = '';
+    this._restoreDraft();
+    await this.loadCached();
+    await this.fetchPosts(true);
+    if (this.state.mode !== 'notifications') this.startPolling();
+  }
+
+  async loadCached() {
+    const { mode, channel, signerAddr } = this.state;
+    let posts = [];
+    if (mode !== 'notifications') {
+      const chanKey = mode === 'self' ? signerAddr : channel;
+      posts = (await this.cache.getPostsByChannel(chanKey))
+        .filter(p => mode === 'self' ? p.mode === 'self' : p.mode === mode);
+    }
+    this.state.posts = posts.sort((a, b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()));
+    /* Rebuild _postHashSet from cached posts so fetchPosts() doesn't
+       re-add them as "new". Without this, every cached post appears
+       twice in the feed after a channel switch: once from IDB via
+       loadCached, and again from the chain scan via fetchPosts. */
+    this._postHashSet = new Set(posts.map(p => p.txHash));
+    this.renderFeed();
+  }
+
+  renderFeed() {
+    /* Debounced — coalesces bursts of renders into one sidebar rebuild. */
+    (this._refreshSidebarDebounced || (() => this._refreshSidebarPanels()))();
+    const selfManaged = this._selfManagedModes;
+    /* Inject pending page-header BEFORE the self-managed bail.
+       Self-managed pages (Notifications, Explore, etc.) call
+       feed.innerHTML = header + content in their own render functions.
+       Non-self-managed pages (My Channel, Wave, Custom, Main) get the
+       header prepended here to their feed DOM. */
+    if (this._pendingPageHeader && !this.g('feed')?.querySelector('.page-header')) {
+      const feed = this.g('feed');
+      if (feed) feed.insertAdjacentHTML('afterbegin', this._pendingPageHeader);
+      this._pendingPageHeader = null;
+    }
+    if (selfManaged.has(this.state.mode)) return;
+
+    const feed = this.g('feed');
+    const term = this.state.searchTerm;
+    let list = this.state.posts;
+
+    /* Following tab filter. The Following feed = posts from followed accounts,
+       drawn from the main list PLUS a separate _followingExtra store (posts
+       fetched only for this tab). Keeping them separate means they never leak
+       into the For You / main-channel timeline. */
+    if (this._followingFilter && this.state.following.size > 0) {
+      const fset = this.state.following;
+      const seen = new Set();
+      const extra = this._followingExtra ? [...this._followingExtra.values()] : [];
+      list = [...this.state.posts, ...extra].filter(p => {
+        const r = p.reporter?.toLowerCase();
+        if (!fset.has(r) || seen.has(p.txHash)) return false;
+        seen.add(p.txHash); return true;
+      }).sort((a, b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()));
+    }
+
+    /* Search filter */
+    if (term) {
+      if (term.startsWith('#')) {
+        const tag = term.slice(1).toLowerCase();
+        list = list.filter(p => p.display.toLowerCase().includes('#' + tag));
+      } else {
+        const lc = term.toLowerCase();
+        const memResults = list.filter(p =>
+          p.display?.toLowerCase().includes(lc) ||
+          p.reporter?.toLowerCase().includes(lc));
+        if (memResults.length > 0 || term.length < 3) {
+          list = memResults;
+        } else {
+          /* No in-memory results — try full IDB trigram search asynchronously.
+             Show empty feed immediately; results flow in when IDB responds. */
+          this.cache.searchByText(term).then(hashes => {
+            if (!hashes.length) return;
+            return Promise.all(hashes.map(h => new Promise(res => {
+              const req = this.cache._db?.transaction('posts','readonly')
+                ?.objectStore('posts')?.get(h);
+              if (req) { req.onsuccess = () => res(req.result); req.onerror = () => res(null); }
+              else res(null);
+            })));
+          }).then(found => {
+            if (!found) return;
+            const posts = found.filter(Boolean);
+            if (!posts.length) return;
+            const known = this._postHashSet || new Set(this.state.posts.map(p => p.txHash));
+            const fresh = posts.filter(p => !known.has(p.txHash));
+            if (fresh.length) {
+              this.state.posts = [...this.state.posts, ...fresh]
+                .sort((a,b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()))
+                .slice(0, this._getPostCap());
+              fresh.forEach(p => { if (this._postHashSet) this._postHashSet.add(p.txHash); });
+              this.renderFeed();
+            }
+          }).catch(() => {});
+          list = memResults;
+        }
+      }
+    }
+    /* Engagement maps: prefer the persistent IDB-derived maps (which
+       include reactions from across all sessions, not just what's loaded
+       into state.posts right now). Merge in any state.posts entries that
+       aren't yet in the persistent maps (e.g. new reactions just received
+       from the chain but not yet flushed to IDB). */
+    this._mergeEngagement(this.state.posts, /*reset=*/false);
+    const replyMap   = this._engagement.replyMap;
+    const likeMap    = this._engagement.likeMap;
+    const repostMap  = this._engagement.repostMap;
+    const engagerMap = this._engagement.engagerMap;
+
+    /* Filter muted addresses */
+    if (this.state.muted.size > 0) {
+      list = list.filter(p => !this.state.muted.has(p.reporter?.toLowerCase()));
+    }
+    /* Only render actual posts -- filter out reactions/follows. Polls
+       are real posts (postType 'poll') and must be included. Defensive:
+       also drop any stray VOTE tx (e.g. cached before the drop logic
+       existed) so raw VOTE data can never surface in the feed. */
+    const cf = this._getSettings();
+    const displayList = list.filter(p => {
+      if (this._notInterested?.has(p.txHash)) return false; /* locally hidden */
+      if (p.content && p.content.startsWith(VOTE_PREFIX)) return false;
+      if (!(!p.postType || p.postType === 'post' || p.postType === 'repost' || p.postType === 'poll')) return false;
+      /* User content filters (Settings → Content & Feed). */
+      if (cf.hideReposts && p.postType === 'repost') return false;
+      if (cf.hidePolls   && p.postType === 'poll')   return false;
+      if (cf.hideReplies && p.parentTx)              return false;
+      if (cf.hideBinary  && this._isLikelyBinary(p.display)) return false;
+      return true;
+    });
+
+    if (!displayList.length) {
+      /* Context-aware empty state — the message has to match WHY the feed is
+         empty (still scanning / no tag matches / no followed posts / no search
+         hits / genuinely empty channel), not always "be the first to post". */
+      let icon = '📡', title, sub;
+      if (this.state.loading) {
+        icon = '<div class="spinner" aria-hidden="true" style="margin:0 auto"></div>';
+        title = 'Scanning the chain…';
+        sub   = `Checked ${this.state.nextPage - 1} page(s) so far`;
+      } else if (this.state.activeTag) {
+        icon = '🔍';
+        title = `No posts tagged #${utils.safe(this.state.activeTag)}`;
+        sub   = 'Nobody has used this hashtag yet — try another, or be the first.';
+      } else if (this._followingFilter) {
+        icon = '👤';
+        title = 'No posts from people you follow yet';
+        sub   = 'When the accounts you follow post, you’ll see them here.';
+      } else if (term) {
+        icon = '🔍';
+        title = `No posts matching “${utils.safe(term)}”`;
+        sub   = 'Try a different word, #tag, or address.';
+      } else {
+        const msgs = { notifications: 'No new notifications', self: 'No posts to your channel yet' };
+        title = msgs[this.state.mode] || 'Nothing here yet';
+        sub   = 'Be the first to post in this channel';
+      }
+      feed.innerHTML = `
+        <div class="empty-state">
+          <span class="empty-icon">${icon}</span>
+          <h3>${title}</h3>
+          <p style="font-size:14px;margin-top:6px;color:var(--muted)">${sub}</p>
+        </div>`;
+      return;
+    }
+    /* Virtualized render. The first batch (INITIAL_MOUNT) is mounted as
+       real .post-item DOM so the user sees content immediately. Everything
+       after is a .post-placeholder with reserved height; the
+       IntersectionObserver promotes them to real items as they enter the
+       buffer zone (2 viewports above/below visible). This dramatically
+       reduces DOM weight on long feeds (2000-post cap goes from ~6MB of
+       DOM to <500KB). */
+    const INITIAL_MOUNT = 20;
+    this._postMap.clear();
+    /* Cache the engagement maps so observer swap-ins can call postHTML
+       with the same data the initial render used. */
+    this._vfMaps = { replyMap, likeMap, repostMap, engagerMap };
+
+    const frag = document.createDocumentFragment();
+    displayList.forEach((post, idx) => {
+      this._postMap.set(post.txHash, post);
+      const el = (idx < INITIAL_MOUNT)
+        ? this._vfMountReal(post)
+        : this._vfMountPlaceholder(post);
+      frag.appendChild(el);
+      if (idx < INITIAL_MOUNT && post.reporter !== this.state.signerAddr) {
+        this.fetchOtherProfile(post.reporter);
+      }
+    });
+    /* Bound the virtualization height cache: heights for posts no longer in the
+       feed are dead weight that accumulates over a long session. _postMap now
+       holds exactly the current feed, so prune to it once the cache has grown
+       well past the feed (slack avoids churning the map on every render). */
+    if (this._vfHeightMap.size > displayList.length + 500) {
+      for (const k of this._vfHeightMap.keys()) {
+        if (!this._postMap.has(k)) this._vfHeightMap.delete(k);
+      }
+    }
+    feed.innerHTML = '';
+    feed.appendChild(frag);
+    this._wireVideoObserver(feed, true); /* reset: feed DOM rebuilt */
+    /* Initialize the observer AFTER the DOM is in place so it can compute
+       intersection rects against the freshly-rendered elements. */
+    this._vfInitObserver(feed);
+    /* Measure the mounted posts so future swaps use real heights. */
+    this._vfMeasureMounted(feed);
+    /* Gather community notes for this channel (throttled 60s) and fill in the
+       note slots when done. Fire-and-forget — doesn't block the render. */
+    this._scanChannelNotes();
+  }
+
+  /* Build engagement maps from the full IDB cache. Counts every reply,
+     like, and repost we've ever observed across all sessions — not just
+     what's currently in state.posts. Lazy-called; result cached on the
+     class. Filtered by channel/mode so different views show the right
+     scope. Cost: one IDB scan per channel switch; amortized over many
+     renders. */
+  async _refreshEngagementFromCache() {
+    try {
+      const all = await this.cache.getPosts(() => true);
+      this._mergeEngagement(all, /*reset=*/true);
+      this._engagementReady = true;
+      /* Re-render the feed so visible posts pick up the fresh counts. */
+      if (!this._selfManagedModes.has(this.state.mode)) this.renderFeed();
+    } catch (err) {
+      console.warn('Engagement rebuild failed:', err);
+    }
+  }
+
+  /* Merge a batch of posts into the engagement maps. If reset=true, the
+     maps are cleared first (used on channel switch). Otherwise this is
+     incremental — new posts just add to the existing counts. Idempotent
+     via engagerMap which tracks unique addresses. */
+  _mergeEngagement(posts, reset = false) {
+    const eng = this._engagement;
+    if (reset) {
+      eng.replyMap.clear(); eng.likeMap.clear();
+      eng.repostMap.clear(); eng.engagerMap.clear();
+      eng.likeState.clear();
+    }
+    /* Track which (target, engager) pairs we've already counted so
+       incremental updates don't double-count. The engagerMap value is a
+       Set of addresses; .add() is naturally idempotent. */
+    posts.forEach(p => {
+      if (p.parentTx) {
+        if (!eng.engagerMap.has(p.parentTx)) eng.engagerMap.set(p.parentTx, new Set());
+        const set = eng.engagerMap.get(p.parentTx);
+        if (!set.has(p.reporter)) {
+          set.add(p.reporter);
+          eng.replyMap.set(p.parentTx, (eng.replyMap.get(p.parentTx) || 0) + 1);
+        }
+      }
+      if ((p.postType === 'like' || p.postType === 'unlike') && p.reactionTarget) {
+        const target = p.reactionTarget;
+        /* engagerMap is the "ever interacted" set behind the eye/interaction
+           count — a like OR an unlike both count as having interacted, so we
+           record presence either way (idempotent via the Set). */
+        if (!eng.engagerMap.has(target)) eng.engagerMap.set(target, new Set());
+        eng.engagerMap.get(target).add(p.reporter);
+        /* likeMap is the CURRENT like count. Keep the latest like-state per
+           engager (by timestamp) so an UNLIKE undoes an earlier LIKE no
+           matter what order batches are merged in, then recount. */
+        if (!eng.likeState.has(target)) eng.likeState.set(target, new Map());
+        const states = eng.likeState.get(target);
+        const ts     = Date.parse(p.timestamp) || 0;
+        const prev   = states.get(p.reporter);
+        if (!prev || ts >= prev.ts) {
+          states.set(p.reporter, { liked: p.postType === 'like', ts });
+        }
+        let count = 0;
+        states.forEach(s => { if (s.liked) count++; });
+        eng.likeMap.set(target, count);
+      }
+      if (p.postType === 'repost' && p.repostOf) {
+        if (!eng.engagerMap.has(p.repostOf)) eng.engagerMap.set(p.repostOf, new Set());
+        const set = eng.engagerMap.get(p.repostOf);
+        if (!set.has(p.reporter)) {
+          set.add(p.reporter);
+          eng.repostMap.set(p.repostOf, (eng.repostMap.get(p.repostOf) || 0) + 1);
+        }
+      }
+    });
+  }
+
+  /* Build a real .post-item element. Used by the initial render and by
+     the observer when promoting a placeholder. */
+  _vfMountReal(post) {
+    const el = document.createElement('div');
+    el.className      = 'post-item';
+    el.dataset.txhash = post.txHash;
+    const maps = this._vfMaps || {};
+    el.innerHTML = this.postHTML(post, false,
+      maps.replyMap, maps.likeMap, maps.repostMap, maps.engagerMap);
+    this._vfMountedRef.set(el, post);
+    /* If this post is a poll, render it from votes already captured by the
+       feed scan (instant); _ensurePollTally cold-scans only if none seen. */
+    if (post.poll) this._ensurePollTally(post);
+    return el;
+  }
+
+  /* Build a .post-placeholder element with reserved height. The height
+     uses the cached measured height if known, otherwise an estimate.
+     Without this height reservation, swapping placeholder→real on
+     scroll would shift everything below. */
+  _vfMountPlaceholder(post) {
+    const el = document.createElement('div');
+    el.className      = 'post-placeholder';
+    el.dataset.txhash = post.txHash;
+    const h = this._vfHeightMap.get(post.txHash) || this._vfEstHeight;
+    el.style.height = h + 'px';
+    return el;
+  }
+
+  /* Set up the IntersectionObserver. Uses a 200% rootMargin so posts
+     mount well before they're visible (smooth scroll, no pop-in). */
+  _vfInitObserver(feed) {
+    if (this._vfObserver) this._vfObserver.disconnect();
+    if (!('IntersectionObserver' in window)) {
+      /* Browser doesn't support — mount everything. Graceful degradation. */
+      feed.querySelectorAll('.post-placeholder').forEach(ph => {
+        this._vfPromote(ph);
+      });
+      return;
+    }
+    this._vfObserver = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        const el = entry.target;
+        if (entry.isIntersecting) {
+          if (el.classList.contains('post-placeholder')) {
+            this._vfPromote(el);
+          }
+        } else {
+          if (el.classList.contains('post-item')) {
+            this._vfDemote(el);
+          }
+        }
+      });
+    }, {
+      root: null,
+      /* Mount/unmount window: roughly 2 viewports above and below */
+      rootMargin: '200% 0px 200% 0px',
+      threshold: 0,
+    });
+    feed.querySelectorAll('.post-placeholder, .post-item').forEach(el => {
+      this._vfObserver.observe(el);
+    });
+  }
+
+  /* Measure mounted .post-item heights and cache them. Called after
+     initial render and after each promote. Uses requestAnimationFrame
+     so layout is settled when we read offsetHeight. */
+  _vfMeasureMounted(feed) {
+    requestAnimationFrame(() => {
+      feed.querySelectorAll('.post-item').forEach(el => {
+        const h = el.offsetHeight;
+        const txHash = el.dataset.txhash;
+        if (txHash && h > 0) this._vfHeightMap.set(txHash, h);
+      });
+    });
+  }
+
+  /* Promote a placeholder to a real .post-item. Preserves scroll
+     position by leaving the element in-place (only innerHTML and
+     class swap). */
+  _vfPromote(placeholder) {
+    const txHash = placeholder.dataset.txhash;
+    if (!txHash) return;
+    const post = this._postMap.get(txHash);
+    if (!post) return;
+    const maps = this._vfMaps || {};
+    /* Convert in-place — don't replaceChild because that would lose the
+       observer registration. Just swap class + content. */
+    placeholder.className = 'post-item';
+    placeholder.style.height = '';
+    placeholder.innerHTML = this.postHTML(post, false,
+      maps.replyMap, maps.likeMap, maps.repostMap, maps.engagerMap);
+    this._vfMountedRef.set(placeholder, post);
+    /* Measure once layout settles */
+    requestAnimationFrame(() => {
+      const h = placeholder.offsetHeight;
+      if (h > 0) this._vfHeightMap.set(txHash, h);
+    });
+    /* Videos in promoted posts must join the play/pause observer — without
+       this, any video that enters via scroll-virtualization autoplays from
+       its attribute but never pauses off-screen (it was never observed). */
+    this._wireVideoObserver?.(placeholder);
+    /* Lazy-load author profile for newly mounted posts */
+    if (post.reporter !== this.state.signerAddr) {
+      this.fetchOtherProfile(post.reporter);
+    }
+  }
+
+  /* Demote a .post-item back to a .post-placeholder. Caches the current
+     height so the swap doesn't shift content below. Skips demotion for
+     pending posts (those at the top of the feed that aren't on-chain
+     yet — keep them mounted so the user sees their post status). */
+  _vfDemote(item) {
+    if (item.classList.contains('pending-post')) return;
+    const txHash = item.dataset.txhash;
+    if (!txHash) return;
+    /* Capture height BEFORE clearing innerHTML */
+    const h = item.offsetHeight;
+    if (h > 0) this._vfHeightMap.set(txHash, h);
+    item.className = 'post-placeholder';
+    item.style.height = (h || this._vfEstHeight) + 'px';
+    item.innerHTML = '';
+    this._vfMountedRef.delete(item);
+  }
+
+  _wireVideoObserver(container, reset = false) {
+    const videos = container.querySelectorAll('.post-vid-thumb');
+    if (!videos.length && !reset) return;
+    const autoplay = this._getSettings().autoplayMedia !== false;
+    /* PERSISTENT observer — created once and shared. The old code rebuilt it
+       (disconnect + new) on every call, but the virtualized feed wires items
+       one at a time, so each newly materialized post silently dropped
+       observation of every other video: off-screen videos kept playing and
+       on-screen ones never auto-played. reset=true (full re-render paths)
+       rebuilds it to release references to recycled DOM nodes.
+       Videos are observed in BOTH autoplay modes: off-screen always pauses
+       (a manually played video must not keep playing once scrolled away);
+       on-screen auto-plays only when the setting allows and the video isn't
+       in manual-controls mode. */
+    if (reset && this._vidObserver) { this._vidObserver.disconnect(); this._vidObserver = null; }
+    if (!this._vidObserver) {
+      this._vidObserver = new IntersectionObserver(entries => {
+        entries.forEach(entry => {
+          const vid = entry.target;
+          if (!entry.isIntersecting) {
+            /* Recycled/detached nodes report non-intersecting on their
+               initial observation — unobserve instead of "pausing" them,
+               which previously raced freshly re-rendered videos. */
+            if (!vid.isConnected) { this._vidObserver.unobserve(vid); return; }
+            vid.pause();
+            return;
+          }
+          if (this._getSettings().autoplayMedia !== false && !vid.controls) vid.play().catch(() => {});
+        });
+      }, { threshold: 0.3 });
+    }
+    videos.forEach(v => {
+      if (autoplay && v.controls) {
+        /* Setting toggled back on: undo the controls-mode UI. */
+        v.controls = false;
+        const btn = v.parentElement?.querySelector('.vid-unmute-btn');
+        if (btn) btn.style.display = '';
+      } else if (!autoplay) {
+        /* Autoplay opt-out (Settings → Content & Feed): stop the video and
+           expose native controls — the custom unmute button is redundant
+           once controls show. Still observed (off-screen pause applies). */
+        v.removeAttribute('autoplay');
+        v.controls = true;
+        v.pause();
+        const btn = v.parentElement?.querySelector('.vid-unmute-btn');
+        if (btn) btn.style.display = 'none';
+      }
+      if (!reset && v.dataset.vidObserved === '1') return; /* already watched */
+      v.dataset.vidObserved = '1';
+      this._vidObserver.observe(v);
+    });
+    /* Playback exclusivity, X-style. Muted in-feed autoplays may coexist
+       (X parity), but a DELIBERATE play — a video in native-controls mode,
+       or any unmuted video — pauses every other feed video; and unmuting
+       one video mutes the rest so only one ever has sound. Media events
+       don't bubble, so both listeners are capture-phase. Wired once. */
+    if (!this._singleVidWired) {
+      this._singleVidWired = true;
+      const isFeedVid = v => v && v.tagName === 'VIDEO' && v.classList.contains('post-vid-thumb');
+      document.addEventListener('play', e => {
+        const v = e.target;
+        if (!isFeedVid(v)) return;
+        if (v.muted && !v.controls) return; /* muted auto-preview — coexists */
+        document.querySelectorAll('video.post-vid-thumb').forEach(o => {
+          if (o !== v && !o.paused) o.pause();
+        });
+      }, true);
+      document.addEventListener('volumechange', e => {
+        const v = e.target;
+        if (!isFeedVid(v) || v.muted) return;
+        document.querySelectorAll('video.post-vid-thumb').forEach(o => {
+          if (o === v) return;
+          if (!o.muted) {
+            o.muted = true;
+            const b = o.parentElement?.querySelector('.vid-unmute-btn');
+            if (b) b.textContent = '🔇';
+          }
+        });
+      }, true);
+    }
+  }
+
+  /* Resolve display info (avatar, name, verified badge) for a post.
+     Pulls from this.state.profile if it's our own post, otherwise from
+     this.state.profCache. Returns the bits needed by postHTML. */
+  _postProfileFields(post) {
+    const isOwn = post.reporter === this.state.signerAddr;
+    let picUrl, displayName, hasProfile;
+    if (isOwn) {
+      picUrl      = this.state.profile.picUrl || 'image1.jpeg';
+      displayName = this.state.profile.username
+        ? utils.safe(this.state.profile.username)
+        : this.trunc(post.reporter);
+      hasProfile  = !!this.state.profile.username;
+    } else {
+      const c = this.state.profCache[post.reporter];
+      picUrl      = c?.picUrl  || 'image1.jpeg';
+      displayName = c?.username ? utils.safe(c.username) : this.trunc(post.reporter);
+      hasProfile  = !!c?.username;
+    }
+    /* On-chain "verified" — ✓ next to names that have published a
+       PROFILE_DATA tx. Free differentiator over Twitter: no payment,
+       no gatekeeper, just chain proof of identity. */
+    const verifiedBadge = hasProfile
+      ? '<span class="verified-icon" title="On-chain profile verified"><svg viewBox="0 0 22 22" width="14" height="14" style="vertical-align:-2px"><path fill="#1d9bf0" d="M20.396 11c-.018-.646-.215-1.275-.57-1.816-.354-.54-.852-.972-1.438-1.246.223-.607.27-1.264.14-1.897-.131-.634-.437-1.218-.882-1.687-.47-.445-1.053-.75-1.687-.882-.633-.13-1.29-.083-1.897.14-.273-.587-.704-1.086-1.245-1.44S11.647 1.62 11 1.604c-.646.017-1.273.213-1.813.568s-.969.854-1.24 1.44c-.608-.223-1.267-.272-1.902-.14-.635.13-1.22.436-1.69.882-.445.47-.749 1.055-.878 1.688-.13.633-.08 1.29.144 1.896-.587.274-1.087.705-1.443 1.245-.356.54-.555 1.17-.574 1.817.02.647.218 1.276.574 1.817.356.54.856.972 1.443 1.245-.224.606-.274 1.263-.144 1.896.13.634.433 1.218.877 1.688.47.443 1.054.747 1.687.878.633.132 1.29.084 1.897-.136.274.586.705 1.084 1.246 1.439.54.354 1.17.551 1.816.569.647-.016 1.276-.213 1.817-.567s.972-.854 1.245-1.44c.604.239 1.266.296 1.903.164.636-.132 1.22-.447 1.68-.907.46-.46.776-1.044.908-1.681s.075-1.299-.165-1.903c.586-.274 1.084-.705 1.439-1.246.354-.54.551-1.17.569-1.816zM9.662 14.85l-3.429-3.428 1.293-1.302 2.072 2.072 4.4-4.794 1.347 1.246z"/></svg></span>'
+      : '';
+    return { isOwn, picUrl, displayName, verifiedBadge, hasProfile };
+  }
+
+  /* Heuristic: is this post's text actually binary/non-text data (a tx whose
+     input bytes happen to decode without throwing but aren't a real message)?
+     Used to flag + de-emphasize such posts rather than show a wall of gibberish.
+     Conservative — only LABELS them, so an occasional false positive is harmless. */
+  _isLikelyBinary(s) {
+    if (!s || s.length < 16) return false;
+    let ctrl = 0;
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      /* Control chars (except tab/newline/CR) and the Unicode replacement char
+         are the reliable binary signal. Legit non-Latin scripts (Chinese,
+         Arabic, …) and emoji contain none, so they're never mislabeled — unlike
+         the old "dense non-ASCII + few spaces" rule, which flagged real prose. */
+      if (c === 0xFFFD || (c < 0x20 && c !== 9 && c !== 10 && c !== 13)) ctrl++;
+    }
+    return ctrl / s.length > 0.03;
+  }
+
+  /* Build the embedded repost/quote card showing the original post.
+     If the original is in _postMap, render the quote inline.
+     If not, render a loading placeholder and trigger a background fetch. */
+  /* Inner HTML for a quote card (header + text + compact media preview).
+     Shared by the immediate render (_postRepostCard) and the async patch
+     (_fetchQuotedPost) so both paths produce identical cards. Media URLs
+     are stripped from the text preview and shown as a small thumbnail
+     (images) or a ▶ Video chip instead of raw link text — X-style. */
+  _quoteCardInner(orig) {
+    const c    = this.state.profCache[orig.reporter] || {};
+    const name = c.username ? utils.safe(c.username) : this.trunc(orig.reporter);
+    const pic  = utils.safe(utils.safeUrl(c.picUrl) || 'image1.jpeg');
+    const imgs   = this._mediaImageUrls(orig.display);
+    const hasVid = _LK_VID_RE.test(orig.display.split(/\s+/).find(w => _LK_VID_RE.test(w)) || '');
+    /* Strip bare media URLs (images and videos) from the preview text;
+       what remains is the author's own words. */
+    const isMediaUrl = u => this._postHasMedia(u) || _LK_VID_RE.test(u);
+    let text = orig.display.replace(_LK_RE, m =>
+      (/^(https?:|ipfs:|ar:|arweave:)/.test(m) && isMediaUrl(m)) ? '' : m);
+    text = text.replace(/\s{2,}/g, ' ').trim();
+    const body = utils.safe(text.slice(0, 200) + (text.length > 200 ? '…' : ''));
+    const mediaHtml = imgs.length
+      ? `<img class="repost-card-thumb" src="${utils.safe(imgs[0])}" alt="" loading="lazy" onerror="this.style.display='none'">`
+      : hasVid
+        ? `<span class="repost-card-media">▶ Video</span>`
+        : '';
+    return `
+      <div class="repost-card-hdr">
+        <img src="${pic}" class="repost-card-avatar" alt="" onerror="this.src='image1.jpeg'">
+        <span class="repost-card-name">${name}</span>
+        <span style="color:var(--muted);font-size:13px;margin-left:4px">· ${this.relTime(orig.timestamp)}</span>
+      </div>
+      ${body ? `<div class="repost-card-body">${body}</div>` : ''}
+      ${mediaHtml}`;
+  }
+
+  _postRepostCard(post) {
+    if (!post.repostOf) return '';
+    const orig = this._postMap.get(post.repostOf);
+    if (orig) {
+      return `
+        <div class="repost-card" data-open-quote="${utils.safe(post.repostOf)}" data-act="open-quote" data-act-arg="${utils.safe(post.repostOf)}" data-act-arg2="${utils.safe(post.to || this.state.channel || '')}">
+          ${this._quoteCardInner(orig)}
+        </div>`;
+    }
+    /* Original not in _postMap — render placeholder and trigger fetch */
+    const qid = utils.safe(post.repostOf);
+    this._fetchQuotedPost(post.repostOf, post.to || this.state.channel);
+    return `<div class="repost-card repost-card-missing" data-fetch-quote="${qid}" id="qc-${qid.slice(2,8)}">
+      <span class="spinner sp-sm" aria-hidden="true"></span>
+      <span>Loading quoted post…</span>
+    </div>`;
+  }
+
+  /* Build the small "engagement" indicator (eye icon + interaction count)
+     shown in the action row. Returns '' if there's no engagement and no
+     block number; returns a faded indicator if only block info is available. */
+  _postEngagementHTML(post, engagerMap) {
+    const engagers = engagerMap ? engagerMap.get(post.txHash) : null;
+    const count    = engagers ? engagers.size : 0;
+    const eyeSvg   = '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>';
+    if (count > 0) {
+      return '<span class="act-views" title="' + (count === 1 ? '1 interaction' : count + ' interactions') +
+             '"><span class="act-icon">' + eyeSvg + '</span><span class="act-count">' + count + '</span></span>';
+    }
+    if (post.blockNumber) {
+      return '<span class="act-views" title="Block #' + post.blockNumber + '" style="opacity:0.4"><span class="act-icon">' + eyeSvg + '</span></span>';
+    }
+    return '';
+  }
+
+  /* Build the small badges shown above the body (direction, to:, replying to). */
+  _postBadges(post) {
+    return {
+      dirBadge: post.direction
+        ? `<span class="dir-badge dir-${post.direction}">${post.direction === 'sent' ? '↑ sent' : '↓ received'}</span>`
+        : '',
+      toLabel: (post.direction === 'sent' && post.to)
+        ? `<span class="to-label">To: ${this.trunc(post.to)}</span>`
+        : '',
+      replyBadge: post.parentTx
+        ? `<span class="reply-badge">↳ Replying to ${this.trunc(post.parentTx)}</span>`
+        : '',
+    };
+  }
+
+  /* Standard action bar (reply / repost / like / views / bookmark / share).
+     Shared by the feed's postHTML and the thread hero so the markup — and
+     the data-action contract the feed delegation depends on — never
+     drifts between them. */
+  _postActionsHTML(post, replyMap, likeMap, repostMap, engagerMap) {
+    const rc  = replyMap  ? (replyMap.get(post.txHash)  || 0) : 0;
+    const lc  = likeMap   ? (likeMap.get(post.txHash)   || 0) : 0;
+    const rpc = repostMap ? (repostMap.get(post.txHash) || 0) : 0;
+    const rcLabel  = rc  > 0 ? String(rc)  : '';
+    const lcLabel  = lc  > 0 ? String(lc)  : '';
+    const rpcLabel = rpc > 0 ? String(rpc) : '';
+    const isLiked      = this.state.likes.has(post.txHash);
+    const isBookmarked = this.state.bookmarks.has(post.txHash);
+    const engagementHTML = this._postEngagementHTML(post, engagerMap);
+    return `
+          <div class="post-actions">
+            <div class="post-actions-left">
+            <button class="act-btn act-reply" data-action="reply" title="Reply" aria-label="Reply to this post">
+              <span class="act-icon">${this.icon('ic-reply')}</span>
+              <span class="act-count">${rcLabel}</span>
+            </button>
+            <button class="act-btn act-repost" data-action="repost" title="Repost or Quote" aria-label="Repost or quote">
+              <span class="act-icon">${this.icon('ic-repost')}</span>
+              <span class="act-count">${rpcLabel}</span>
+            </button>
+            <button class="act-btn act-like ${isLiked ? 'liked' : ''}" data-action="like" title="${isLiked ? 'Unlike' : 'Like'}" aria-label="${isLiked ? 'Unlike this post' : 'Like this post'}" aria-pressed="${isLiked ? 'true' : 'false'}">
+              <span class="act-icon">${this.icon(isLiked ? 'ic-heart-full' : 'ic-heart-empty')}</span>
+              <span class="act-count">${lcLabel}</span>
+            </button>
+            ${engagementHTML}
+            </div><!-- /.post-actions-left -->
+            <div class="post-actions-right">
+            <button class="act-btn act-bookmark ${isBookmarked ? 'bookmarked' : ''}" data-action="bookmark" title="${isBookmarked ? 'Remove bookmark' : 'Bookmark'}" aria-label="${isBookmarked ? 'Remove bookmark' : 'Bookmark this post'}" aria-pressed="${isBookmarked ? 'true' : 'false'}">
+              <span class="act-icon">${this.icon(isBookmarked ? 'ic-bookmark-full' : 'ic-bookmark-empty')}</span>
+            </button>
+            <button class="act-btn act-share" data-action="share" title="Share" aria-label="Share this post">
+              <span class="act-icon">${this.icon('ic-share')}</span>
+            </button>
+            </div><!-- /.post-actions-right -->
+          </div><!-- /.post-actions -->`;
+  }
+
+  postHTML(post, inModal, replyMap, likeMap, repostMap, engagerMap = null) {
+    const expanded = this.state.expanded.has(post.txHash);
+    /* Profile + verified badge (own profile vs. cached other-user profile) */
+    const { picUrl, displayName, verifiedBadge, hasProfile } = this._postProfileFields(post);
+    /* Posts whose tx input is binary/non-text: flag + de-emphasize, and use a
+       much shorter preview so they don't dominate the feed (still expandable). */
+    const nonText = this._isLikelyBinary(post.display);
+    const previewLimit = nonText ? 140 : MAX_PREVIEW;
+    /* Binary payloads: never show the raw bytes in the collapsed feed view —
+       the mojibake under the warning label reads as a rendering bug. Show
+       the label alone; "Show more" still expands to the raw payload. */
+    const hideBinary = nonText && !inModal && !expanded;
+    /* Body text + image extraction. Always run linkify on full text so
+       media below the preview cap still renders in the feed. */
+    const textToRender = hideBinary ? ''
+      : (!inModal && !expanded && post.display.length > previewLimit)
+        ? post.display.slice(0, previewLimit) + '…'
+        : post.display;
+    const { text: bodyHtml, images: imgHtml, embeds: embedHtml } = utils.linkify(textToRender, post.display);
+    const isLong     = !inModal && (nonText || post.display.length > previewLimit);
+    const needsMore  = isLong && !expanded;
+    const canCollapse = isLong && expanded;
+    /* Repost / quote card + badges */
+    const repostCard = this._postRepostCard(post);
+    const { dirBadge, toLabel, replyBadge } = this._postBadges(post);
+    const fullDate = new Date(post.timestamp).toLocaleString();
+    const relT     = this.relTime(post.timestamp);
+
+    return `
+      <div class="post-hdr">
+        <a class="post-avatar-link" href="#/profile/${utils.safe(post.reporter)}"
+          aria-label="View profile" tabindex="-1"><img src="${utils.safe(picUrl)}" class="post-avatar" alt=""
+          loading="lazy" onerror="this.src='image1.jpeg'"></a>
+        <button class="post-menu-btn" data-action="menu" title="More options"
+          aria-label="More options" aria-haspopup="menu" aria-expanded="false">${this.icon('ic-menu')}</button>
+        <div class="post-col">
+          <div class="post-meta-row">
+            <a class="post-name" href="#/profile/${utils.safe(post.reporter)}">${displayName}</a>${verifiedBadge}
+            ${hasProfile ? `<span class="post-dot">·</span>
+            <span class="post-handle" role="button" tabindex="0" aria-label="Copy address ${utils.safe(post.reporter)}"
+              data-addr="${utils.safe(post.reporter)}"
+              title="Click to copy address">@${this.trunc(post.reporter)}</span>` : ''}
+            <span class="post-time-dot">·</span>
+            <a href="https://otter.pulsechain.com/tx/${utils.safe(post.txHash)}"
+              target="_blank" rel="noopener noreferrer" class="post-time" title="${utils.safe(fullDate)}"
+              data-ts="${utils.safe(post.timestamp)}"
+              onclick="event.stopPropagation()">${utils.safe(relT)}</a>
+            ${dirBadge}
+          </div>
+          ${toLabel}${replyBadge}
+          ${post.repostOf ? `<div class="repost-label">
+            <svg width="14" height="14" style="vertical-align:middle;margin-right:4px" aria-hidden="true"><use href="#ic-repost"/></svg>
+            <span class="post-name">${displayName}</span> reposted</div>` : ''}
+          <div class="post-body${nonText ? ' is-nontext' : ''}">${nonText ? '<div class="post-nontext">⚠ Non-text content (binary data)</div>' : ''}${bodyHtml}</div>
+          ${post.poll ? this._pollHTML(post) : ''}
+          ${repostCard}
+          ${embedHtml || ''}
+          <div class="note-slot" data-note-host="${utils.safe(post.txHash)}">${this._noteHTML(post)}</div>
+          ${needsMore ? `<button class="read-more-btn" data-action="expand">Show more ↓</button>` : ''}
+          ${canCollapse ? `<button class="read-more-btn" data-action="expand">Show less ↑</button>` : ''}
+          ${imgHtml ? `<div class="post-images">${imgHtml}</div>` : ''}
+          ${this._postActionsHTML(post, replyMap, likeMap, repostMap, engagerMap)}
+        </div>
+      </div>`;
+  }
+
+  /* ── POLLS ──────────────────────────────────────────────────────────
+     Encoding: POLL:{"q":"...","o":["opt",...],"e":endMs}\n\nQuestion
+     A vote is a separate tx: VOTE:<pollHash>:<optionIndex> to the channel. */
+
+  /* Parse a POLL: payload into { question, options[], endMs } or null. */
+  _parsePoll(raw) {
+    if (!raw.startsWith(POLL_PREFIX)) return null;
+    try {
+      /* Payload is the first line after the prefix; question follows \n\n. */
+      const rest = raw.slice(POLL_PREFIX.length);
+      const nl   = rest.indexOf('\n\n');
+      const jsonPart = nl >= 0 ? rest.slice(0, nl) : rest;
+      const obj = JSON.parse(jsonPart);
+      if (!obj || !Array.isArray(obj.o) || obj.o.length < 2) return null;
+      const question = (nl >= 0 ? rest.slice(nl + 2) : (obj.q || '')).trim();
+      return {
+        question: question || obj.q || 'Poll',
+        options: obj.o.slice(0, 4).map(s => String(s).slice(0, 60)),
+        endMs: Number(obj.e) || 0,
+      };
+    } catch { return null; }
+  }
+
+  _pollIsClosed(poll) {
+    return poll.endMs > 0 && Date.now() > poll.endMs;
+  }
+
+  _pollTimeLeft(poll) {
+    if (!poll.endMs) return '';
+    const ms = poll.endMs - Date.now();
+    if (ms <= 0) return 'Final results';
+    const mins = Math.floor(ms / 60000);
+    if (mins < 60) return `${mins}m left`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h left`;
+    return `${Math.floor(hrs / 24)}d left`;
+  }
+
+  /* Pull a VOTE tx into the running vote accumulator. Called from the feed
+     parsers (parseTxs / _parsePostTx) so votes are tallied from the channel
+     scan the feed already performs — no separate per-poll re-scan needed. */
+  _captureVote(text, tx) {
+    const m = text.match(/^VOTE:(0x[a-f0-9]{64}):(\d+)/i);
+    if (!m) return;
+    this._recordVote(m[1].toLowerCase(), tx.from?.toLowerCase(), Number(m[2]),
+      Number(tx.timeStamp) ? Number(tx.timeStamp) * 1000 : 0);
+  }
+  /* Upsert a single vote, newest-wins by timestamp. */
+  _recordVote(pollHash, voter, optIdx, ts) {
+    if (!pollHash || !voter || !Number.isInteger(optIdx) || optIdx < 0) return;
+    /* A poll closes at endMs — a vote mined after it is invalid, so drop it
+       entirely (don't let it overwrite a valid earlier vote via newest-wins).
+       endMs is known once the poll has been parsed/tallied; votes captured
+       before that are filtered at tally time instead. ts===0 = unknown time,
+       treated as valid. */
+    const end = this._pollEndMs.get(pollHash);
+    if (end && ts && ts > end) return;
+    let m = this._voteAccum.get(pollHash);
+    if (!m) { m = new Map(); this._voteAccum.set(pollHash, m); }
+    const prev = m.get(voter);
+    if (!prev || ts >= prev.ts) m.set(voter, { optIdx, ts });
+  }
+  /* Aggregate the accumulated votes for one poll into the render shape
+     { counts:[n per option], voters:Map(addr→optIdx), total }. Out-of-range
+     option indexes (malformed/older polls) are ignored. */
+  _pollTally(post) {
+    const poll     = post && post.poll;
+    const optCount = poll ? poll.options.length : 0;
+    const endMs    = poll ? poll.endMs : 0;
+    /* Remember this poll's close time so _recordVote can drop later late votes
+       at the source (prevents a post-close re-vote clobbering a valid one). */
+    if (endMs) this._pollEndMs.set(post.txHash, endMs);
+    const counts = new Array(optCount).fill(0);
+    const voters = new Map();
+    const accum = this._voteAccum.get(post.txHash);
+    if (accum) {
+      for (const [voter, v] of accum) {
+        if (v.optIdx < 0 || v.optIdx >= optCount) continue;
+        /* Poll closed before this vote was mined → it doesn't count. Catches
+           votes captured before endMs was known (record-time gate handles the
+           rest). ts===0 = unknown time, kept. */
+        if (endMs && v.ts && v.ts > endMs) continue;
+        voters.set(voter, v.optIdx);
+        counts[v.optIdx]++;
+      }
+    }
+    return { counts, voters, total: voters.size };
+  }
+  /* Render a poll from already-accumulated votes (instant), then cold-scan
+     the channel ONLY if we've seen no votes for it yet — i.e. the poll was
+     opened directly before the feed scanned its channel. Polls the feed has
+     already paged past never trigger a scan, so there's no double-scan. */
+  _ensurePollTally(post) {
+    if (!post || !post.poll) return;
+    this._refreshPollBlock(post.txHash);
+    const haveVotes = (this._voteAccum.get(post.txHash)?.size || 0) > 0;
+    const last = this._pollScanned.get(post.txHash) || 0;
+    if (!haveVotes && Date.now() - last >= 60000) {
+      this._tallyPoll(post).then(() => this._refreshPollBlock(post.txHash)).catch(() => {});
+    }
+  }
+  /* Cold-scan fallback: scan the poll's channel for VOTE txs and feed them
+     into the accumulator. Used only when a poll is viewed without the feed
+     having scanned its channel. Honors the user's Max scan depth setting
+     (votes can be sparse across many pages), with an empty-streak early-out
+     so quiet channels don't always scan to the full depth. */
+  async _tallyPoll(post) {
+    const hash = post.txHash;
+    if (this._pollScanning.has(hash)) return;
+    const last = this._pollScanned.get(hash) || 0;
+    if (Date.now() - last < 60000) return;
+    this._pollScanning.add(hash);
+    const channel  = post.to || post.channel || this.state.channel;
+    const optCount = post.poll ? post.poll.options.length : 0;
+    try {
+      const scanLimit = this._getMaxScanPages();
+      let emptyStreak = 0;
+      for (let page = 1; page <= scanLimit; page++) {
+        let raw;
+        try { raw = await this.apiFetch(channel, page); }
+        catch { break; }
+        let any = false;
+        for (const tx of raw) {
+          if (!tx.input || tx.input === '0x') continue;
+          let text;
+          try { text = ethers.toUtf8String(tx.input).trim(); }
+          catch { continue; }
+          if (!text.startsWith(VOTE_PREFIX)) continue;
+          const m = text.match(/^VOTE:(0x[a-f0-9]{64}):(\d+)/i);
+          if (!m || m[1].toLowerCase() !== hash) continue;
+          const optIdx = Number(m[2]);
+          if (optIdx < 0 || optIdx >= optCount) continue;
+          const voter = tx.from?.toLowerCase();
+          if (!voter) continue;
+          this._recordVote(hash, voter, optIdx,
+            Number(tx.timeStamp) ? Number(tx.timeStamp) * 1000 : 0);
+          any = true;
+        }
+        if (raw.length < 50) break;
+        emptyStreak = any ? 0 : emptyStreak + 1;
+        if (emptyStreak >= 5) break; /* quiet run — likely past all votes */
+      }
+      this._pollScanned.set(hash, Date.now());
+      this._prunePollMaps();
+      /* Surface the user's own vote so the vote buttons stay hidden. */
+      const mine = this._voteAccum.get(hash)?.get(this.state.signerAddr)?.optIdx;
+      if (mine !== undefined && !this._myVotes.has(hash)) this._myVotes.set(hash, mine);
+    } finally {
+      this._pollScanning.delete(hash);
+    }
+  }
+
+  /* Build the poll UI for a post, reading counts from votes already captured
+     during the feed scan (see _pollTally). Mounting triggers _ensurePollTally
+     for the cold-open fallback; this function itself does no fetching. */
+  _pollHTML(post) {
+    const poll = post.poll;
+    if (!poll) return '';
+    const tally = this._pollTally(post);
+    /* Prefer the session record (instant) over the accumulator. This stops
+       the vote buttons from showing — and inviting a re-vote — before the
+       user's own vote rides back in on a scan. */
+    const sessionVote = this._myVotes.get(post.txHash);
+    const myVote = sessionVote !== undefined
+      ? sessionVote
+      : tally.voters.get(this.state.signerAddr);
+    const closed = this._pollIsClosed(poll);
+    const showResults = closed || myVote !== undefined;
+    const total = tally.total;
+    const optsHTML = poll.options.map((opt, i) => {
+      const count = tally.counts[i] || 0;
+      const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+      const isMine = myVote === i;
+      if (showResults) {
+        return `
+          <div class="poll-result-row">
+            <div class="poll-result-bar" style="width:${pct}%"></div>
+            <div class="poll-result-label">
+              <span>${utils.safe(opt)} ${isMine ? '✓' : ''}</span>
+              <span>${pct}%</span>
+            </div>
+          </div>`;
+      }
+      return `
+        <button class="poll-vote-btn" data-poll-vote="${i}" data-poll-hash="${utils.safe(post.txHash)}">
+          ${utils.safe(opt)}
+        </button>`;
+    }).join('');
+    const meta = `${total} vote${total === 1 ? '' : 's'}${poll.endMs ? ' · ' + this._pollTimeLeft(poll) : ''}`;
+    return `
+      <div class="poll-block" data-poll-container="${utils.safe(post.txHash)}">
+        ${optsHTML}
+        <div class="poll-meta">${meta}</div>
+      </div>`;
+  }
+
+  /* Cast a vote: send VOTE:<pollHash>:<idx> to the poll's channel. */
+  async votePoll(pollHash, optIdx) {
+    if (!this.signer) { utils.toast('Connect wallet to vote'); return; }
+    const post = this._postMap.get(pollHash);
+    if (!post || !post.poll) { utils.toast('Poll not found'); return; }
+    if (this._pollIsClosed(post.poll)) { utils.toast('This poll has ended'); return; }
+    /* Already voted this option this session? No-op (last-vote-wins still
+       allows changing, but re-submitting the same choice is pointless). */
+    if (this._myVotes.get(pollHash) === optIdx) {
+      utils.toast('You already voted for this option');
+      return;
+    }
+    /* Optimistically record our vote (session + accumulator) so the UI flips
+       to results and the buttons disappear immediately — prevents accidental
+       double-clicks while the tx is in flight. Remember any prior choice so
+       we can restore it on error. */
+    const prevVote = this._myVotes.get(pollHash);
+    this._myVotes.set(pollHash, optIdx);
+    this._recordVote(pollHash, this.state.signerAddr, optIdx, Date.now());
+    this._refreshPollBlock(pollHash);
+    const channel = post.to || post.channel || this.state.channel;
+    const body = `${VOTE_PREFIX}${pollHash}:${optIdx}`;
+    try {
+      const data  = ethers.hexlify(ethers.toUtf8Bytes(body));
+      const gas   = await this._estimateGasSafe({ to: channel, value: '0', data }, (data.length - 2) / 2);
+      const tx    = await this.signer.sendTransaction({ to: channel, value: '0', data, gasLimit: gas });
+      utils.toast('Vote submitted ✓ confirming on-chain…');
+      await tx.wait();
+      utils.toast('Vote confirmed ✓');
+    } catch (err) {
+      const msg = err.reason || err.message || 'Unknown error';
+      const rejected = err.code === 4001 || err.code === 'ACTION_REJECTED' ||
+        /user (denied|rejected)/i.test(msg);
+      utils.toast(rejected ? 'Vote cancelled' : 'Vote failed: ' + msg);
+      /* Roll back the optimistic vote in both the session map and the
+         accumulator, restoring any previous choice rather than clearing it. */
+      if (prevVote !== undefined) {
+        this._myVotes.set(pollHash, prevVote);
+        this._recordVote(pollHash, this.state.signerAddr, prevVote, Date.now());
+      } else {
+        this._myVotes.delete(pollHash);
+        this._voteAccum.get(pollHash)?.delete(this.state.signerAddr);
+      }
+      this._refreshPollBlock(pollHash);
+    }
+  }
+
+  /* Re-render just one poll's block in place (after voting or tally). */
+  _refreshPollBlock(pollHash) {
+    const post = this._postMap.get(pollHash);
+    if (!post) return;
+    document.querySelectorAll(`[data-poll-container="${pollHash}"]`).forEach(container => {
+      const fresh = this._pollHTML(post);
+      const tmp = document.createElement('div');
+      tmp.innerHTML = fresh;
+      const newBlock = tmp.firstElementChild;
+      if (newBlock) container.replaceWith(newBlock);
+    });
+  }
+
+  /* Scan the DOM for mounted poll posts and tally any not yet cached.
+     Used by non-virtualized views (lists, threads, profiles) where
+     _vfMountReal's per-mount tally doesn't run. */
+  _tallyVisiblePolls() {
+    document.querySelectorAll('[data-poll-container]').forEach(el => {
+      const post = this._postMap.get(el.dataset.pollContainer);
+      if (post && post.poll) this._ensurePollTally(post);
+    });
+  }
+
+  /* Open the poll composer modal. */
+  /* ── Community Notes ──────────────────────────────────────────────────
+     A note is an on-chain tx `NOTE:<postHash>\n\n<text>`; ratings are
+     `NOTERATE:<noteHash>:h|n` (last-rating-wins per address). Notes stay
+     "proposed" (rate-able behind a marker) until net helpful reaches
+     NOTE_SHOW_THRESHOLD, then graduate to a public "Readers added context"
+     card — the X model. Notes are gathered with ONE channel scan per render
+     (throttled 60s), not per-post, so the cost matches a single poll tally. */
+  async _sendTagged(channel, body) {
+    const data = ethers.hexlify(ethers.toUtf8Bytes(body));
+    const gas = await this._estimateGasSafe({ to: channel, value: '0', data }, (data.length - 2) / 2);
+    return this.signer.sendTransaction({ to: channel, value: '0', data, gasLimit: gas });
+  }
+
+  async _scanChannelNotes() {
+    /* Scan the current channel AND the main channel — most posts/notes live in
+       main, and on profiles/threads state.channel differs — so notes show
+       across views, not just the main feed. */
+    const channels = new Set([this.state.channel || MAIN_CHANNEL, MAIN_CHANNEL]);
+    for (const ch of channels) await this._scanNotesForChannel(ch);
+  }
+  async _scanNotesForChannel(channel) {
+    if (this._noteScanning.has(channel)) return;
+    if (Date.now() - (this._noteScanAt.get(channel) || 0) < 60000) return;
+    this._noteScanning.add(channel);
+    const notesByPost = new Map(); /* postHash → Map(noteHash → note) */
+    const ratings = new Map();     /* noteHash → Map(rater → 'h'|'n') */
+    try {
+      const scanLimit = Math.min(this._getMaxScanPages(), 20);
+      for (let page = 1; page <= scanLimit; page++) {
+        let raw;
+        try { raw = await this.apiFetch(channel, page); } catch { break; }
+        for (const tx of raw) {
+          if (!tx.input || tx.input === '0x') continue;
+          let text;
+          try { text = ethers.toUtf8String(tx.input).trim(); } catch { continue; }
+          if (text.startsWith(NOTE_PREFIX)) {
+            const m = text.match(/^NOTE:(0x[a-f0-9]{64})\n\n([\s\S]+)$/i);
+            if (!m) continue;
+            const ph = m[1].toLowerCase(), nh = tx.hash?.toLowerCase();
+            if (!nh) continue;
+            if (!notesByPost.has(ph)) notesByPost.set(ph, new Map());
+            const nm = notesByPost.get(ph);
+            if (!nm.has(nh)) nm.set(nh, { hash: nh, author: tx.from?.toLowerCase(),
+              text: m[2].trim(), ts: tx.timeStamp ? Number(tx.timeStamp) * 1000 : Date.now() });
+          } else if (text.startsWith(NOTERATE_PREFIX)) {
+            const m = text.match(/^NOTERATE:(0x[a-f0-9]{64}):(h|n)/i);
+            if (!m) continue;
+            const nh = m[1].toLowerCase(), rater = tx.from?.toLowerCase();
+            if (!rater) continue;
+            if (!ratings.has(nh)) ratings.set(nh, new Map());
+            const rm = ratings.get(nh);
+            if (!rm.has(rater)) rm.set(rater, m[2].toLowerCase()); /* newest-first: first seen = latest */
+          }
+        }
+        if (raw.length < 50) break;
+      }
+      for (const [ph, nm] of notesByPost) {
+        const list = [...nm.values()].map(n => {
+          const rm = ratings.get(n.hash) || new Map();
+          let helpful = 0, notHelpful = 0;
+          for (const v of rm.values()) { if (v === 'h') helpful++; else notHelpful++; }
+          const my = rm.get(this.state.signerAddr) || this._myNoteRatings.get(n.hash) || null;
+          return { ...n, helpful, notHelpful, score: helpful - notHelpful, myRating: my };
+        }).sort((a, b) => b.score - a.score || b.ts - a.ts);
+        this._noteData.set(ph, { notes: list, scannedAt: Date.now() });
+      }
+      if (this._noteData.size > 500) {
+        const ks = [...this._noteData.keys()];
+        for (let i = 0; i < ks.length - 500; i++) this._noteData.delete(ks[i]);
+      }
+      this._noteScanAt.set(channel, Date.now());
+      this._refreshVisibleNotes();
+    } finally { this._noteScanning.delete(channel); }
+  }
+
+  _refreshNoteSlot(postHash) {
+    const slot = this.g('feed')?.querySelector(`.note-slot[data-note-host="${postHash}"]`);
+    const post = this._postMap.get(postHash);
+    if (slot && post) slot.innerHTML = this._noteHTML(post);
+  }
+
+  _refreshVisibleNotes() {
+    this.g('feed')?.querySelectorAll('.note-slot[data-note-host]').forEach(slot => {
+      const post = this._postMap.get(slot.dataset.noteHost);
+      if (post) slot.innerHTML = this._noteHTML(post);
+    });
+  }
+
+  _noteHTML(post) {
+    const data = this._noteData.get(post.txHash);
+    if (!data || !data.notes.length) return '';
+    const top = data.notes[0];
+    const bodyHtml = utils.safe(top.text).replace(/\n/g, '<br>');
+    if (top.score >= NOTE_SHOW_THRESHOLD) {
+      return `<div class="note-card">
+        <div class="note-card-hdr">🛈 Readers added context</div>
+        <div class="note-card-body">${bodyHtml}</div>
+        ${this._noteRateRow(top)}
+      </div>`;
+    }
+    if (!this._expandedNotes.has(post.txHash)) {
+      const n = data.notes.length;
+      return `<button class="note-pending-toggle" data-note-expand="${utils.safe(post.txHash)}">🛈 ${n} community note${n > 1 ? 's' : ''} proposed — review &amp; rate</button>`;
+    }
+    return `<div class="note-card note-card-pending">
+      <div class="note-card-hdr">🛈 Proposed note${data.notes.length > 1 ? ` · top of ${data.notes.length}` : ''}</div>
+      <div class="note-card-body">${bodyHtml}</div>
+      ${this._noteRateRow(top)}
+      <button class="note-pending-toggle" data-note-expand="${utils.safe(post.txHash)}" style="margin-top:6px">Hide</button>
+    </div>`;
+  }
+
+  _noteRateRow(note) {
+    const mine = note.myRating;
+    return `<div class="note-rate-row">
+      <span class="note-score">${note.helpful} found helpful</span>
+      <button class="note-rate-btn${mine === 'h' ? ' on' : ''}" data-note-rate="${utils.safe(note.hash)}" data-note-val="h">Helpful</button>
+      <button class="note-rate-btn${mine === 'n' ? ' on' : ''}" data-note-rate="${utils.safe(note.hash)}" data-note-val="n">Not helpful</button>
+    </div>`;
+  }
+
+  openNoteComposer(post) {
+    if (!this.signer) { utils.toast('Connect wallet to write a note'); return; }
+    this._showGenericModal('Write a community note', `
+      <p style="font-size:13px;color:var(--muted);margin-bottom:10px">Add context to this post. Notes are public and permanent on-chain. A note becomes publicly visible once enough readers rate it Helpful.</p>
+      <textarea class="form-textarea" id="note-text" placeholder="Add context — cite a source if you can…" maxlength="280" rows="4" style="width:100%"></textarea>
+      <div class="btn-row" style="margin-top:10px">
+        <button class="btn-pri" id="note-submit-btn">Publish note</button>
+        <button class="btn-ghost" id="note-cancel-btn">Cancel</button>
+      </div>
+    `);
+    document.getElementById('note-cancel-btn').onclick = () => this._closeGenericModal();
+    document.getElementById('note-submit-btn').onclick = () => this._submitNote(post);
+  }
+
+  async _submitNote(post) {
+    const txt = document.getElementById('note-text')?.value.trim();
+    if (!txt) { utils.toast('Write something first'); return; }
+    const channel = post.to || post.channel || this.state.channel;
+    const body = `${NOTE_PREFIX}${post.txHash}\n\n${txt}`;
+    this._closeGenericModal();
+    try {
+      utils.toast('Publishing note…');
+      const tx = await this._sendTagged(channel, body);
+      /* Optimistic: show our note as pending immediately. */
+      const data = this._noteData.get(post.txHash) || { notes: [], scannedAt: 0 };
+      data.notes.unshift({ hash: (tx.hash || '').toLowerCase(), author: this.state.signerAddr,
+        text: txt, ts: Date.now(), helpful: 0, notHelpful: 0, score: 0, myRating: null });
+      this._noteData.set(post.txHash, data);
+      this._expandedNotes.add(post.txHash);
+      this._refreshNoteSlot(post.txHash);
+      await tx.wait();
+      utils.toast('Note published ✓');
+      this._noteScanAt.delete(channel); /* allow a fresh scan to pick it up */
+    } catch (err) {
+      const msg = err.reason || err.message || 'Error';
+      const rej = err.code === 4001 || err.code === 'ACTION_REJECTED' || /reject|denied/i.test(msg);
+      utils.toast(rej ? 'Note cancelled' : 'Note failed: ' + msg);
+    }
+  }
+
+  _applyLocalRating(postHash, noteHash, oldVal, newVal) {
+    const data = this._noteData.get(postHash); if (!data) return;
+    const note = data.notes.find(n => n.hash === noteHash); if (!note) return;
+    if (oldVal === 'h') note.helpful = Math.max(0, note.helpful - 1);
+    else if (oldVal === 'n') note.notHelpful = Math.max(0, note.notHelpful - 1);
+    if (newVal === 'h') note.helpful++;
+    else if (newVal === 'n') note.notHelpful++;
+    note.score = note.helpful - note.notHelpful;
+    note.myRating = newVal || null;
+    data.notes.sort((a, b) => b.score - a.score || b.ts - a.ts);
+  }
+
+  async rateNote(noteHash, val, postHash) {
+    if (!this.signer) { utils.toast('Connect wallet to rate notes'); return; }
+    if (!noteHash || !postHash) return;
+    const post = this._postMap.get(postHash);
+    const channel = post ? (post.to || post.channel || this.state.channel) : this.state.channel;
+    const prev = this._myNoteRatings.get(noteHash);
+    if (prev === val) { utils.toast('Already rated'); return; }
+    /* Optimistic apply + refresh. */
+    this._myNoteRatings.set(noteHash, val);
+    this._applyLocalRating(postHash, noteHash, prev, val);
+    this._refreshNoteSlot(postHash);
+    try {
+      const tx = await this._sendTagged(channel, `${NOTERATE_PREFIX}${noteHash}:${val}`);
+      utils.toast('Rating submitted ✓');
+      await tx.wait();
+      this._noteScanAt.delete(channel);
+    } catch (err) {
+      const msg = err.reason || err.message || 'Error';
+      const rej = err.code === 4001 || err.code === 'ACTION_REJECTED' || /reject|denied/i.test(msg);
+      utils.toast(rej ? 'Rating cancelled' : 'Rating failed: ' + msg);
+      /* Roll back the optimistic rating. */
+      if (prev !== undefined) this._myNoteRatings.set(noteHash, prev); else this._myNoteRatings.delete(noteHash);
+      this._applyLocalRating(postHash, noteHash, val, prev);
+      this._refreshNoteSlot(postHash);
+    }
+  }
+
+  openPollComposer() {
+    if (!this.signer) { utils.toast('Connect wallet to create a poll'); return; }
+    this._showGenericModal('Create a poll', `
+      <div style="margin-bottom:12px">
+        <input type="text" class="form-input" id="poll-q" placeholder="Ask a question…" maxlength="200">
+      </div>
+      <div id="poll-opts">
+        <input type="text" class="form-input poll-opt" placeholder="Option 1" maxlength="60" style="margin-bottom:8px">
+        <input type="text" class="form-input poll-opt" placeholder="Option 2" maxlength="60" style="margin-bottom:8px">
+      </div>
+      <button class="btn-ghost" id="poll-add-opt" style="font-size:13px;padding:6px 12px;margin-bottom:12px">+ Add option</button>
+      <div style="margin-bottom:12px">
+        <label style="font-size:13px;color:var(--muted);display:block;margin-bottom:4px">Poll length</label>
+        <select class="settings-btn" id="poll-duration" style="padding:9px 12px;width:100%">
+          <option value="60">1 hour</option>
+          <option value="360">6 hours</option>
+          <option value="1440" selected>1 day</option>
+          <option value="4320">3 days</option>
+          <option value="10080">7 days</option>
+        </select>
+      </div>
+      <div class="btn-row" style="margin-top:8px">
+        <button class="btn-pri" id="poll-create-btn">Post poll</button>
+        <button class="btn-ghost" id="poll-cancel-btn">Cancel</button>
+      </div>
+    `);
+    const g = id => document.getElementById(id);
+    g('poll-add-opt').onclick = () => {
+      const opts = document.querySelectorAll('.poll-opt');
+      if (opts.length >= 4) { utils.toast('Maximum 4 options'); return; }
+      const inp = document.createElement('input');
+      inp.type = 'text';
+      inp.className = 'form-input poll-opt';
+      inp.placeholder = `Option ${opts.length + 1}`;
+      inp.maxLength = 60;
+      inp.style.marginBottom = '8px';
+      g('poll-opts').appendChild(inp);
+    };
+    g('poll-cancel-btn').onclick = () => this._closeGenericModal();
+    g('poll-create-btn').onclick = () => this._createPoll();
+  }
+
+  async _createPoll() {
+    const g = id => document.getElementById(id);
+    const question = g('poll-q')?.value.trim();
+    const options = [...document.querySelectorAll('.poll-opt')]
+      .map(i => i.value.trim()).filter(Boolean);
+    if (!question) { utils.toast('Enter a question'); return; }
+    if (options.length < 2) { utils.toast('Add at least 2 options'); return; }
+    const mins = Number(g('poll-duration')?.value) || 1440;
+    const endMs = Date.now() + mins * 60000;
+    /* Compact JSON payload; question duplicated after \n\n for explorer readability. */
+    const payload = JSON.stringify({ o: options, e: endMs });
+    const body = `${POLL_PREFIX}${payload}\n\n${question}`;
+    this._closeGenericModal();
+    await this.publish(body);
+  }
+
+  /* Estimate gas with a deterministic fallback. A transient node error on
+     estimateGas must not block publishing — a data tx's intrinsic cost is
+     21000 + ~16 gas per byte; pad generously (×2) for safety. The wallet
+     still shows the final fee for user approval. */
+  async _estimateGasSafe(txReq, byteLen) {
+    try {
+      const gas = await this.signer.estimateGas(txReq);
+      return (gas * 130n) / 100n;
+    } catch (err) {
+      console.warn('estimateGas failed — using heuristic fallback', err);
+      return BigInt(21000 + Math.ceil(byteLen * 32));
+    }
+  }
+
+  async publish(content, parentTx = null, toAddress = null) {
+    if (!this.signer)     { utils.toast('Connect wallet first'); return false; }
+    if (!content?.trim()) { utils.toast('Message cannot be empty'); return false; }
+    /* Guard the chain: never send on the wrong network (mobile wallets default
+       to Ethereum). Switches to PulseChain if needed; aborts if it can't. */
+    if (!(await this._ensureOnPulseForTx())) return false;
+    let body = content.trim();
+    /* No character limit — users can post articles, essays, or books.
+       The feed truncates long posts with a "Show more" expand link. */
+    if (parentTx) body = `${REPLY_PREFIX}${parentTx}\n\n${body}`;
+    const to = toAddress || this.state.channel;
+    /* Non-blocking: no full-screen overlay. The wallet's own signing UI
+       covers the confirmation step; after that the user can keep using
+       the app while the tx mines. Toasts report the outcome. */
+    try {
+      const bytes   = ethers.toUtf8Bytes(body);
+      const data    = ethers.hexlify(bytes);
+      const txReq   = { to, value: '0', data };
+      const gas     = await this._estimateGasSafe(txReq, bytes.length);
+      const tx      = await this.signer.sendTransaction({ ...txReq, gasLimit: gas });
+      utils.toast('Submitting to chain… you can keep browsing');
+      const receipt = await tx.wait();
+      const hash    = receipt.hash.toLowerCase(); /* v6: transactionHash → hash */
+      /* Only insert an optimistic feed row for genuine feed content (plain
+         post, reply, repost/quote, poll). Exclude every non-feed prefix —
+         VOTE/NOTERATE/PROFILE_FOR/NOTE/LC_SYNC were missing, so those showed
+         up as a bogus "post" after publishing. */
+      if (!body.startsWith(PROFILE_PREFIX) &&
+          !body.startsWith(LIKE_PREFIX) &&
+          !body.startsWith(UNLIKE_PREFIX) &&
+          !body.startsWith(BOOKMARK_PREFIX) &&
+          !body.startsWith(UNBOOKMARK_PREFIX) &&
+          !body.startsWith(FOLLOW_PREFIX) &&
+          !body.startsWith(UNFOLLOW_PREFIX) &&
+          !body.startsWith(VOTE_PREFIX) &&
+          !body.startsWith(NOTERATE_PREFIX) &&
+          !body.startsWith(TOKEN_PROFILE_PREFIX) &&
+          !body.startsWith(NOTE_PREFIX) &&
+          !body.startsWith(LC_SYNC_PREFIX)) {
+        /* If this is a poll, parse it so the feed renders the poll UI
+           rather than the raw POLL:{json} text. */
+        const parsedPoll = body.startsWith(POLL_PREFIX) ? this._parsePoll(body) : null;
+        const post = {
+          content: body,
+          display: parsedPoll ? parsedPoll.question : content.trim(),
+          parentTx, direction: null, repostOf: null,
+          poll: parsedPoll,
+          postType: parsedPoll ? 'poll' : 'post',
+          reporter: this.state.signerAddr, to: to.toLowerCase(),
+          timestamp: new Date().toISOString(),
+          txHash: hash, channel: this.state.channel, mode: this.state.mode,
+        };
+        this.state.posts.unshift(post);
+        /* Add to the dedup set so the next poll doesn't treat our own
+           just-published post as "new" and create a duplicate row. */
+        if (this._postHashSet) this._postHashSet.add(hash);
+        await this.cache.savePosts([post]);
+        this.renderFeed();
+      }
+      utils.toast(`Published ✓  ${this.trunc(hash)}`);
+      return true;
+    } catch (err) {
+      const msg = err.reason || err.message || 'Unknown error';
+      /* Detect user rejection (MetaMask "user rejected transaction" or
+         EIP-1193 code 4001 / 'ACTION_REJECTED'). Show a friendly toast
+         instead of dumping the raw error string. */
+      const isRejection = err.code === 4001 ||
+        err.code === 'ACTION_REJECTED' ||
+        /user (denied|rejected)/i.test(msg) ||
+        /rejected (the )?(transaction|request)/i.test(msg);
+      if (isRejection) {
+        utils.toast('Transaction cancelled');
+        return false;
+      }
+      /* On network errors, save to offline queue so we can retry later */
+      const isOffline = !navigator.onLine || msg.includes('network') ||
+        msg.includes('timeout') || msg.includes('fetch');
+      if (isOffline) {
+        /* Don't queue reactions/control txs (like/unlike/follow/bookmark/vote/
+           note/profile) — they're fire-and-forget, and a stale retry after the
+           original actually mined would duplicate the tx / double gas. Only
+           real posts/replies/quotes/polls are worth re-sending. */
+        const isReaction = [LIKE_PREFIX, UNLIKE_PREFIX, FOLLOW_PREFIX, UNFOLLOW_PREFIX,
+          BOOKMARK_PREFIX, UNBOOKMARK_PREFIX, VOTE_PREFIX, NOTERATE_PREFIX,
+          PROFILE_PREFIX, TOKEN_PROFILE_PREFIX, NOTE_PREFIX, LC_SYNC_PREFIX]
+          .some(p => body.startsWith(p));
+        if (isReaction) { utils.toast('Network error — please try again'); return false; }
+        const queueId = `pq_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+        const queued = {
+          queueId, content, parentTx, toAddress: toAddress || this.state.channel,
+          channel: this.state.channel, mode: this.state.mode,
+          signerAddr: this.state.signerAddr,
+          queuedAt: new Date().toISOString(),
+        };
+        try {
+          await this.cache.savePendingPost(queued);
+          /* Show as pending in the feed immediately */
+          this._showPendingInFeed(queued);
+          utils.toast('⏳ Saved offline — will retry when reconnected');
+        } catch { utils.toast('Failed: ' + msg); }
+      } else {
+        utils.toast('Failed: ' + msg);
+      }
+      return false;
+    }
+  }
+
+  async publishPost() {
+    const text = this.g('compose-text').value.trim();
+    if (!text) return false;
+    /* Disable the Post button during the publish round-trip so users can't
+       double-click and fire two transactions. Re-enable in finally. */
+    const btn = this.g('post-btn');
+    if (btn) btn.disabled = true;
+    try {
+      const ok = await this.publish(text);
+      if (ok) {
+        this.g('compose-text').value = '';
+        this.g('compose-text').style.height = '';
+        utils.updateCharCount(this.g('compose-text'), null);
+        this._clearDraft();
+      }
+      return ok;
+    } finally {
+      /* Re-derive from content: empty after a successful post → stays disabled;
+         still has text after a failure → re-enabled so the user can retry. */
+      this._syncPostBtn();
+    }
+  }
+
+  /* Enable the Post buttons only when their compose box has content. */
+  _syncPostBtn() {
+    const pb = this.g('post-btn');
+    if (pb) pb.disabled = !this.g('compose-text')?.value.trim();
+    const mpb = this.g('modal-post-btn');
+    if (mpb) mpb.disabled = !this.g('modal-compose-text')?.value.trim();
+  }
+
+  /* Point the My Channel / Profile nav links at the connected wallet's pages so
+     right-click / middle-click / ⌘-click can open them in a new tab. */
+  _syncNavLinks() {
+    const a = this.state.signerAddr;
+    const mc = this.g('nav-mychannel'), pr = this.g('nav-profile');
+    if (mc) { if (a) mc.href = '#/channel/' + a; else mc.removeAttribute('href'); }
+    if (pr) { if (a) pr.href = '#/profile/' + a; else pr.removeAttribute('href'); }
+  }
+
+  openReplyModal(post) {
+    this.state.replyTarget = post;
+    const preview = post.display.length > 120 ? post.display.slice(0, 120) + '…' : post.display;
+    this.g('reply-quote').textContent  = `↳ ${this.trunc(post.reporter)}: "${preview}"`;
+    this.g('reply-input').value        = '';
+    this.g('reply-input').style.height = '';
+    this.g('reply-count').textContent  = '';
+    this.g('reply-modal').classList.add('open');
+    this._trapFocus(this.g('reply-modal'));
+    this.g('reply-input').focus();
+  }
+
+  /* ── Like ───────────────────────────────────────────────────────────── */
+  /* In-flight reaction guard: a second tap on like/bookmark/follow/repost
+     while the first tx is still in the wallet round-trip would read the
+     already-flipped optimistic state and fire the OPPOSITE action (e.g. LIKE
+     then UNLIKE), wasting gas. _reactionBusy(key) returns true (and reserves
+     the key) if free, false if already in flight. */
+  _reactionBusy(key) {
+    this._pendingTx ??= new Set();
+    if (this._pendingTx.has(key)) return false;
+    this._pendingTx.add(key);
+    return true;
+  }
+
+  async toggleLike(post, itemEl) {
+    if (!this.signer) { utils.toast('Connect wallet to like posts'); return; }
+    const hash = post.txHash;
+    if (!this._reactionBusy('like:' + hash)) return;
+    try {
+      const btn  = itemEl.querySelector('[data-action="like"]');
+      const icon = btn?.querySelector('.act-icon');
+      const heartFull  = this.icon('ic-heart-full');
+      const heartEmpty = this.icon('ic-heart-empty');
+      /* Optimistic like count — bump the .act-count immediately, revert on fail. */
+      const countEl = btn?.querySelector('.act-count');
+      const bump = d => { if (!countEl) return; const c = (parseInt(countEl.textContent, 10) || 0) + d; countEl.textContent = c > 0 ? String(c) : ''; };
+      const destination = post.to || this.state.channel;
+      if (this.state.likes.has(hash)) {
+        /* Toggle off — publish UNLIKE so the change persists across sessions.
+           Optimistic UI: remove immediately, revert on tx failure. */
+        this.state.likes.delete(hash);
+        if (btn)  btn.classList.remove('liked');
+        if (icon) icon.innerHTML = heartEmpty;
+        bump(-1);
+        const ok = await this.publish(UNLIKE_PREFIX + hash, null, destination);
+        if (!ok) {
+          this.state.likes.add(hash);
+          if (btn)  btn.classList.add('liked');
+          if (icon) icon.innerHTML = heartFull;
+          bump(1);
+        } else {
+          utils.toast('Like removed on-chain');
+        }
+      } else {
+        this.state.likes.add(hash);
+        if (btn)  btn.classList.add('liked');
+        if (icon) icon.innerHTML = heartFull;
+        bump(1);
+        const ok = await this.publish(LIKE_PREFIX + hash, null, destination);
+        if (!ok) {
+          this.state.likes.delete(hash);
+          if (btn)  btn.classList.remove('liked');
+          if (icon) icon.innerHTML = heartEmpty;
+          bump(-1);
+        } else {
+          utils.toast('Liked on-chain');
+        }
+      }
+    } finally {
+      this._pendingTx.delete('like:' + hash);
+    }
+  }
+
+  /* ── Bookmark ───────────────────────────────────────────────────────── */
+  async toggleBookmark(post, itemEl) {
+    if (!this.signer) { utils.toast('Connect wallet to bookmark posts'); return; }
+    const hash = post.txHash;
+    if (!this._reactionBusy('bookmark:' + hash)) return;
+    try {
+      const btn  = itemEl.querySelector('[data-action="bookmark"]');
+      const icon = btn?.querySelector('.act-icon');
+      const bmFull  = this.icon('ic-bookmark-full');
+      const bmEmpty = this.icon('ic-bookmark-empty');
+      if (this.state.bookmarks.has(hash)) {
+        /* Toggle off — publish UNBOOKMARK so the change persists. */
+        this.state.bookmarks.delete(hash);
+        if (btn)  btn.classList.remove('bookmarked');
+        if (icon) icon.innerHTML = bmEmpty;
+        const ok = await this.publish(UNBOOKMARK_PREFIX + hash, null, this.state.signerAddr);
+        if (!ok) {
+          this.state.bookmarks.add(hash);
+          if (btn)  btn.classList.add('bookmarked');
+          if (icon) icon.innerHTML = bmFull;
+        } else {
+          utils.toast('Bookmark removed on-chain');
+        }
+      } else {
+        this.state.bookmarks.add(hash);
+        if (btn)  btn.classList.add('bookmarked');
+        if (icon) icon.innerHTML = bmFull;
+        const ok = await this.publish(BOOKMARK_PREFIX + hash, null, this.state.signerAddr);
+        if (!ok) {
+          this.state.bookmarks.delete(hash);
+          if (btn)  btn.classList.remove('bookmarked');
+          if (icon) icon.innerHTML = bmEmpty;
+        } else {
+          utils.toast('Bookmarked on-chain');
+        }
+      }
+    } finally {
+      this._pendingTx.delete('bookmark:' + hash);
+    }
+  }
+
+  /* ── Repost / Quote (X-style) ────────────────────────────────────────── */
+
+  /* Show the two-option repost menu: instant repost OR quote post */
+  openRepostChoice(post, anchorEl) {
+    /* Close any existing menu */
+    const existing = document.querySelector('.repost-choice-menu');
+    if (existing) { existing.remove(); return; }
+
+    const menu = document.createElement('div');
+    menu.className = 'repost-choice-menu post-menu-dropdown open';
+    menu.innerHTML = `
+      <div class="post-menu-item" id="rc-repost">
+        <svg viewBox="0 0 24 24" width="18" height="18">
+          <path fill="currentColor" d="M4.5 3.88l4.432 4.14-1.364 1.46L5.5 7.55V16c0 1.1.896 2 2 2H13v2H7.5c-2.209 0-4-1.79-4-4V7.55L1.432 9.48.068 8.02 4.5 3.88zM16.5 6H11V4h5.5c2.209 0 4 1.79 4 4v8.45l2.068-1.93 1.364 1.46L19.5 20.12l-4.432-4.14 1.364-1.46 2.068 1.93V8c0-1.1-.896-2-2-2z"/>
+        </svg>
+        <span>Repost</span>
+      </div>
+      <div class="post-menu-item" id="rc-quote">
+        <svg viewBox="0 0 24 24" width="18" height="18">
+          <path fill="currentColor" d="M19.75 2H4.25C3.01 2 2 3.01 2 4.25v15.5C2 20.99 3.01 22 4.25 22h15.5c1.24 0 2.25-1.01 2.25-2.25V4.25C22 3.01 20.99 2 19.75 2zM11.5 17.5h-7v-1.5l2-2H4.5V10h7v7zm7 0h-7v-1.5l2-2H11.5V10h7v7z"/>
+        </svg>
+        <span>Quote Post</span>
+      </div>`;
+
+    document.body.appendChild(menu);
+
+    /* Position below the repost button */
+    const rect = anchorEl ? anchorEl.getBoundingClientRect()
+      : { left: window.innerWidth/2 - 110, bottom: window.innerHeight/2, top: window.innerHeight/2 - 40 };
+    const mw = menu.offsetWidth  || 220;
+    const mh = menu.offsetHeight || 100;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let left, top;
+    if (anchorEl) {
+      /* Align menu's left edge with button; clamp to viewport */
+      left = rect.left;
+      top  = rect.bottom + 6;
+      /* Flip above if it would overflow bottom */
+      if (top + mh > vh - 8) top = rect.top - mh - 6;
+      /* Keep fully within horizontal bounds */
+      if (left + mw > vw - 8) left = vw - mw - 8;
+      if (left < 8) left = 8;
+    } else {
+      /* Keyboard trigger / no anchor — center in viewport */
+      left = Math.max(8, (vw - mw) / 2);
+      top  = Math.max(8, (vh - mh) / 2);
+    }
+    /* Final clamp — guarantees menu is never off-screen on any device */
+    left = Math.min(left, vw - mw - 8);
+    top  = Math.min(top,  vh - mh - 8);
+    menu.style.left = Math.max(8, left) + 'px';
+    menu.style.top  = Math.max(8, top)  + 'px';
+
+    /* Wire actions */
+    menu.querySelector('#rc-repost').onclick = async e2 => {
+      e2.stopPropagation();
+      menu.remove();
+      /* Instant repost — no text, no modal */
+      if (!this.signer) { utils.toast('Connect wallet to repost'); return; }
+      if (!this._reactionBusy('repost:' + post.txHash)) return;
+      try {
+        const ok = await this.publish(`REPOST:${post.txHash}`);
+        if (ok) utils.toast('Reposted');
+      } finally {
+        this._pendingTx.delete('repost:' + post.txHash);
+      }
+    };
+    menu.querySelector('#rc-quote').onclick = e2 => {
+      e2.stopPropagation();
+      menu.remove();
+      this.openQuoteModal(post);
+    };
+
+    /* Close on outside click */
+    setTimeout(() => {
+      const close = e2 => {
+        if (!menu.contains(e2.target)) {
+          menu.remove();
+          document.removeEventListener('click', close, true);
+        }
+      };
+      document.addEventListener('click', close, true);
+    }, 0);
+  }
+
+  /* Open the quote compose modal with the quoted post card */
+  openQuoteModal(post) {
+    if (!this.signer) { utils.toast('Connect wallet to quote'); return; }
+    this.state.repostTarget = post;
+    /* Build a full quoted card in the modal */
+    const c       = this.state.profCache[post.reporter];
+    const name    = c?.username ? utils.safe(c.username) : this.trunc(post.reporter);
+    const pic     = utils.safe(utils.safeUrl(c?.picUrl) || 'image1.jpeg');
+    const preview = utils.safe(post.display.slice(0, 200) + (post.display.length > 200 ? '…' : ''));
+    const relT    = this.relTime(post.timestamp);
+    this.g('repost-quote').innerHTML = `
+      <div class="quote-card-preview">
+        <div class="repost-card-hdr">
+          <img src="${pic}" class="repost-card-avatar" alt="" onerror="this.src='image1.jpeg'">
+          <span class="repost-card-name">${name}</span>
+          <span style="color:var(--muted);font-size:13px;margin-left:4px">· ${relT}</span>
+        </div>
+        <div class="repost-card-body">${preview}</div>
+      </div>`;
+    /* Change modal title to "Quote Post" */
+    const title = this.g('repost-modal').querySelector('.modal-title');
+    if (title) title.textContent = 'Quote Post';
+    const btn = this.g('post-repost-btn');
+    if (btn) btn.textContent = 'Quote';
+    this.g('repost-input').value        = '';
+    this.g('repost-input').style.height = '';
+    this.g('repost-modal').classList.add('open');
+    this._trapFocus(this.g('repost-modal'));
+    this.g('repost-input').focus();
+  }
+
+  /* openRepostModal: redirects to quote flow (keyboard shortcut T and legacy callers) */
+  openRepostModal(post) { this.openQuoteModal(post); }
+
+  async postRepost() {
+    if (!this.state.repostTarget) return;
+    const comment = this.g('repost-input').value.trim();
+    if (!comment) { utils.toast('Add some text to quote this post'); return; }
+    const hash    = this.state.repostTarget.txHash;
+    /* Quote format: REPOST:{hash}\n\n{comment} */
+    const content = `REPOST:${hash}\n\n${comment}`;
+    const ok = await this.publish(content);
+    if (ok) {
+      this.closeModal('repost-modal');
+      this.g('repost-input').value = '';
+      utils.toast('Quoted on-chain');
+    }
+  }
+
+  async postReply() {
+    const text = this.g('reply-input').value.trim();
+    if (!text || !this.state.replyTarget) return;
+    const ok = await this.publish(text, this.state.replyTarget.txHash, this.state.replyTarget.to);
+    if (ok) { this.closeModal('reply-modal'); this.g('reply-input').value = ''; }
+  }
+
+  /* Open a quoted post by hash. Tries _postMap first; if not there,
+     looks in IDB; if still not there, fetches from chain. The placeholder
+     card click landed us here because _postMap may have been cleared by
+     navigation since the card was rendered. */
+  async _openQuotedPost(hash, channelHint) {
+    if (!hash) return;
+    const inMap = this._postMap.get(hash);
+    if (inMap) { this.openThread(inMap); return; }
+    /* Try IDB cache */
+    try {
+      const cached = await this.cache.getPost(hash);
+      if (cached) {
+        this._postMap.set(hash, cached);
+        this.openThread(cached);
+        return;
+      }
+    } catch { /* IDB miss — fall through to chain fetch */ }
+    /* Last resort: fetch from chain on the channel hint */
+    if (!channelHint) { utils.toast('Post not loaded yet — try again'); return; }
+    utils.toast('Loading post from chain…', 2000);
+    await this._fetchQuotedPost(hash, channelHint);
+    const fetched = this._postMap.get(hash);
+    if (fetched) this.openThread(fetched);
+    else utils.toast("Couldn't find that post on this channel");
+  }
+
+  /* ── Hash-based routing ───────────────────────────────────────────────
+     Views map to URL hashes (#/profile/0x…, #/post/0x…, #/explore, …) so
+     pages are shareable and back/forward works. Hash routes are domain- and
+     base-path-independent, so they survive a custom-domain switch and work on
+     any static host (GitHub Pages, IPFS) with no server rewrites. */
+  _postUrl(hash)    { return location.origin + location.pathname + '#/post/' + hash; }
+  _profileUrl(addr) { return location.origin + location.pathname + '#/profile/' + addr; }
+
+  /* Push a route into the address bar. No-op when navigation was initiated BY
+     the router (back/forward / deep link), so we don't add duplicate history. */
+  _setRoute(path) {
+    if (this._suppressRoute) return;
+    const target = '#' + path;
+    if (location.hash === target) { this._lastRoutedHash = target; return; }
+    try {
+      /* First navigation replaces the load entry; later ones push so
+         back/forward walks the in-app history. */
+      if (!this._lastRoutedHash) history.replaceState(null, '', target);
+      else history.pushState(null, '', target);
+    } catch { location.hash = target; }
+    this._lastRoutedHash = target;
+  }
+
+  /* Drive the app from the current URL hash (initial load, back/forward, or a
+     manual address-bar edit). Dispatches to the matching view with route
+     pushes suppressed so it doesn't re-push the same entry. */
+  _routeTo() {
+    const cur = location.hash;
+    if (cur === this._lastRoutedHash) return; /* deduped (popstate+hashchange both fire) */
+    this._lastRoutedHash = cur;
+    const parts = cur.replace(/^#\/?/, '').split('/');
+    const seg = parts[0] || '';
+    const arg = parts[1] ? decodeURIComponent(parts[1]) : '';
+    this._suppressRoute = true;
+    try {
+      switch (seg) {
+        case '': case 'home':  this.goHome(); break;
+        case 'explore':        this.goExplore(['people','channels','latest','trending'].includes(arg) ? arg : null); break;
+        case 'notifications':  this.goNotifications(); break;
+        case 'bookmarks':      this.goBookmarks(); break;
+        case 'channels':       this.goChannels(); break;
+        case 'settings':       this.goSettings(); break;
+        case 'lists':          this.goLists?.(); break;
+        case 'analytics':      this.goAnalytics?.(); break;
+        case 'communities':    this.goCommunities?.(); break;
+        case 'profile':        /^0x[a-f0-9]{40}$/i.test(arg)
+                                 ? this.goProfilePage(arg.toLowerCase(), arg.toLowerCase() === this.state.signerAddr)
+                                 : this.goHome(); break;
+        case 'post':           /^0x[a-f0-9]{64}$/i.test(arg) ? this.openThreadByHash(arg.toLowerCase()) : this.goHome(); break;
+        case 'channel':        if (/^0x[a-f0-9]{40}$/i.test(arg)) { this.g('custom-input').value = arg; this.goCustom(); } else this.goHome(); break;
+        case 'tag':            arg ? this.filterByTag(arg) : this.goHome(); break;
+        default:               this.goHome();
+      }
+    } finally { this._suppressRoute = false; }
+  }
+
+  _initRouter() {
+    const handler = () => this._routeTo();
+    window.addEventListener('popstate', handler);
+    window.addEventListener('hashchange', handler);
+  }
+
+  /* Open the user's chosen launch tab (Settings → Content & Feed) when the
+     page wasn't opened on a deep link. Only self-loading views are offered, so
+     there's no dependency on the (skipped) home scan or a connected wallet. */
+  _goDefaultView(view) {
+    switch (view) {
+      case 'explore':   this.goExplore(); break;
+      case 'bookmarks': this.goBookmarks(); break;
+      default:          this.goHome();
+    }
+  }
+
+  /* Share a URL via the native share sheet when available, else copy it. */
+  _shareUrl(url, text) {
+    if (navigator.share) {
+      navigator.share({ title: 'Say It DeFi', text: text || '', url }).catch(() => {});
+    } else {
+      utils.copyToClipboard(url, 'Link copied!');
+    }
+  }
+  sharePost(post) {
+    if (!post) return;
+    this._shareUrl(this._postUrl(post.txHash), (post.display || '').slice(0, 80));
+  }
+
+  /* Fetch a single tx by hash (for deep-linking a post, or loading a
+     bookmark that isn't cached). Primary path is the Blockscout v2 single-tx
+     endpoint, which returns the input, from/to AND a real timestamp in one
+     call. (The old module=proxy&action=eth_getTransactionByHash action was
+     dropped by PulseScan — it now answers "Unknown action", which is why cold
+     deep-links had stopped resolving.) Falls back to the JSON-RPC node,
+     enriched with the block timestamp, if v2 is unreachable. */
+  async _fetchTxByHash(hash) {
+    /* Guard: hash is interpolated into the request URL below — never send
+       a malformed value to the explorer (and short-circuit junk lookups). */
+    if (!/^0x[0-9a-f]{64}$/i.test(hash || '')) return null;
+    const s = this._getSettings();
+    const base = (s.apiUrl || 'https://api.scan.pulsechain.com/api').replace(/\/api\/?$/, '');
+    let txLike = null;
+    /* Primary: Blockscout v2. */
+    try {
+      const res = await fetch(`${base}/api/v2/transactions/${hash}`);
+      if (res.ok) {
+        const d = await res.json();
+        if (d && d.raw_input && d.raw_input !== '0x') {
+          txLike = {
+            hash:  d.hash || hash,
+            from:  d.from?.hash,
+            to:    d.to?.hash,
+            input: d.raw_input,
+            blockNumber: d.block ?? null,
+            timeStamp: d.timestamp ? Math.floor(new Date(d.timestamp).getTime() / 1000) : null,
+          };
+        }
+      }
+    } catch { /* fall through to RPC */ }
+    /* Fallback: JSON-RPC node, with a best-effort block-timestamp lookup. */
+    if (!txLike) {
+      try {
+        const prov = this._getReadProvider();
+        const tx = await prov.getTransaction(hash);
+        if (tx && tx.data && tx.data !== '0x') {
+          let timeStamp = null;
+          try {
+            if (tx.blockNumber != null) {
+              const blk = await prov.getBlock(tx.blockNumber);
+              if (blk?.timestamp) timeStamp = blk.timestamp;
+            }
+          } catch { /* leave null → _parsePostTx falls back to now */ }
+          txLike = {
+            hash: tx.hash || hash, from: tx.from, to: tx.to,
+            input: tx.data, blockNumber: tx.blockNumber ?? null, timeStamp,
+          };
+        }
+      } catch { /* give up below */ }
+    }
+    if (!txLike) return null;
+    /* Same ingestion gate as apiFetch — single-tx lookups must not bypass
+       the explorer-shape validation. */
+    if (!utils.isTxShape(txLike)) return null;
+    utils._stripBadNumerics(txLike);
+    const parsed = this._parsePostTx(txLike, { mode: 'main' });
+    if (parsed) this._postMap.set(hash, parsed);
+    return parsed;
+  }
+
+  openThread(post) {
+    if (!post) { utils.toast('Post not loaded yet — try again'); return; }
+    this._setRoute('/post/' + post.txHash);
+    this._updateTitle('Post');
+    /* Save previous view so back button can restore it */
+    this._prevMode    = this.state.mode;
+    this._prevChannel = this.state.channel;
+    this._prevPosts   = this.state.posts;
+
+    this.state.mode = 'thread';
+    this.g('compose-area').style.display   = 'none';
+    this.g('channel-banner').style.display = 'none';
+    this.g('feed-tabs').style.display      = 'none';
+    this.g('new-banner').classList.remove('visible');
+    this.g('loading-more').style.display   = 'none';
+    /* Thread page header: back arrow + "Post" title, exactly like X */
+    this._pendingPageHeader = this._makePageHeader({
+      title: 'Post',
+      back: true,
+    });
+    /* Override back action to restore previous view, not history.back() */
+    this._threadBackOverride = true;
+
+    this.state.threadPost = post;
+    this.state.threadAncestors = [];   /* reset; filled by _fetchThreadAncestors */
+    this._renderThreadPage(post);
+    this.fetchThreadReplies(post);
+    /* If this post is a reply, fetch and render its ancestors above it */
+    if (post.parentTx) this._fetchThreadAncestors(post);
+  }
+
+  /* Walk the parentTx chain upward from the focused post, up to 5 ancestors.
+     Missing parents are resolved by hash via _fetchTxByHash (works no matter
+     how deep in the channel they are — the old page-1 scan missed anything
+     older than the latest 50 txs). Ancestors are stored in state and rendered
+     by _renderThreadPage, so a reply re-render no longer wipes them. */
+  async _fetchThreadAncestors(post) {
+    const MAX_HOPS = 5;
+    let current = post;
+    const ancestors = [];
+    for (let hop = 0; hop < MAX_HOPS && current.parentTx; hop++) {
+      let parent = this._postMap.get(current.parentTx);
+      if (!parent) {
+        try { parent = await this._fetchTxByHash(current.parentTx); }
+        catch { break; }
+      }
+      if (!parent) break;
+      ancestors.unshift(parent);
+      if (parent.reporter && parent.reporter !== this.state.signerAddr)
+        this.fetchOtherProfile(parent.reporter);
+      current = parent;
+    }
+    if (!ancestors.length) return;
+    /* Bail if the user navigated away or opened a different thread while we
+       were fetching. */
+    if (this.state.mode !== 'thread' || this.state.threadPost?.txHash !== post.txHash) return;
+    this.state.threadAncestors = ancestors;
+    this._renderThreadPage(post);
+  }
+
+  _threadBack() {
+    this._threadBackOverride = false;
+    /* Restore previous view */
+    const prev = this._prevMode || 'main';
+    if (prev === 'main')         this.goHome();
+    else if (prev === 'profile') this.openProfileModal();
+    else if (prev === 'self')    this.goSelf();
+    else if (prev === 'custom') {
+      this.g('custom-input').value = this._prevChannel || '';
+      this.goCustom();
+    } else this.goHome();
+  }
+
+  /* X-style focal-post layout for the thread page: avatar with stacked
+     name/handle in the header row, full-width large body below, complete
+     timestamp line, then the standard action bar. Action buttons carry the
+     same data-action attributes, so the feed delegation handles them. */
+  _threadHeroHTML(post, replyMap) {
+    const { picUrl, displayName, verifiedBadge } = this._postProfileFields(post);
+    const { text: bodyHtml, images: imgHtml, embeds: embedHtml } = utils.linkify(post.display, post.display);
+    const repostCard = this._postRepostCard(post);
+    const d = new Date(post.timestamp);
+    const timeLine = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+      + ' · ' + d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      + (post.blockNumber ? ` · Block #${post.blockNumber}` : '');
+    return `
+      <div class="hero-hdr">
+        <a class="post-avatar-link" href="#/profile/${utils.safe(post.reporter)}"
+          aria-label="View profile" tabindex="-1"><img src="${utils.safe(picUrl)}" class="post-avatar" alt=""
+          loading="lazy" onerror="this.src='image1.jpeg'"></a>
+        <div class="hero-id">
+          <a class="post-name" href="#/profile/${utils.safe(post.reporter)}">${displayName}</a>${verifiedBadge}
+          <span class="hero-handle" role="button" tabindex="0" data-addr="${utils.safe(post.reporter)}"
+            title="Click to copy address">@${this.trunc(post.reporter)}</span>
+        </div>
+        <button class="post-menu-btn" data-action="menu" title="More options"
+          aria-label="More options" aria-haspopup="menu" aria-expanded="false">${this.icon('ic-menu')}</button>
+      </div>
+      <div class="hero-body">${bodyHtml}</div>
+      ${post.poll ? this._pollHTML(post) : ''}
+      ${repostCard}
+      ${embedHtml || ''}
+      ${imgHtml ? `<div class="post-images">${imgHtml}</div>` : ''}
+      <div class="note-slot" data-note-host="${utils.safe(post.txHash)}">${this._noteHTML(post)}</div>
+      <a class="hero-time" href="https://otter.pulsechain.com/tx/${utils.safe(post.txHash)}"
+        target="_blank" rel="noopener noreferrer" title="View transaction on explorer"
+        onclick="event.stopPropagation()">${utils.safe(timeLine)}</a>
+      ${this._postActionsHTML(post, replyMap, null, null, null)}`;
+  }
+
+  _renderThreadPage(post) {
+    const replyMap = new Map();
+    this.state.posts.forEach(p => {
+      if (p.parentTx) replyMap.set(p.parentTx, (replyMap.get(p.parentTx) || 0) + 1);
+    });
+    this._postMap.set(post.txHash, post);
+    const origHTML = this._threadHeroHTML(post, replyMap);
+
+    /* Ancestor posts above the focal post — resolved by _fetchThreadAncestors
+       and kept in state, so this re-render (e.g. after posting a reply) keeps
+       them instead of wiping the DOM-inserted rows. Clicks are handled by the
+       #feed delegated listener (the posts are in _postMap). */
+    const ancestors = this.state.threadAncestors || [];
+    let ancestorsHTML = '';
+    if (ancestors.length) {
+      ancestorsHTML = `<div style="padding:8px 16px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--border)">↑ ${ancestors.length} ancestor post${ancestors.length > 1 ? 's' : ''}</div>`;
+      ancestors.forEach(anc => {
+        this._postMap.set(anc.txHash, anc);
+        ancestorsHTML += `<div class="post-item thread-ancestor-item" data-txhash="${utils.safe(anc.txHash)}" style="opacity:0.85;border-bottom:1px solid var(--border)">${this.postHTML(anc, true, null, null)}</div>`;
+      });
+    }
+
+    const replies = this.state.posts
+      .filter(p => p.parentTx === post.txHash && p.postType !== 'like' && p.postType !== 'follow')
+      .sort((a,b) => (a._tsMs ??= new Date(a.timestamp).getTime()) - (b._tsMs ??= new Date(b.timestamp).getTime()));
+
+    let repliesHTML = '';
+    replies.forEach((r, i) => {
+      this._postMap.set(r.txHash, r);
+      /* Connector position classes: first/last/only get special line
+         treatment so the thread line connects cleanly between rows. */
+      let posClass = '';
+      if (replies.length === 1)       posClass = ' thread-only-reply';
+      else if (i === 0)               posClass = ' thread-first-reply';
+      else if (i === replies.length-1) posClass = ' thread-last-reply';
+      repliesHTML += `<div class="post-item thread-reply-item${posClass}" data-txhash="${utils.safe(r.txHash)}">${this.postHTML(r, true, null, null)}</div>`;
+    });
+
+    const threadHeader = this._applyPageHeader();
+    /* X-canonical thread layout: original post at top, the reply composer
+       directly beneath it, then the replies below. */
+    const replyingToName = this.state.profCache[post.reporter]?.username
+      || this.trunc(post.reporter);
+    this.g('feed').innerHTML = threadHeader + `
+      <div class="thread-page">
+        ${ancestorsHTML}
+        <div class="post-item thread-orig-item" data-txhash="${utils.safe(post.txHash)}"
+          style="cursor:default">
+          ${origHTML}
+        </div>
+        <div class="thread-reply-to">Replying to <span>@${utils.safe(replyingToName)}</span></div>
+        <div class="thread-compose">
+          <img src="${utils.safe(utils.safeUrl(this.state.profile.picUrl) || 'image1.jpeg')}"
+            class="compose-avatar" alt="" onerror="this.src='image1.jpeg'">
+          <div style="flex:1">
+            <textarea class="auto-textarea" id="thread-page-input"
+              placeholder="Post your reply…" style="min-height:54px"></textarea>
+            <div class="thread-compose-bar">
+              <div class="compose-icons">
+                <button class="cmp-icon" id="thread-media-btn" title="Add photos or video" aria-label="Add media">
+                  <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 5.5C3 4.119 4.119 3 5.5 3h13C19.881 3 21 4.119 21 5.5v13c0 1.381-1.119 2.5-2.5 2.5h-13C4.119 21 3 19.881 3 18.5v-13zM5.5 5c-.276 0-.5.224-.5.5v9.086l3-3 3 3 5-5 3 3V5.5c0-.276-.224-.5-.5-.5h-13zM19 15.414l-3-3-5 5-3-3-3 3V18.5c0 .276.224.5.5.5h13c.276 0 .5-.224.5-.5v-3.086zM9.75 7C8.784 7 8 7.784 8 8.75s.784 1.75 1.75 1.75 1.75-.784 1.75-1.75S10.716 7 9.75 7z"/></svg>
+                </button>
+                <button class="cmp-icon" id="thread-gif-btn" title="Add a GIF" aria-label="Add GIF">
+                  <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 5.5C3 4.119 4.119 3 5.5 3h13C19.881 3 21 4.119 21 5.5v13c0 1.381-1.119 2.5-2.5 2.5h-13C4.119 21 3 19.881 3 18.5v-13zM5.5 5c-.276 0-.5.224-.5.5v13c0 .276.224.5.5.5h13c.276 0 .5-.224.5-.5v-13c0-.276-.224-.5-.5-.5h-13z"/></svg>
+                </button>
+                <button class="cmp-icon" id="thread-emoji-btn" title="Emoji" aria-label="Insert emoji">
+                  <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M8 9.5C8 8.672 8.672 8 9.5 8s1.5.672 1.5 1.5S10.328 11 9.5 11 8 10.328 8 9.5zm6.5 1.5c.828 0 1.5-.672 1.5-1.5S15.328 8 14.5 8 13 8.672 13 9.5s.672 1.5 1.5 1.5zM12 16c-2.224 0-3.021-1.4-3.094-1.536l-1.76.992C7.196 15.69 8.638 18 12 18s4.804-2.31 4.854-2.544l-1.76-.992C15.021 14.6 14.224 16 12 16zm-.002-14C6.477 2 2 6.477 2 12s4.477 10 9.998 10C17.523 22 22 17.523 22 12S17.523 2 11.998 2zM12 20C7.582 20 4 16.418 4 12s3.582-8 8-8 8 3.582 8 8-3.582 8-8 8z"/></svg>
+                </button>
+              </div>
+              <button class="btn-pri" id="thread-page-reply-btn" style="padding:8px 20px">Reply</button>
+            </div>
+          </div>
+        </div>
+        ${repliesHTML ? '' : ''}
+        <div id="thread-replies-page">
+          ${repliesHTML || '<div class="prof-empty" style="padding:40px 32px"><span>💬</span><h3>No replies yet</h3><p>Be the first to reply.</p></div>'}
+        </div>
+        <div id="thread-loading-page" style="display:none;padding:16px;text-align:center;color:var(--muted);font-size:14px">
+          <span class="spinner sp-sm" aria-hidden="true"></span>Fetching replies from chain…
+        </div>
+      </div>`;
+
+    /* Wire back button to use _threadBack() (restores feed state correctly) */
+    const threadBackBtn = this.g('feed')?.querySelector('.page-header-back');
+    if (threadBackBtn) threadBackBtn.onclick = () => this._threadBack();
+
+    /* Wire thread compose */
+    const input = document.getElementById('thread-page-input');
+    const btn   = document.getElementById('thread-page-reply-btn');
+    if (input) input.oninput = () => utils.autoGrow(input);
+    if (btn) btn.onclick = () => this._postThreadPageReply(post, input);
+    /* Thread compose toolbar — media/gif insert a URL into the reply box,
+       emoji opens the picker targeting the thread input. */
+    const tMedia = document.getElementById('thread-media-btn');
+    const tGif   = document.getElementById('thread-gif-btn');
+    const tEmoji = document.getElementById('thread-emoji-btn');
+    const insertIntoThread = (text) => {
+      if (!input) return;
+      const pos = input.selectionStart ?? input.value.length;
+      input.value = input.value.slice(0, pos) + text + input.value.slice(pos);
+      input.focus(); utils.autoGrow(input);
+    };
+    if (tMedia) tMedia.onclick = () => {
+      const url = prompt('Paste an image, GIF, or video URL:');
+      if (url && url.trim()) insertIntoThread((input.value ? ' ' : '') + url.trim());
+    };
+    if (tGif) tGif.onclick = () => {
+      const url = prompt('Paste a GIF URL:');
+      if (url && url.trim()) insertIntoThread((input.value ? ' ' : '') + url.trim());
+    };
+    if (tEmoji) tEmoji.onclick = () => this._openEmojiPickerFor(input, tEmoji);
+
+    /* Wire click delegation on replies */
+    const repliesEl = document.getElementById('thread-replies-page');
+    if (repliesEl) repliesEl.addEventListener('click', e => this.onFeedClick(e, true));
+    const origEl = this.g('feed').querySelector('.thread-orig-item');
+    if (origEl) origEl.addEventListener('click', e => this.onFeedClick(e, true));
+    this._tallyVisiblePolls();
+    /* Gather community notes so the "Readers added context" card / proposed
+       marker shows on the thread's posts too. */
+    this._scanChannelNotes();
+  }
+
+  async _postThreadPageReply(post, inputEl) {
+    const text = inputEl?.value.trim();
+    if (!text) return;
+    const ok = await this.publish(text, post.txHash, post.to);
+    if (ok) {
+      inputEl.value = '';
+      inputEl.style.height = '';
+      /* Re-render thread with new reply */
+      this._renderThreadPage(post);
+    }
+  }
+
+  async fetchThreadReplies(post) {
+    const loadingEl = document.getElementById('thread-loading-page');
+    if (loadingEl) loadingEl.style.display = 'block';
+
+    const targetHash = post.txHash;
+    const scanAddr   = post.to || this.state.channel;
+    const known      = new Set(this.state.posts.map(p => p.txHash));
+    const newFound   = [];
+    try {
+      for (let page = 1; page <= 5; page++) {
+        let raw;
+        try { raw = await this.apiFetch(scanAddr, page); }
+        catch { break; }
+        raw.forEach(tx => {
+          if (!tx.input || tx.input === '0x') return;
+          try {
+            const text = ethers.toUtf8String(tx.input).trim();
+            const m    = text.match(/^REPLY_TO:(0x[a-f0-9]{64})\n\n/i);
+            if (!m || m[1].toLowerCase() !== targetHash) return;
+            const display = text.slice(m[0].length).trim();
+            if (!display) return;
+            const hash = tx.hash.toLowerCase();
+            if (known.has(hash)) return;
+            known.add(hash);
+            newFound.push({
+              content: text, display, parentTx: targetHash, direction: null,
+              postType: 'post', reactionTarget: null, repostOf: null,
+              reporter: tx.from?.toLowerCase(), to: tx.to?.toLowerCase() ?? null,
+              timestamp: tx.timeStamp ? new Date(Number(tx.timeStamp)*1000).toISOString() : new Date().toISOString(),
+              txHash: hash, channel: scanAddr, mode: post.mode,
+            });
+          } catch { /* skip */ }
+        });
+        if (raw.length < 50) break;
+      }
+    } finally {
+      if (loadingEl) loadingEl.style.display = 'none';
+    }
+
+    if (newFound.length > 0) {
+      this.state.posts = [...this.state.posts, ...newFound]
+        .sort((a, b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()))
+        .slice(0, this._getPostCap());
+      if (this._postHashSet) newFound.forEach(p => this._postHashSet.add(p.txHash));
+      await this.cache.savePosts(newFound);
+      if (this.state.threadPost?.txHash === targetHash && this.state.mode === 'thread') {
+        this._renderThreadPage(post);
+      }
+    }
+  }
+
+  /* ── Media attach ───────────────────────────────────────────────────── */
+  openMediaModal(type) {
+    this._mediaType = type;
+    const title   = this.g('media-modal-title');
+    const hint    = this.g('media-url-hint');
+    const preview = this.g('media-preview-area');
+    if (type === 'gif') {
+      title.textContent = 'Add a GIF';
+      hint.textContent  = 'Paste any GIF URL (https:// or ipfs://)';
+    } else if (type === 'video') {
+      title.textContent = 'Add Video';
+      hint.textContent  = 'Paste a YouTube, Vimeo, or direct .mp4 / .webm URL';
+    } else if (type === 'media') {
+      /* Merged photos + video, like X's Media button. Type is detected
+         from the URL at preview/attach time. */
+      title.textContent = 'Add photos or video';
+      hint.textContent  = 'Paste an image, GIF, or video URL — https://, ipfs://, or arweave://';
+    } else {
+      title.textContent = 'Add Image';
+      hint.textContent  = 'Paste any image URL (https://, ipfs://, or arweave://)';
+    }
+    this.g('media-url-input').value = '';
+    preview.innerHTML = '';
+    preview.style.display = 'none';
+    this.g('media-modal').classList.add('open');
+    this._trapFocus(this.g('media-modal'));
+    setTimeout(() => this.g('media-url-input').focus(), 80);
+  }
+
+  _resolveMediaUrl(raw) {
+    if (!raw) return '';
+    if (raw.startsWith('ipfs://'))     return 'https://ipfs.io/ipfs/' + raw.slice(7);
+    if (raw.startsWith('ar://'))       return 'https://arweave.net/' + raw.slice(5);
+    if (raw.startsWith('arweave://'))  return 'https://arweave.net/' + raw.slice(10);
+    return raw;
+  }
+
+  _previewMedia() {
+    const raw     = this.g('media-url-input').value.trim();
+    const preview = this.g('media-preview-area');
+    if (!raw) { preview.innerHTML = ''; preview.style.display = 'none'; return; }
+    const resolved = this._resolveMediaUrl(raw);
+    preview.style.display = 'block';
+    /* Detect video (YouTube/Vimeo/direct file) vs image so the preview
+       shows something sensible for each. */
+    const isVideo = /\.(mp4|webm|mov|m4v)(\?|$)/i.test(resolved)
+      || /youtube\.com|youtu\.be|vimeo\.com/i.test(resolved);
+    if (isVideo) {
+      preview.innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px;padding:14px;
+          border:1px solid var(--border);border-radius:12px;background:var(--bg-mid)">
+          <svg viewBox="0 0 24 24" width="28" height="28" style="flex-shrink:0;color:var(--primary-lt)">
+            <path fill="currentColor" d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+          <div style="min-width:0">
+            <div style="font-weight:700;font-size:14px">Video attached</div>
+            <div style="font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${utils.safe(resolved)}</div>
+          </div>
+        </div>`;
+      return;
+    }
+    preview.innerHTML = `
+      <img src="${utils.safe(resolved)}" alt="preview" style="
+        max-width:100%; max-height:220px; border-radius:12px;
+        object-fit:contain; display:block; margin:0 auto;
+        border:1px solid var(--border);"
+        onerror="this.replaceWith(Object.assign(document.createElement('p'),{
+          textContent:'⚠ Could not load preview — the URL will still post',
+          style:'color:var(--muted);font-size:13px;text-align:center;padding:12px'
+        }))">`;
+  }
+
+  _attachMedia() {
+    const raw = this.g('media-url-input').value.trim();
+    if (!raw) { utils.toast('Enter a URL first'); return; }
+    /* Append the ORIGINAL URL (ipfs:// etc.) to compose text on a new line.
+       linkify() resolves it for display. On-chain the raw URL is preserved. */
+    const compose = this.g('compose-text');
+    const existing = compose.value;
+    compose.value = existing
+      ? existing.trimEnd() + '\n' + raw
+      : raw;
+    utils.autoGrow(compose);
+    utils.updateCharCount(compose, null);
+    this._saveDraft();
+    this.closeModal('media-modal');
+    utils.toast('Media attached ✓');
+  }
+
+  /* Lightweight generic modal — used by the list editor. Builds a modal
+     overlay on the fly with a title, arbitrary body HTML, and a close
+     button. Reuses the existing .modal-bg / .modal styles. */
+  _showGenericModal(title, bodyHTML) {
+    this._closeGenericModal();
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-bg open';
+    overlay.id = 'generic-modal';
+    overlay.innerHTML = `
+      <div class="modal" role="dialog" aria-modal="true" aria-label="${utils.safe(title)}">
+        <div class="modal-head">
+          <span class="modal-title">${utils.safe(title)}</span>
+          <button class="modal-close" aria-label="Close" id="generic-modal-close">✕</button>
+        </div>
+        <div>${bodyHTML}</div>
+      </div>`;
+    document.body.appendChild(overlay);
+    document.getElementById('generic-modal-close').onclick = () => this._closeGenericModal();
+    overlay.addEventListener('click', e => { if (e.target === overlay) this._closeGenericModal(); });
+    this._trapFocus(overlay);
+  }
+  _closeGenericModal() {
+    const m = document.getElementById('generic-modal');
+    if (m) { this._releaseFocus(m); m.remove(); }
+  }
+
+  /* "About this post" — surfaces metadata that's otherwise only visible on a
+     block explorer: which channel/address it was posted to, the author, the
+     content type, block number, and the tx. All of this already lives on the
+     post object, so there's no fetching. */
+  _showAboutPost(post) {
+    const esc = s => utils.safe(s);
+    const row = (label, value) => `<div style="display:flex;justify-content:space-between;gap:16px;padding:9px 0;border-bottom:1px solid var(--border)">
+      <span style="color:var(--muted);flex-shrink:0">${label}</span>
+      <span style="text-align:right;word-break:break-word">${value}</span></div>`;
+    const chan   = (post.to || post.channel || '').toLowerCase();
+    const isMain = chan && chan === MAIN_CHANNEL.toLowerCase();
+    const chanName = chan && this.state.profCache[chan]?.username;
+    let chanVal;
+    if (!chan)        chanVal = '—';
+    else if (isMain)  chanVal = 'Main feed';
+    else {
+      const label = (chanName ? esc(chanName) + ' · ' : '') + esc(this.trunc(chan));
+      chanVal = `<a href="#" style="color:var(--primary-lt)" data-act="modal-open-channel" data-act-arg="${esc(chan)}">${label} ↗</a>`;
+    }
+    const typeMap = { post:'Post', reply:'Reply', poll:'Poll', repost:'Repost' };
+    const authorName = this.state.profCache[post.reporter]?.username;
+    const author = (authorName ? esc(authorName) + ' · ' : '') + '@' + esc(this.trunc(post.reporter));
+    let body = `<div style="font-size:14px;line-height:1.45;padding:4px 2px">`;
+    body += row('Type',      esc(typeMap[post.postType] || 'Post'));
+    body += row('Posted to', chanVal);
+    body += row('Author',    author);
+    body += row('Posted',    esc(new Date(post.timestamp).toLocaleString()));
+    if (post.blockNumber) body += row('Block',     '#' + esc(String(post.blockNumber)));
+    if (post.parentTx)    body += row('Reply to',  esc(this.trunc(post.parentTx)));
+    if (post.repostOf)    body += row('Repost of', esc(this.trunc(post.repostOf)));
+    body += row('Transaction', `<a href="https://otter.pulsechain.com/tx/${esc(post.txHash)}" target="_blank" rel="noopener noreferrer" style="color:var(--primary-lt)">${esc(this.trunc(post.txHash))} ↗</a>`);
+    body += `</div>`;
+    this._showGenericModal('About this post', body);
+  }
+
+  /* Lazily snapshot the persisted profiles store into memory so handle search
+     covers profiles cached in past sessions, not just this one. Loaded once;
+     profiles discovered this session are already in profCache (also searched). */
+  _ensureProfileSnapshot() {
+    if (this._profileSnapshot !== undefined) return;
+    this._profileSnapshot = null; /* loading */
+    this.cache.getAllProfiles()
+      .then(list => { this._profileSnapshot = (list || []).map(p => ({
+        addr: (p.address || '').toLowerCase(), username: p.username || '', picUrl: p.picUrl || 'image1.jpeg' })); })
+      .catch(() => { this._profileSnapshot = []; });
+  }
+
+  /* Open the emoji picker targeting a specific textarea (e.g. the thread
+     reply box). Lightweight wrapper that temporarily points insertion at
+     the given element. */
+  _openEmojiPickerFor(targetEl, anchorBtn) {
+    this._emojiTarget = targetEl;
+    this._emojiAnchor = anchorBtn;
+    this.toggleEmojiPicker();
+  }
+
+  /* ── Emoji picker ───────────────────────────────────────────────────── */
+  toggleEmojiPicker() {
+    const existing = document.getElementById('emoji-picker-pop');
+    if (existing) { existing.remove(); return; }
+
+    /* Categorized emoji set. The picker stays OPEN after each selection so
+       the user can insert several in a row (X behavior). Closes on the ✕
+       button, Escape, or an outside click. */
+    const categories = [
+      { name: 'Smileys', emojis: ['😀','😃','😄','😁','😆','😅','🤣','😂','🙂','🙃','😉','😊','😇','🥰','😍','🤩','😘','😗','😚','😋','😛','😜','🤪','😝','🤔','🤨','😐','😶','😏','😒','🙄','😬','😌','😔','😪','😴','😷','🤒','🤕','🤢','🤮','🥵','🥶','😵','🤯','🤠','🥳','😎','🤓','🧐','😕','😟','🙁','😮','😯','😲','😳','🥺','😦','😧','😨','😰','😢','😭','😱','😖','😣','😞','😓','😩','😫','😤','😡','😠','🤬'] },
+      { name: 'Gestures', emojis: ['👍','👎','👌','🤌','🤏','✌️','🤞','🫰','🤟','🤘','🤙','👈','👉','👆','👇','☝️','👋','🤚','🖐️','✋','🖖','👏','🙌','🤲','🙏','✊','👊','🤛','🤜','💪','🫶','🤝'] },
+      { name: 'Hearts', emojis: ['❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💟','♥️'] },
+      { name: 'Crypto', emojis: ['💎','🚀','🌙','📈','📉','💰','💵','💸','🤑','🪙','⚡','🔥','💯','🏆','🎯','🔮','⛓️','🔗','🛡️','🐂','🐻'] },
+      { name: 'Nature', emojis: ['🔥','🌊','⚡','🌙','⭐','🌟','✨','☀️','🌈','❄️','🌸','🌺','🌻','🌹','🌴','🍀','🌍','🌎','🌏','🦁','🐉','🦊','🐺','🦋','🐬','🦅','🐲'] },
+      { name: 'Symbols', emojis: ['✅','❌','⭕','‼️','⁉️','❓','❗','💢','💥','💫','💦','💨','🕐','🎉','🎊','🎵','🎶','📡','📻','🗝️','💡','🔭','🌐','♻️','🔱'] },
+    ];
+
+    const picker = document.createElement('div');
+    picker.id = 'emoji-picker-pop';
+    picker.style.cssText = `
+      position:absolute; z-index:600;
+      background:var(--bg-mid); border:1px solid var(--border);
+      border-radius:16px; padding:0;
+      width:320px; max-height:360px; display:flex; flex-direction:column;
+      box-shadow:0 8px 32px rgba(0,0,0,0.5);
+      animation:popIn 0.15s ease; overflow:hidden;`;
+
+    /* Header with title + close button */
+    const header = document.createElement('div');
+    header.style.cssText = `
+      display:flex; align-items:center; justify-content:space-between;
+      padding:10px 12px; border-bottom:1px solid var(--border);
+      flex-shrink:0;`;
+    header.innerHTML = `<span style="font-weight:800;font-size:14px">Emoji</span>`;
+    const closeBtn = document.createElement('button');
+    closeBtn.setAttribute('aria-label', 'Close emoji picker');
+    closeBtn.textContent = '✕';
+    closeBtn.style.cssText = `
+      border:none; background:transparent; color:var(--muted);
+      font-size:16px; cursor:pointer; width:28px; height:28px;
+      border-radius:50%; transition:background 0.12s;`;
+    closeBtn.onmouseenter = () => closeBtn.style.background = 'var(--surface-2)';
+    closeBtn.onmouseleave = () => closeBtn.style.background = 'transparent';
+    closeBtn.onclick = () => removePicker();
+    header.appendChild(closeBtn);
+    picker.appendChild(header);
+
+    /* Scrollable body with category sections */
+    const body = document.createElement('div');
+    body.style.cssText = `overflow-y:auto; padding:8px 10px 12px; flex:1;`;
+
+    const insertEmoji = (em) => {
+      /* If a custom target was set (thread reply box), insert there. modalOpen
+         must be declared at function scope — it's read again below for the
+         char-count target. (It was block-scoped inside the if, which threw
+         "modalOpen is not defined" on every emoji insert.) */
+      let compose = this._emojiTarget || null;
+      const modalOpen = !compose && this.g('compose-modal')?.classList.contains('open');
+      if (!compose) {
+        compose = modalOpen ? this.g('modal-compose-text') : this.g('compose-text');
+      }
+      if (!compose) return;
+      const pos = compose.selectionStart ?? compose.value.length;
+      compose.value = compose.value.slice(0,pos) + em + compose.value.slice(pos);
+      compose.selectionStart = compose.selectionEnd = pos + em.length;
+      compose.focus();
+      utils.autoGrow(compose);
+      utils.updateCharCount(compose, modalOpen ? this.g('modal-char-count') : null);
+      this._saveDraft();
+      /* Picker intentionally stays open for multi-select. */
+    };
+
+    categories.forEach(cat => {
+      const label = document.createElement('div');
+      label.textContent = cat.name;
+      label.style.cssText = `
+        font-size:11px; font-weight:700; color:var(--muted);
+        text-transform:uppercase; letter-spacing:0.5px;
+        margin:8px 2px 4px;`;
+      body.appendChild(label);
+      const grid = document.createElement('div');
+      grid.style.cssText = `display:grid; grid-template-columns:repeat(8,1fr); gap:2px;`;
+      cat.emojis.forEach(em => {
+        const btn = document.createElement('button');
+        btn.textContent = em;
+        btn.type = 'button';
+        btn.style.cssText = `
+          width:100%; aspect-ratio:1; border:none; background:transparent;
+          border-radius:8px; font-size:20px; cursor:pointer;
+          transition:background 0.1s; line-height:1; padding:0;`;
+        btn.onmouseenter = () => btn.style.background = 'var(--surface-2)';
+        btn.onmouseleave = () => btn.style.background = 'transparent';
+        btn.onclick = (e) => { e.stopPropagation(); insertEmoji(em); };
+        grid.appendChild(btn);
+      });
+      body.appendChild(grid);
+    });
+    picker.appendChild(body);
+
+    /* Position below the emoji button (use a custom anchor if one was set
+       via _openEmojiPickerFor, e.g. the thread reply toolbar). */
+    const emojiBtn = this._emojiAnchor || this.g('cmp-emoji-btn');
+    const rect = emojiBtn.getBoundingClientRect();
+    picker.style.top  = (rect.bottom + window.scrollY + 6) + 'px';
+    picker.style.left = Math.max(8, Math.min(rect.left - 140, window.innerWidth - 332)) + 'px';
+    document.body.appendChild(picker);
+
+    /* Teardown helper + dismiss wiring */
+    const removePicker = () => {
+      picker.remove();
+      document.removeEventListener('click', close, true);
+      document.removeEventListener('keydown', onKey, true);
+      this._emojiTarget = null;
+      this._emojiAnchor = null;
+    };
+    const close = e => {
+      /* Use contains(), not ===: a click on the button lands on the inner SVG
+         path, so `e.target !== emojiBtn` was always true — the capture-phase
+         listener removed the picker right before the button's own toggle
+         re-opened it, so it took two taps to open (and never toggled shut). */
+      if (!picker.contains(e.target) && !emojiBtn.contains(e.target)) removePicker();
+    };
+    const onKey = e => { if (e.key === 'Escape') removePicker(); };
+    setTimeout(() => {
+      document.addEventListener('click', close, true);
+      document.addEventListener('keydown', onKey, true);
+    }, 50);
+  }
+
+  closeModal(id) {
+    const _modalEl = this.g(id);
+    _modalEl.classList.remove('open');
+    this._releaseFocus(_modalEl);
+    if (id === 'compose-modal') {
+      const modalText = this.g('modal-compose-text').value;
+      if (modalText.trim()) {
+        this.g('compose-text').value = modalText;
+        utils.autoGrow(this.g('compose-text'));
+        utils.updateCharCount(this.g('compose-text'), null);
+        this._saveDraft();
+      }
+    }
+  }
+
+  /* Pages in this set render their own feed content (profile, thread,
+     etc.) and would silently swallow appended posts if infinite-scroll
+     fired on them. Keep this in sync with renderFeed()'s selfManaged list. */
+  /* Modes that replace the entire #feed DOM themselves — renderFeed must
+     NOT overwrite them with the standard post list. */
+  _selfManagedModes = new Set([
+    'notifications', 'profile', 'thread', 'channels',
+    'explore', 'bookmarks', 'settings', 'lists', 'communities', 'followlist',
+    'analytics'
+  ]);  /* lists/communities render their own browse UI into #feed */
+  /* Modes where pollNew's "Show N posts" banner makes no sense.
+     Superset of _selfManagedModes — includes wave/self/custom where
+     the user is on a specific channel feed that isn't the main timeline. */
+  _noBannerModes = new Set([
+    'notifications', 'profile', 'thread', 'channels',
+    'explore', 'bookmarks', 'settings', 'self', 'custom', 'followlist'
+  ]);
+
+  onScroll() {
+    /* Profile page has its own pagination — route to dedicated handler. */
+    if (this.state.mode === 'profile') {
+      this._onProfileScroll();
+      return;
+    }
+    if (this._selfManagedModes.has(this.state.mode)) return;
+    if (!this.state.hasMore || this.state.loading) return;
+    /* documentElement.scrollHeight is the canonical scrollable height —
+       document.body.offsetHeight is wrong when sticky/fixed elements
+       contribute to layout. 600px lookahead = ~1 viewport of buffer
+       on a 720p screen, prefetching feels seamless. */
+    const doc = document.documentElement;
+    const bottom = window.scrollY + window.innerHeight;
+    if (bottom >= doc.scrollHeight - 600) this.fetchPosts(false);
+  }
+
+  /* __ Per-page sticky header __ */
+  /* Returns an HTML string for a sticky top-of-feed header bar.
+     opts: { title, subtitle, back: bool, searchAddr, noBack: bool } */
+  _makePageHeader(opts = {}) {
+    const backBtn = opts.noBack ? '' : `
+      <button class="page-header-back" onclick="pulse._navBack()"
+        aria-label="Back">
+        <svg viewBox="0 0 24 24" width="20" height="20">
+          <path fill="currentColor" d="M7.414 13l5.043 5.04-1.414 1.42L3.586 12l7.457-7.46 1.414 1.42L7.414 11H21v2H7.414z"/>
+        </svg>
+      </button>`;
+    const searchBtn = opts.searchAddr ? `
+      <button class="page-header-action" title="Search posts"
+        onclick="pulse._focusSearch()">
+        <svg viewBox="0 0 24 24" width="20" height="20">
+          <path fill="currentColor" d="M10.25 3.75c-3.59 0-6.5 2.91-6.5 6.5s2.91 6.5 6.5 6.5c1.795 0 3.419-.726 4.596-1.904 1.178-1.177 1.904-2.801 1.904-4.596 0-3.59-2.91-6.5-6.5-6.5zm-8.5 6.5c0-4.694 3.806-8.5 8.5-8.5s8.5 3.806 8.5 8.5c0 1.986-.682 3.815-1.814 5.272l4.771 4.771-1.414 1.414-4.771-4.771A8.456 8.456 0 0110.25 18.75c-4.694 0-8.5-3.806-8.5-8.5z"/>
+        </svg>
+      </button>` : '';
+    const subtitle = opts.subtitle
+      ? `<div class="page-header-subtitle">${utils.safe(opts.subtitle)}</div>` : '';
+    return `<div class="page-header">
+      ${backBtn}
+      <div class="page-header-titles">
+        <div class="page-header-title">${utils.safe(opts.title || '')}</div>
+        ${subtitle}
+      </div>
+      ${searchBtn}
+    </div>`;
+  }
+
+  /* Enforce a max size on profCache to prevent unbounded memory growth.
+     Evicts oldest entries (by insertion order) when over the cap. */
+  _pruneProfileCache(maxSize = 500) {
+    const keys = Object.keys(this.state.profCache);
+    if (keys.length <= maxSize) return;
+    /* Remove the oldest (first inserted) entries */
+    const toRemove = keys.slice(0, keys.length - maxSize);
+    toRemove.forEach(k => delete this.state.profCache[k]);
+  }
+
+  /* Cap the poll session maps so a long session browsing many polls doesn't
+     grow them without bound. Maps keep insertion order, so we evict the
+     oldest entries first. The cap is generous — eviction only matters after
+     hundreds of distinct polls, and an evicted poll simply re-tallies on its
+     next render. */
+  _prunePollMaps(maxSize = 800) {
+    for (const m of [this._voteAccum, this._pollScanned, this._myVotes, this._pollEndMs]) {
+      if (m.size <= maxSize) continue;
+      const keys = [...m.keys()];
+      for (let i = 0; i < keys.length - maxSize; i++) m.delete(keys[i]);
+    }
+  }
+
+  /* Prepend the pending page header to the feed if not already present.
+     Call at the start of any function that sets feed.innerHTML directly. */
+  _applyPageHeader() {
+    if (!this._pendingPageHeader) return '';
+    const h = this._pendingPageHeader;
+    this._pendingPageHeader = null;
+    return h;
+  }
+
+  /* Navigate back using app state rather than browser history.
+     history.back() is unreliable on GitHub Pages (SW inflates history.length).
+     We check if there's a meaningful previous state to restore. */
+  _navBack() {
+    /* Thread page has explicit state saved in _prevMode */
+    if (this._threadBackOverride) {
+      this._threadBack();
+      return;
+    }
+    /* Profile/other pages: try real history first, fall back to Home */
+    if (window.history.length > 2) {
+      window.history.back();
+    } else {
+      this.goHome();
+    }
+  }
+
+  /* __ Post context menu __ */
+  /* Locally hide a single post from the feed (session-only; not on-chain). */
+  markNotInterested(post) {
+    (this._notInterested ||= new Set()).add(post.txHash);
+    const el = this.g('feed')?.querySelector(`.post-item[data-txhash="${post.txHash}"], .post-placeholder[data-txhash="${post.txHash}"]`);
+    if (el) el.remove();
+    utils.toast('Post hidden — not interested');
+  }
+
+  /* Small dropdown to add/remove an address from one of the user's Lists. */
+  _openListPicker(addr, anchorEl) {
+    if (!addr) return;
+    document.querySelector('.post-menu-dropdown.open')?.remove();
+    const lists = this.state.lists || [];
+    if (!lists.length) { utils.toast('Create a list first'); this.goLists?.(); return; }
+    const menu = document.createElement('div');
+    menu.className = 'post-menu-dropdown open';
+    lists.forEach(list => {
+      const inList = list.members.includes(addr);
+      const el = document.createElement('div');
+      el.className = 'post-menu-item';
+      el.innerHTML = `<span>${inList ? '✓ ' : ''}${utils.safe(list.name)}</span>`;
+      el.onclick = e => {
+        e.stopPropagation();
+        if (inList) list.members = list.members.filter(m => m !== addr);
+        else list.members.push(addr);
+        this._saveLists();
+        utils.toast(inList ? 'Removed from list' : 'Added to list');
+        menu.remove();
+      };
+      menu.appendChild(el);
+    });
+    document.body.appendChild(menu);
+    const rect = anchorEl ? anchorEl.getBoundingClientRect()
+      : { right: window.innerWidth - 8, bottom: 60 };
+    const mw = menu.offsetWidth || 220, mh = menu.offsetHeight || 200;
+    let left = (rect.right ?? (rect.left || 0) + 34) - mw;
+    let top  = (rect.bottom ?? 60) + 4;
+    if (top + mh > window.innerHeight) top = Math.max(8, window.innerHeight - mh - 8);
+    if (left < 8) left = 8;
+    menu.style.left = left + 'px';
+    menu.style.top  = top + 'px';
+    setTimeout(() => {
+      const close = ev => { if (!menu.contains(ev.target)) { menu.remove(); document.removeEventListener('click', close, true); } };
+      document.addEventListener('click', close, true);
+    }, 0);
+  }
+
+  openPostMenu(post, anchorEl) {
+    /* Close any existing menu */
+    const existing = document.querySelector('.post-menu-dropdown.open');
+    if (existing) existing.remove();
+
+    const isOwn = post.reporter === this.state.signerAddr;
+    const isMuted = this.isMuted(post.reporter);
+    const handle = '@' + this.trunc(post.reporter);
+
+    const menu = document.createElement('div');
+    menu.className = 'post-menu-dropdown open';
+    menu.setAttribute('role', 'menu');
+
+    const items = [];
+    /* Follow / unfollow + mute — never shown on your own posts */
+    if (!isOwn) {
+      const isFollowing = this.state.following.has(post.reporter?.toLowerCase());
+      items.push({
+        icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h10v-2c0-.41.06-.81.17-1.19C13.2 14.27 12.5 14 12 14zm7 0v3h-3v2h3v3h2v-3h3v-2h-3v-3h-2z"/></svg>',
+        label: (isFollowing ? 'Unfollow ' : 'Follow ') + handle,
+        action: () => this.toggleFollowAddr(post.reporter.toLowerCase(), null), danger: false });
+      items.push(isMuted
+        ? { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18 6.41L16.59 5 12 9.59 7.41 5 6 6.41 10.59 11 6 15.59 7.41 17 12 12.41 16.59 17 18 15.59 13.41 11z"/></svg>',
+            label: `Unmute ${handle}`, action: () => this.unmuteAddress(post.reporter), danger: false }
+        : { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18 11v2h4v-2h-4zm-2 6.61c.96.71 2.21 1.65 3.2 2.39.4-.53.8-1.07 1.2-1.6-.99-.74-2.24-1.68-3.2-2.4-.4.54-.8 1.08-1.2 1.61zM20.4 5.6c-.4-.53-.8-1.07-1.2-1.6-.99.74-2.24 1.68-3.2 2.4.4.53.8 1.07 1.2 1.6.96-.72 2.21-1.65 3.2-2.4zM4 9c-1.1 0-2 .9-2 2v2c0 1.1.9 2 2 2h1l5 5V4L5 9H4zm11.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>',
+            label: `Mute ${handle}`, action: () => this.muteAddress(post.reporter), danger: false });
+    }
+    items.push(
+      /* Not interested — locally hides this single post from the feed */
+      { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2C6.49 2 2 6.49 2 12s4.49 10 10 10 10-4.49 10-10S17.51 2 12 2zm0 18c-4.41 0-8-3.59-8-8 0-1.85.63-3.55 1.69-4.9L16.9 18.31C15.55 19.37 13.85 20 12 20zm6.31-3.1L7.1 5.69C8.45 4.63 10.15 4 12 4c4.41 0 8 3.59 8 8 0 1.85-.63 3.55-1.69 4.9z"/></svg>',
+        label: 'Not interested in this post', action: () => this.markNotInterested(post), danger: false },
+      /* Add / remove from a List */
+      { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M3 5h18v2H3V5zm0 6h12v2H3v-2zm0 6h12v2H3v-2zm15-3v3h-3v2h3v3h2v-3h3v-2h-3v-3h-2z"/></svg>',
+        label: 'Add / remove from List', action: () => this._openListPicker(post.reporter?.toLowerCase(), anchorEl), danger: false },
+      /* Write a community note */
+      { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>',
+        label: 'Write a community note', action: () => this.openNoteComposer(post), danger: false },
+      /* Copy link */
+      { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.48-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>',
+        label: 'Copy post link', action: () => utils.copyToClipboard(this._postUrl(post.txHash), 'Link copied!'), danger: false },
+      /* About this post — metadata (channel, author, type, block, tx) */
+      { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M11 7h2v2h-2V7zm0 4h2v6h-2v-6zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>',
+        label: 'About this post', action: () => this._showAboutPost(post), danger: false },
+      /* View on OtterScan */
+      { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18.36 5.64c-1.95-1.96-5.11-1.96-7.07 0L9.88 7.05 8.46 5.64l1.42-1.42c2.73-2.73 7.16-2.73 9.9 0 2.73 2.74 2.73 7.17 0 9.9l-1.42 1.42-1.41-1.42 1.41-1.41c1.96-1.96 1.96-5.12 0-7.07zm-2.12 3.53l-7.07 7.07-1.41-1.41 7.07-7.07 1.41 1.41zm-12.02.71l1.42-1.42 1.41 1.42-1.41 1.41c-1.96 1.96-1.96 5.12 0 7.07 1.95 1.96 5.11 1.96 7.07 0l1.41-1.41 1.42 1.41-1.42 1.42c-2.73 2.73-7.16 2.73-9.9 0-2.73-2.74-2.73-7.17 0-9.9z"/></svg>',
+        label: 'View on OtterScan', action: () => window.open(`https://otter.pulsechain.com/tx/${post.txHash}`, '_blank', 'noopener,noreferrer'), danger: false },
+    );
+    /* Own posts get a note about on-chain permanence */
+    if (isOwn) {
+      items.push({ icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>',
+        label: 'Posts are permanent on-chain', action: () => utils.toast('On-chain posts are permanent by design.'), danger: false });
+    }
+
+    /* removeMenu cleans up listeners + the trigger's aria-expanded; restores
+       focus to the trigger only on keyboard dismissal (Escape). */
+    const removeMenu = (restoreFocus) => {
+      menu.remove();
+      document.removeEventListener('click', close, true);
+      document.removeEventListener('keydown', onKey, true);
+      anchorEl?.setAttribute?.('aria-expanded', 'false');
+      if (restoreFocus) anchorEl?.focus?.();
+    };
+    items.forEach(({ icon, label, action, danger }) => {
+      const el = document.createElement('button');
+      el.type = 'button';
+      el.setAttribute('role', 'menuitem');
+      el.className = 'post-menu-item' + (danger ? ' danger' : '');
+      el.innerHTML = `${icon}<span>${utils.safe(label)}</span>`;
+      el.onclick = e2 => { e2.stopPropagation(); removeMenu(false); action(); };
+      menu.appendChild(el);
+    });
+    /* Keyboard: Escape closes (restoring focus), arrows move between items. */
+    const onKey = e2 => {
+      const btns = [...menu.querySelectorAll('.post-menu-item')];
+      const idx  = btns.indexOf(document.activeElement);
+      if (e2.key === 'Escape')         { e2.preventDefault(); removeMenu(true); }
+      else if (e2.key === 'ArrowDown') { e2.preventDefault(); btns[(idx + 1) % btns.length]?.focus(); }
+      else if (e2.key === 'ArrowUp')   { e2.preventDefault(); btns[(idx - 1 + btns.length) % btns.length]?.focus(); }
+    };
+
+    /* Append to DOM first so offsetWidth/Height are measurable */
+    document.body.appendChild(menu);
+    const rect   = anchorEl ? anchorEl.getBoundingClientRect()
+      : { left: window.innerWidth - 240, bottom: 60, top: 40, right: window.innerWidth - 8 };
+    const mw     = menu.offsetWidth  || 240;
+    const mh     = menu.offsetHeight || 200;
+    /* Align menu's right edge with the anchor's right edge (like Twitter) */
+    let left = (rect.right ?? rect.left + 34) - mw;
+    let top  = rect.bottom + 4;
+    /* Clamp horizontally */
+    if (left < 8) left = 8;
+    if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
+    /* Flip above if would overflow below */
+    if (top + mh > window.innerHeight - 8) top = rect.top - mh - 4;
+    if (top < 8) top = 8;
+    menu.style.left = left + 'px';
+    menu.style.top  = top  + 'px';
+
+    /* Close on outside click */
+    const close = e2 => { if (!menu.contains(e2.target)) removeMenu(false); };
+    anchorEl?.setAttribute?.('aria-expanded', 'true');
+    setTimeout(() => {
+      document.addEventListener('click', close, true);
+      document.addEventListener('keydown', onKey, true);
+      menu.querySelector('.post-menu-item')?.focus();   /* focus first item for keyboard users */
+    }, 0);
+  }
+
+  /* Update the profile page-header subtitle with the real post count
+     after the profile tab has finished loading posts. */
+  _updateProfileSubtitle(address) {
+    if (this.state.mode !== 'profile') return;
+    const subtitle = this.g('feed')?.querySelector('.page-header-subtitle');
+    if (!subtitle) return;
+    /* Count the active tab's rendered items (authoritative after a tab load /
+       scroll-append). Media renders thumbs, the other tabs render post rows. */
+    const profFeed = this.g('feed')?.querySelector('.prof-feed');
+    if (!profFeed) return;
+    const tab = this._profilePageState?.tab || 'posts';
+    const count = tab === 'media'
+      ? profFeed.querySelectorAll('.prof-media-thumb').length
+      : profFeed.querySelectorAll('.post-item').length;
+    if (count <= 0) return;   /* tab switch clears the stale count up-front */
+    const nouns = { posts: ['post', 'posts'], replies: ['reply', 'replies'],
+      media: ['image', 'images'], likes: ['like', 'likes'] };
+    const [one, many] = nouns[tab] || nouns.posts;
+    subtitle.textContent = `${count} ${count === 1 ? one : many}`;
+  }
+
+  /* Channel banner header subtitle = post count (mirrors the profile header,
+     instead of a static "Channel" label). Counts mounted + virtualized rows. */
+  _updateChannelSubtitle() {
+    const sub = this.g('cb-header-sub');
+    if (!sub) return;
+    /* Both channel views ('custom') and My Channel ('self') show the banner. */
+    if (this.state.mode !== 'custom' && this.state.mode !== 'self') { sub.textContent = ''; return; }
+    const feed = this.g('feed');
+    const count = feed ? feed.querySelectorAll('.post-item, .post-placeholder').length : 0;
+    sub.textContent = count > 0 ? `${count} post${count !== 1 ? 's' : ''}` : '';
+  }
+
+  /* Fetch a single quoted post that isn't in _postMap yet and patch the
+     placeholder card in the DOM. Resolves the tx DIRECTLY by hash via
+     _fetchTxByHash — the old 5-page channel scan never found quoted posts
+     older than ~250 txs in the channel, leaving the card stuck on
+     "Loading quoted post…" forever (most visible with older video posts). */
+  async _fetchQuotedPost(hash, channel) {
+    /* Only fetch if not already in progress */
+    if (!this._fetchingQuotes) this._fetchingQuotes = new Set();
+    if (this._fetchingQuotes.has(hash)) return;
+    this._fetchingQuotes.add(hash);
+    try {
+      const orig = this._postMap.get(hash) || await this._fetchTxByHash(hash);
+      const placeholder = document.getElementById('qc-' + hash.slice(2, 8));
+      if (!orig) {
+        /* Unresolvable (pruned node, wrong hash, network down) — say so
+           instead of spinning forever. */
+        if (placeholder) placeholder.innerHTML = `<span style="color:var(--muted)">Quoted post unavailable</span>`;
+        return;
+      }
+      if (this._postHashSet) this._postHashSet.add(hash);
+      if (placeholder) {
+        placeholder.className = 'repost-card';
+        placeholder.removeAttribute('data-fetch-quote');
+        /* Same delegated action as cards rendered the fast path. */
+        placeholder.setAttribute('data-act', 'open-quote');
+        placeholder.setAttribute('data-act-arg', hash);
+        placeholder.setAttribute('data-act-arg2', channel || '');
+        placeholder.innerHTML = this._quoteCardInner(orig);
+      }
+      /* Fetch their profile too */
+      if (orig.reporter) this.fetchOtherProfile(orig.reporter);
+    } finally {
+      this._fetchingQuotes.delete(hash);
+    }
+  }
+
+  /* Build trigram search index for all IDB posts not yet indexed.
+     Runs during browser idle time — safe to call on every startup since
+     indexPost() is idempotent (it appends; we check before running). */
+  _rebuildSearchIndex() {
+    const key = 'sayit_idx_v1';
+    if (utils.safeLS.get(key)) return;
+    const run = async () => {
+      try {
+        const posts = await this.cache.getPosts(() => true);
+        if (!posts.length) return;
+        for (let i = 0; i < posts.length; i++) {
+          await this.cache.indexPost(posts[i]);
+          if (i % 50 === 49) await new Promise(res => setTimeout(res, 0));
+        }
+        utils.safeLS.set(key, '1');
+        console.info('[search] Indexed ' + posts.length + ' cached posts');
+      } catch (err) { console.warn('[search] Rebuild failed:', err); }
+    };
+    if (typeof requestIdleCallback !== 'undefined') {
+      requestIdleCallback(() => run(), { timeout: 30000 });
+    } else {
+      setTimeout(run, 5000);
+    }
+  }
+
+  /* __ Offline post queue __ */
+  _showPendingInFeed(queued) {
+    /* Render the pending post at the top of the feed with a clock indicator */
+    const feed = this.g('feed');
+    if (!feed) return;
+    const el = document.createElement('div');
+    el.className = 'post-item pending-post';
+    el.dataset.queueid = queued.queueId;
+    el.style.cssText = 'opacity:0.7;border-left:3px solid var(--primary);';
+    const displayText = queued.content.length > MAX_PREVIEW
+      ? queued.content.slice(0, MAX_PREVIEW) + '…'
+      : queued.content;
+    el.innerHTML = `
+      <div style="padding:12px 16px;display:flex;gap:10px;align-items:flex-start">
+        <img src="${utils.safe(utils.safeUrl(this.state.profile.picUrl) || 'image1.jpeg')}" style="width:40px;height:40px;border-radius:50%;flex-shrink:0;object-fit:cover" onerror="this.src='image1.jpeg'">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;color:var(--primary-lt);margin-bottom:4px">
+            ⌛ Publishing… <span style="color:var(--muted);font-size:12px">(saved offline)</span>
+          </div>
+          <div style="font-size:15px;color:var(--text);word-break:break-word">${utils.safe(displayText)}</div>
+        </div>
+      </div>`;
+    /* Insert before first real post */
+    const firstPost = feed.querySelector('.post-item:not(.pending-post)');
+    if (firstPost) feed.insertBefore(el, firstPost);
+    else feed.prepend(el);
+  }
+
+  async _retryPendingPosts() {
+    if (!this.signer || !navigator.onLine) return;
+    /* Re-entrancy guard: both the 'online' listener and afterConnect schedule
+       this, and overlapping runs would read the same queue and double-publish
+       (duplicate on-chain txs) before either deletes the entry. */
+    if (this._retrying) return;
+    this._retrying = true;
+    try {
+      let pending;
+      try { pending = await this.cache.getPendingPosts(); }
+      catch (err) { console.warn('Offline queue unreadable — retry skipped', err); return; }
+      if (!pending.length) return;
+      for (const queued of pending) {
+        /* Skip if not from this wallet (different account logged in) */
+        if (queued.signerAddr !== this.state.signerAddr) continue;
+        utils.toast(`↺ Retrying queued post…`);
+        try {
+          const ok = await this.publish(queued.content, queued.parentTx, queued.toAddress);
+          if (ok) {
+            await this.cache.deletePendingPost(queued.queueId);
+            /* Remove pending indicator from feed */
+            const el = document.querySelector(`[data-queueid="${queued.queueId}"]`);
+            if (el) el.remove();
+          }
+        } catch { /* leave in queue for next retry */ }
+      }
+    } finally {
+      this._retrying = false;
+    }
+  }
+
+  /* Load pending posts from IDB and show them in feed on startup */
+  async _loadPendingPostsIntoFeed() {
+    if (!this.state.signerAddr) return;
+    try {
+      const pending = await this.cache.getPendingPosts();
+      pending
+        .filter(q => q.signerAddr === this.state.signerAddr)
+        .forEach(q => this._showPendingInFeed(q));
+    } catch { /* IDB not ready yet */ }
+  }
+
+  /* __ Profile patch: update avatars + names in-place after profile fetch __
+     Called by _debouncedRender (triggered by fetchOtherProfile completions).
+     Walks existing post-item elements and patches only changed avatar/name
+     nodes — no innerHTML rebuild, no reflow of the whole feed.
+     Falls back to full renderFeed if the post list has changed. */
+  _patchProfilesInFeed() {
+    const feed = this.g('feed');
+    if (!feed) return;
+    /* If feed structure doesn't match current state (new posts, different
+       mode), fall back to a full render scheduled in idle time. */
+    const items = feed.querySelectorAll('.post-item[data-txhash]');
+    if (items.length === 0) { this.renderFeed(); return; }
+    /* Quick hash-list check: if the displayed posts differ from state.posts,
+       do a full render. If they match, just patch the DOM. */
+    const displayedHashes = [...items].map(el => el.dataset.txhash);
+    const stateHashes = this.state.posts
+      .filter(p => !p.postType || p.postType === 'post' || p.postType === 'repost' || p.postType === 'poll')
+      .slice(0, displayedHashes.length)
+      .map(p => p.txHash);
+    const listsMatch = displayedHashes.length === stateHashes.length &&
+      displayedHashes.every((h, i) => h === stateHashes[i]);
+    if (!listsMatch) {
+      /* Post list changed — need full render, but defer to idle time so
+         it doesn't block the thread that triggered us. */
+      if (typeof requestIdleCallback !== 'undefined') {
+        requestIdleCallback(() => this.renderFeed(), { timeout: 2000 });
+      } else {
+        setTimeout(() => this.renderFeed(), 0);
+      }
+      return;
+    }
+    /* Patch avatars and names in-place. O(n) DOM walk but no innerHTML. */
+    items.forEach(item => {
+      const hash = item.dataset.txhash;
+      const post = this._postMap.get(hash);
+      if (!post) return;
+      const addr = post.reporter;
+      if (!addr || addr === this.state.signerAddr) return;
+      const prof = this.state.profCache[addr];
+      if (!prof || (!prof.username && prof.picUrl === 'image1.jpeg')) return;
+      /* Patch avatar */
+      const avatar = item.querySelector('.post-avatar');
+      if (avatar && prof.picUrl && prof.picUrl !== 'image1.jpeg' &&
+          avatar.src.endsWith('image1.jpeg')) {
+        avatar.src = prof.picUrl;
+      }
+      /* Patch display name */
+      const nameEl = item.querySelector('.post-name');
+      if (nameEl && prof.username) {
+        /* Assign the RAW username — textContent doesn't parse HTML, so escaping
+           here double-encoded "&"/"<" and made the !== guard always misfire. */
+        if (nameEl.textContent !== prof.username && nameEl.textContent.includes('...')) {
+          nameEl.textContent = prof.username;
+        }
+      }
+    });
+    /* Also refresh sidebar panels (cheap) */
+    this._refreshSidebarPanels();
+  }
+
+  /* ── Sidebar: dynamic trending + who-to-follow ────────────────────────
+     Called from fetchPosts() after new posts land and from feed re-renders.
+     Cheap: all data comes from in-memory state.posts and state.profCache. */
+  _refreshSidebarPanels() {
+    try { this.renderTrending(); } catch (err) { console.warn('Trending render:', err); }
+    try { this.renderLatestPolls(); } catch (err) { console.warn('Polls render:', err); }
+    try { this.renderTodaysNews(); } catch (err) { console.warn('News render:', err); }
+    try { this.renderWhoToFollow(); } catch (err) { console.warn('W2F render:', err); }
+  }
+
+  /* Latest Polls sidebar card — surfaces active polls from the loaded
+     feed (newest first, open polls prioritized over closed). Clicking a
+     row opens that poll's thread. Hidden when there are no polls. */
+  renderLatestPolls() {
+    const card = this.g('sb-polls-card');
+    const list = this.g('sb-polls-list');
+    if (!card || !list) return;
+    const polls = this.state.posts
+      .filter(p => p.postType === 'poll' && p.poll)
+      .sort((a, b) => {
+        /* Open polls first, then newest */
+        const aClosed = this._pollIsClosed(a.poll) ? 1 : 0;
+        const bClosed = this._pollIsClosed(b.poll) ? 1 : 0;
+        if (aClosed !== bClosed) return aClosed - bClosed;
+        return (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime());
+      })
+      .slice(0, 4);
+    if (polls.length === 0) { card.style.display = 'none'; return; }
+    card.style.display = '';
+    list.innerHTML = polls.map(p => {
+      const tally = this._pollTally(p);
+      const total = tally.total;
+      const status = this._pollIsClosed(p.poll)
+        ? 'Final results'
+        : (p.poll.endMs ? this._pollTimeLeft(p.poll) : 'Open');
+      return `
+        <div class="sb-poll-row" data-open-poll="${utils.safe(p.txHash)}">
+          <div class="sb-poll-q">${utils.safe(p.poll.question)}</div>
+          <div class="sb-poll-meta">${total} vote${total === 1 ? '' : 's'} · ${utils.safe(status)}</div>
+        </div>`;
+    }).join('');
+    list.querySelectorAll('[data-open-poll]').forEach(el => {
+      el.onclick = () => {
+        const post = this._postMap.get(el.dataset.openPoll)
+          || this.state.posts.find(x => x.txHash === el.dataset.openPoll);
+        if (post) this.openThread(post);
+      };
+    });
+  }
+
+  /* Today's News — surfaces top-engagement posts from the recent feed.
+     Differs from renderTrending (hashtags) and renderWhoToFollow (addresses):
+     this card shows actual posts as headline-style cards.
+
+     Ranking heuristic (we don't have a true engagement index):
+       1. Posts from the last 24 hours
+       2. With substantive content (text length > 40)
+       3. Prefer posts with hashtags (more topical/newsy)
+       4. Prefer posts with media (image thumbnails make the card look right)
+       5. Newer wins ties
+
+     Max 3 entries — matches X's news card density. */
+  renderTodaysNews() {
+    const list = this.g('sb-news-list');
+    const card = this.g('sb-news-card');
+    if (!list || !card) return;
+
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000; /* 24h window */
+    const imgRe = /https?:\/\/[^\s<>"{}|\\^[\]`]+\.(jpg|jpeg|png|gif|webp|avif)/i;
+    const ipfsRe = /(ipfs:\/\/|\/ipfs\/)\S+/i;
+
+    const score = (p) => {
+      let s = 0;
+      const ts = new Date(p.timestamp).getTime();
+      const ageHours = (Date.now() - ts) / 3_600_000;
+      /* Newer = higher base score */
+      s += Math.max(0, 24 - ageHours) * 2;
+      /* Hashtag bonus */
+      if ((p.display || '').match(/#[A-Za-z0-9_]{2,30}/)) s += 8;
+      /* Media bonus */
+      if (imgRe.test(p.display || '') || ipfsRe.test(p.display || '')) s += 10;
+      /* Substantive bonus */
+      if ((p.display || '').length > 80) s += 4;
+      return s;
+    };
+
+    const candidates = this.state.posts
+      .filter(p => {
+        if (p.postType === 'poll') return false; /* polls handled separately below */
+        if (p.postType && p.postType !== 'post') return false; /* skip likes/follows */
+        if (!p.display || p.display.length < 40) return false;
+        const ts = new Date(p.timestamp).getTime();
+        return ts >= cutoff;
+      })
+      .map(p => ({ post: p, score: score(p) }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3)
+      .map(x => x.post);
+
+    /* Recently-ended polls (last 48h) with a tally — surface their results. */
+    const pollCutoff = Date.now() - 48 * 60 * 60 * 1000;
+    const endedPolls = this.state.posts
+      .filter(p => p.postType === 'poll' && p.poll && this._pollIsClosed(p.poll)
+        && p.poll.endMs >= pollCutoff)
+      .sort((a, b) => b.poll.endMs - a.poll.endMs)
+      .slice(0, 2);
+
+    if (candidates.length === 0 && endedPolls.length === 0) { card.style.display = 'none'; return; }
+    card.style.display = '';
+
+    const pollRows = endedPolls.map(p => {
+      const tally = this._pollTally(p);
+      let winner = '', winPct = 0;
+      if (tally.total > 0) {
+        let maxIdx = 0;
+        tally.counts.forEach((c, i) => { if (c > (tally.counts[maxIdx] || 0)) maxIdx = i; });
+        winner = p.poll.options[maxIdx] || '';
+        winPct = Math.round((tally.counts[maxIdx] / tally.total) * 100);
+      }
+      return `
+        <div class="news-row" role="button" tabindex="0" data-act="open-thread" data-act-arg="${utils.safe(p.txHash)}">
+          <div class="news-body">
+            <div class="news-label">📊 Poll · Final results</div>
+            <div class="news-headline">${utils.safe(p.poll.question)}</div>
+            <div class="news-meta">
+              ${winner ? `<span>Winner: ${utils.safe(winner)} (${winPct}%)</span>` : '<span>No votes</span>'}
+              <span>·</span><span>${tally ? tally.total : 0} votes</span>
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+
+    list.innerHTML = pollRows + candidates.map(p => {
+      const author = this.state.profCache[p.reporter];
+      const authorName = author?.username
+        ? utils.safe(author.username)
+        : this.trunc(p.reporter || '');
+      /* Extract first hashtag for label, or fall back to author */
+      const tagMatch = (p.display || '').match(/#([A-Za-z0-9_]{2,30})/);
+      const label = tagMatch ? '#' + utils.safe(tagMatch[1]) + ' · Trending' : authorName;
+      /* First image URL for thumbnail, if any */
+      const imgMatch = (p.display || '').match(/https?:\/\/[^\s<>"{}|\\^[\]`]+\.(jpg|jpeg|png|gif|webp|avif)/i);
+      const thumb = imgMatch ? utils.safeUrl(imgMatch[0]) : '';
+      /* Headline: strip URLs from the display for cleaner preview */
+      const headlineRaw = (p.display || '').replace(/https?:\/\/\S+/g, '').trim();
+      const headline = utils.safe(headlineRaw.slice(0, 140));
+      const time = this.relTime(p.timestamp);
+      return `
+        <div class="news-row" role="button" tabindex="0" data-act="open-thread" data-act-arg="${utils.safe(p.txHash)}">
+          <div class="news-body">
+            <div class="news-label">${label}</div>
+            <div class="news-headline">${headline}</div>
+            <div class="news-meta">
+              <span>${utils.safe(authorName)}</span>
+              <span>·</span>
+              <span>${time}</span>
+            </div>
+          </div>
+          ${thumb ? `<img src="${utils.safe(thumb)}" class="news-thumb"
+            alt="" loading="lazy" onerror="this.style.display='none'">` : ''}
+        </div>`;
+    }).join('');
+  }
+
+  /* Helper for news card row clicks — looks up the post and opens its thread. */
+  async openThreadByHash(hash) {
+    hash = (hash || '').toLowerCase();
+    let post = this._postMap.get(hash) ||
+               this.state.posts.find(p => p.txHash === hash);
+    if (!post) {
+      /* Not loaded (e.g. a shared deep link opened cold) — fetch it. */
+      utils.toast('Loading post…');
+      post = await this._fetchTxByHash(hash);
+    }
+    if (post) this.openThread(post);
+    else utils.toast('Post not found');
+  }
+
+  renderTrending() {
+    const list = this.g('sb-trending-list');
+    if (!list) return;
+    /* Real trends: #hashtags + significant words (shared with Explore via
+       _computeTrends), not hashtags-only — on-chain posts rarely use #tags, so
+       the old hashtag-only version almost always fell back to a static
+       "#PulseChain" placeholder. Top 5 for the compact sidebar card. */
+    const top = this._computeTrends(5, 200);
+
+    const trendHTML = top.map(([term, count]) =>
+      `<div class="sb-card-row" role="button" tabindex="0" data-act="search-trend" data-act-arg="${utils.safe(term)}" style="cursor:pointer">
+        <div style="flex:1">
+          <span class="trend-label">Trending on PulseChain</span>
+          <span class="trend-name">${utils.safe(term)}</span>
+          <span class="trend-count">${count} post${count > 1 ? 's' : ''}</span>
+        </div>
+        <span style="font-size:20px;align-self:center">📈</span>
+      </div>`).join('');
+
+    /* Fallback when nothing trends yet — keeps the card from looking empty. */
+    const fallback = (top.length === 0)
+      ? `<div class="sb-card-row" role="button" tabindex="0" data-act="search-trend" data-act-arg="PulseChain" style="cursor:pointer">
+          <div style="flex:1">
+            <span class="trend-label">Trending on PulseChain</span>
+            <span class="trend-name">#PulseChain</span>
+            <span class="trend-count">Join the conversation</span>
+          </div>
+          <span style="font-size:20px;align-self:center">⚡</span>
+        </div>`
+      : '';
+
+    list.innerHTML = trendHTML + fallback;
+  }
+
+  renderWhoToFollow() {
+    const list = this.g('sb-w2f-list');
+    const card = this.g('sb-w2f-card');
+    if (!list || !card) return;
+    if (!this.state.signerAddr) { card.style.display = 'none'; return; }
+
+    /* Count post frequency by reporter, excluding self and already-followed. */
+    const counts = new Map();
+    this.state.posts.slice(0, 200).forEach(p => {
+      const r = p.reporter?.toLowerCase();
+      if (!r || r === this.state.signerAddr) return;
+      if (this.state.following.has(r)) return;
+      counts.set(r, (counts.get(r) || 0) + 1);
+    });
+    /* Prefer addresses we have profile info for — nicer cards, real names. */
+    const _w2fSorted = [...counts.entries()]
+      .sort((a, b) => {
+        const aHasProfile = this.state.profCache[a[0]]?.username ? 1 : 0;
+        const bHasProfile = this.state.profCache[b[0]]?.username ? 1 : 0;
+        if (aHasProfile !== bHasProfile) return bHasProfile - aHasProfile;
+        return b[1] - a[1];
+      });
+    this._w2fTotal = _w2fSorted.length;
+    /* Default: 3 visible; Show more reveals 6. Matches X's W2F card density. */
+    const candidates = _w2fSorted.slice(0, this._w2fExpanded ? 6 : 3);
+
+    if (candidates.length === 0) { card.style.display = 'none'; return; }
+    card.style.display = '';
+    /* Append a Show more / Show less footer link if there are more
+       candidates than currently shown. Removed and re-added each render. */
+    setTimeout(() => {
+      const _card = this.g('sb-w2f-card');
+      if (!_card) return;
+      const existing = _card.querySelector('.w2f-show-more');
+      if (existing) existing.remove();
+      if ((this._w2fTotal || 0) > 3) {
+        const btn = document.createElement('button');
+        btn.className = 'sb-show-more w2f-show-more';
+        btn.textContent = this._w2fExpanded ? 'Show less' : 'Show more';
+        btn.onclick = () => {
+          this._w2fExpanded = !this._w2fExpanded;
+          this.renderWhoToFollow();
+        };
+        _card.appendChild(btn);
+      }
+    }, 0);
+    list.innerHTML = candidates.map(([addr]) => {
+      const c = this.state.profCache[addr];
+      const name = c?.username ? utils.safe(c.username) : this.trunc(addr);
+      const pic  = c?.picUrl || 'image1.jpeg';
+      return `<div class="sb-card-row" role="button" tabindex="0" style="cursor:pointer" data-act="open-profile" data-act-arg="${utils.safe(addr)}">
+        <img src="${utils.safe(pic)}" class="w2f-avatar" data-pop-addr="${utils.safe(addr)}" onerror="this.src='image1.jpeg'"
+          alt="" style="width:40px;height:40px;border-radius:50%;margin-right:10px;flex-shrink:0">
+        <div style="flex:1;min-width:0">
+          <span class="trend-name" data-pop-addr="${utils.safe(addr)}" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</span>
+          <span class="trend-count">${this.trunc(addr)}</span>
+        </div>
+        <button class="w2f-follow-btn" data-act="follow-toggle-addr" data-act-arg="${utils.safe(addr)}"
+          style="padding:6px 14px;border-radius:9999px;background:var(--primary);color:#fff;
+                 font-weight:700;font-size:13px;border:0;cursor:pointer;flex-shrink:0">Follow</button>
+      </div>`;
+    }).join('');
+  }
+
+  /* Toggle follow/unfollow for an address. Sends a FOLLOW:/UNFOLLOW: tx
+     addressed TO the target. This is what makes followers discoverable:
+       - your OUTGOING FOLLOW txs  = who you follow
+       - a user's INCOMING FOLLOW txs = who follows them
+     Previously this self-sent (to your own address), so a target could
+     never see who followed them — the cause of the "0 followers" bug.
+     Updates state.following optimistically; reverts on tx failure.
+     Called from the Who-to-follow card, profile popup, and profile page. */
+  /* Thin alias → toggleFollow is the single canonical implementation. Kept
+     because several call sites (Who-to-follow card, profile popup) use this
+     name. Both now send the FOLLOW tx to the target and share one code path. */
+  toggleFollowAddr(addr, btn) {
+    return this.toggleFollow(addr, btn);
+  }
+
+  /* Rotating compose placeholder — light Twitter polish. Only rotates when
+     the textarea is empty AND unfocused, so we never disturb a user typing. */
+  _initComposePlaceholderRotation() {
+    const placeholders = [
+      "What's happening on Pulse?",
+      "What's on your mind?",
+      "Drop something uncensorable…",
+      "Speak freely — the chain remembers.",
+      "Say it on-chain.",
+    ];
+    const targets = ['compose-text', 'modal-compose-text'].map(id => this.g(id)).filter(Boolean);
+    if (targets.length === 0) return;
+    let idx = 0;
+    setInterval(() => {
+      idx = (idx + 1) % placeholders.length;
+      targets.forEach(el => {
+        if (!el.value && document.activeElement !== el) {
+          el.placeholder = placeholders[idx];
+        }
+      });
+    }, 8000);
+  }
+
+  /* ── Profile page: infinite scroll ───────────────────────────────────
+     Triggered from the global scroll listener when mode === 'profile'.
+     Keeps fetching more pages from the chain and appending matching posts
+     until we hit the end of history or fail. */
+  async _onProfileScroll() {
+    const st = this._profilePageState;
+    if (!st || st.loading || !st.hasMore) return;
+    if (this.state.mode !== 'profile') return;
+    /* Trigger when within ~600px of the bottom — same threshold as the main feed */
+    const doc = document.documentElement;
+    if (window.scrollY + window.innerHeight < doc.scrollHeight - 600) return;
+    await this.fetchProfileMore();
+  }
+
+  async fetchProfileMore() {
+    const st = this._profilePageState;
+    if (!st || st.loading || !st.hasMore) return;
+    st.loading = true;
+    const feedEl = document.getElementById('prof-feed');
+    /* Show a small loading footer at the bottom of the profile feed */
+    let footer = feedEl?.querySelector('.prof-loading-more');
+    if (feedEl && !footer) {
+      footer = document.createElement('div');
+      footer.className = 'prof-loading-more';
+      footer.style.cssText = 'padding:24px;text-align:center;color:var(--muted);font-size:14px';
+      footer.textContent = 'Loading more posts…';
+      feedEl.appendChild(footer);
+    }
+    try {
+      /* Scan the next batch of 4 pages */
+      const startPage = st.pagesScanned + 1;
+      const endPage   = startPage + 3;
+      let batch = [];
+      for (let p = startPage; p <= endPage; p++) {
+        let raw;
+        try { raw = await this.apiFetch(st.address, p); }
+        catch (err) { console.warn('Profile fetch error:', err); st.hasMore = false; break; }
+        if (raw.length === 0) { st.hasMore = false; break; }
+        batch.push(...raw);
+        if (raw.length < 50) { st.hasMore = false; break; }
+      }
+      st.pagesScanned = endPage;
+      st.rawTxs.push(...batch);
+      /* The awaits above can span a navigation (e.g. user tapped Followers,
+         which swaps #feed and sets mode='followlist'). If we're no longer on
+         the profile page, OR the feed element we captured is detached, abort
+         — otherwise insertBefore throws (footer is no longer a child) and the
+         new page's content gets corrupted. */
+      if (this.state.mode !== 'profile' ||
+          !feedEl || !feedEl.isConnected ||
+          (footer && footer.parentNode !== feedEl)) {
+        st.loading = false;
+        return;
+      }
+      /* Filter for current tab and append */
+      const tab = st.tab;
+      const newPosts = this._filterProfileTxs(batch, tab, st.address);
+      /* Schedule poll tallies for any polls just rendered. */
+      if (newPosts.some(pp => pp.poll)) {
+        setTimeout(() => this._tallyVisiblePolls(), 100);
+      }
+      const fresh = newPosts.filter(p => !st.visibleTxHashes.has(p.txHash));
+      fresh.forEach(p => {
+        st.visibleTxHashes.add(p.txHash);
+        this._postMap.set(p.txHash, p);
+      });
+      if (fresh.length && feedEl && feedEl.isConnected &&
+          (!footer || footer.parentNode === feedEl)) {
+        /* Clear the deep-loading placeholder shown when the first pages had
+           no matching posts. */
+        document.getElementById('prof-loading-deep')?.remove();
+        const frag = document.createDocumentFragment();
+        const replyMap = new Map();
+        fresh.forEach(p => { if (p.parentTx) replyMap.set(p.parentTx, (replyMap.get(p.parentTx)||0)+1); });
+        fresh.forEach(p => {
+          if (tab === 'media') {
+            /* For media tab, append matching thumbs (same detection as paint) */
+            this._mediaImageUrls(p.display).forEach(resolved => {
+              const img = document.createElement('img');
+              img.src = resolved;
+              img.className = 'prof-media-thumb';
+              img.loading = 'lazy';
+              img.onerror = function(){ this.style.display = 'none'; };
+              img.onclick = () => window.open('https://otter.pulsechain.com/tx/' + p.txHash, '_blank', 'noopener,noreferrer');
+              const grid = feedEl.querySelector('.prof-media-grid') || (() => {
+                const g = document.createElement('div');
+                g.className = 'prof-media-grid';
+                feedEl.insertBefore(g, footer);
+                return g;
+              })();
+              grid.appendChild(img);
+            });
+            return;
+          }
+          const el = document.createElement('div');
+          el.className = 'post-item';
+          el.dataset.txhash = p.txHash;
+          el.innerHTML = this.postHTML(p, false, replyMap, null);
+          frag.appendChild(el);
+          if (p.reporter !== this.state.signerAddr) this.fetchOtherProfile(p.reporter);
+        });
+        feedEl.insertBefore(frag, footer);
+        /* More posts/thumbs landed — keep the header count in sync (it was
+           stale because it was only computed once after the initial load). */
+        this._updateProfileSubtitle(st.address);
+      }
+      /* Update footer based on outcome:
+         - No more pages: show end marker briefly, then remove.
+         - More pages exist: HIDE the footer (we're now idle). It will
+           re-appear on the next scroll-triggered fetch. Leaving it as
+           "Loading more posts…" while idle looked like a stuck spinner. */
+      if (footer) {
+        if (!st.hasMore) {
+          footer.textContent = '— End of profile —';
+          setTimeout(() => footer?.remove(), 5000);
+        } else {
+          footer.remove();
+        }
+      }
+    } finally {
+      st.loading = false;
+    }
+  }
+
+  /* Auto-load more profile pages until the content is tall enough to scroll
+     (or history runs out). Without this, a short first paint — e.g. an active
+     account whose first pages are mostly replies/reactions on the Posts tab —
+     would strand the user with no way to trigger infinite scroll. Capped. */
+  async _fillProfileViewport() {
+    for (let guard = 0; guard < 12; guard++) {
+      const st = this._profilePageState;
+      if (!st || !st.hasMore || this.state.mode !== 'profile') break;
+      if (document.documentElement.scrollHeight > window.innerHeight + 400) break;
+      const before = st.pagesScanned;
+      await this.fetchProfileMore();
+      const st2 = this._profilePageState;
+      if (!st2 || st2.pagesScanned === before) break; /* no progress / navigated away */
+    }
+  }
+
+  /* Single source of truth for the profile Media tab. Returns every resolved
+     image URL in a post's text, using the SAME compiled host/path patterns as
+     utils.linkify — so the initial paint, the scroll-fill, and what actually
+     renders never diverge (previously three different host lists). */
+  _mediaImageUrls(text) {
+    const out = [];
+    const matches = (text || '').match(_LK_RE) || [];
+    for (const raw of matches) {
+      if (!/^(https?:\/\/|ipfs:\/\/|ar:\/\/|arweave:\/\/)/i.test(raw)) continue;
+      const u = raw.startsWith('ipfs://')    ? 'https://ipfs.io/ipfs/' + raw.slice(7)
+              : raw.startsWith('arweave://') ? 'https://arweave.net/'  + raw.slice(10)
+              : raw.startsWith('ar://')      ? 'https://arweave.net/'  + raw.slice(5)
+              : raw;
+      let isImg = _LK_IMG_RE.test(u) || _LK_IMG_DOMAINS.test(u) || u.includes('arweave.net/');
+      if (!isImg) { try { isImg = _LK_IMG_HOSTS.has(new URL(u).hostname); } catch { /* invalid URL */ } }
+      if (isImg) out.push(u);
+    }
+    return out;
+  }
+  _postHasMedia(text) { return this._mediaImageUrls(text).length > 0; }
+
+  /* Pure tx filter — split out of loadProfileTab so fetchProfileMore can
+     reuse it without re-fetching. Returns parsed post objects. */
+  _filterProfileTxs(rawTxs, tab, address) {
+    const addrLow = address.toLowerCase();
+    const posts = [];
+    rawTxs.forEach(tx => {
+      const from = tx.from?.toLowerCase();
+      const to   = tx.to?.toLowerCase();
+      if (from !== addrLow) return;
+      if (!tx.input || tx.input === '0x') return;
+      try {
+        /* Canonical parse — same as the main feed and the initial profile
+           load. Handles reposts/polls/replies and returns null for
+           profile/reaction/vote/note txs, so raw "REPOST:…" / "NOTE:…" never
+           leak into the profile feed. */
+        const parsed = this._parsePostTx(tx, { mode: 'profile' });
+        if (!parsed) return;
+        const isReply = !!parsed.parentTx;
+        if (tab === 'posts'   &&  isReply) return;
+        if (tab === 'replies' && !isReply) return;
+        if (tab === 'media' && !this._postHasMedia(parsed.display)) return;
+        posts.push(parsed);
+      } catch { /* skip */ }
+    });
+    return posts;
+  }
+
+  /* ── Profile popup card ─────────────────────────────────────────────
+     Twitter-style profile preview shown when user clicks a name or avatar
+     in the feed. Click on the popup body (not the Follow button) opens
+     the full profile page. Closes on outside click, ESC, scroll, or a
+     second click on the same anchor (toggle). */
+  async showProfilePopup(address, anchorEl, trigger = 'click') {
+    address = address.toLowerCase();
+    const popup = this.g('profile-popup');
+    if (!popup) return;
+    /* Click-toggle: clicking the same anchor again closes the popup.
+       Hover-open never toggles — moving away closes it instead. */
+    if (trigger === 'click' &&
+        popup.classList.contains('open') && popup.dataset.addr === address) {
+      this.hideProfilePopup();
+      return;
+    }
+    /* If hover is opening but click-popup is already showing something else,
+       don't clobber it — let click take priority. */
+    if (trigger === 'hover' && popup.classList.contains('open') &&
+        popup.dataset.addr !== address) return;
+    popup.dataset.addr = address;
+
+    /* Resolve profile data: own state, prof cache, then trigger fetch if missing. */
+    let prof = null;
+    if (address === this.state.signerAddr) {
+      prof = this.state.profile;
+    } else {
+      prof = this.state.profCache[address];
+      if (!prof || prof === null) {
+        /* Render placeholder, kick off fetch, refresh on completion. */
+        this.fetchOtherProfile(address).then(() => {
+          if (popup.classList.contains('open') && popup.dataset.addr === address) {
+            popup.innerHTML = this._profilePopupHTML(address, this.state.profCache[address] || {});
+          }
+        });
+      }
+    }
+
+    /* Count posts by this address in current feed for the "N posts" stat. */
+    const postCount = this.state.posts.filter(
+      p => p.reporter?.toLowerCase() === address && (!p.postType || p.postType === 'post')
+    ).length;
+
+    popup.innerHTML = this._profilePopupHTML(address, prof || {}, postCount);
+
+    /* Position popup near anchor — clamped to viewport. */
+    this._positionPopup(popup, anchorEl);
+    clearTimeout(popup._openRemoveTimer); /* cancel any pending hide */
+    popup.classList.add('open');
+    requestAnimationFrame(() => popup.classList.add('visible'));
+
+    /* Close the popup when the mouse leaves it (hover-opened popups only).
+       Without this, moving the mouse off the popup — rather than back onto
+       the trigger — left the popup stuck open. A short grace delay lets
+       the user move between trigger and popup without flicker. */
+    if (trigger === 'hover') {
+      popup.onmouseleave = () => {
+        clearTimeout(popup._pendingClose);
+        popup._pendingClose = setTimeout(() => {
+          /* Only close if the mouse isn't back over the popup or its trigger */
+          if (!popup.matches(':hover')) this.hideProfilePopup();
+        }, 200);
+      };
+      popup.onmouseenter = () => {
+        /* Re-entered the popup — cancel any pending close */
+        clearTimeout(popup._pendingClose);
+        popup._pendingClose = null;
+      };
+    }
+
+    this._wirePopupDismiss();
+  }
+
+  _profilePopupHTML(address, prof, postCount = null) {
+    const isOwn = address === this.state.signerAddr;
+    const isFollowing = this.state.following.has(address);
+    const name = prof.username ? utils.safe(prof.username) : this.trunc(address);
+    const handle = '@' + this.trunc(address);
+    const pic = utils.safe(utils.safeUrl(prof.picUrl) || 'image1.jpeg');
+    const bio = prof.bio ? utils.safe(prof.bio) : '';
+    const hasProfile = !!prof.username;
+    const verifiedSvg = hasProfile
+      ? '<svg viewBox="0 0 22 22" width="15" height="15"><path fill="#1d9bf0" d="M20.396 11c-.018-.646-.215-1.275-.57-1.816-.354-.54-.852-.972-1.438-1.246.223-.607.27-1.264.14-1.897-.131-.634-.437-1.218-.882-1.687-.47-.445-1.053-.75-1.687-.882-.633-.13-1.29-.083-1.897.14-.273-.587-.704-1.086-1.245-1.44S11.647 1.62 11 1.604c-.646.017-1.273.213-1.813.568s-.969.854-1.24 1.44c-.608-.223-1.267-.272-1.902-.14-.635.13-1.22.436-1.69.882-.445.47-.749 1.055-.878 1.688-.13.633-.08 1.29.144 1.896-.587.274-1.087.705-1.443 1.245-.356.54-.555 1.17-.574 1.817.02.647.218 1.276.574 1.817.356.54.856.972 1.443 1.245-.224.606-.274 1.263-.144 1.896.13.634.433 1.218.877 1.688.47.443 1.054.747 1.687.878.633.132 1.29.084 1.897-.136.274.586.705 1.084 1.246 1.439.54.354 1.17.551 1.816.569.647-.016 1.276-.213 1.817-.567s.972-.854 1.245-1.44c.604.239 1.266.296 1.903.164.636-.132 1.22-.447 1.68-.907.46-.46.776-1.044.908-1.681s.075-1.299-.165-1.903c.586-.274 1.084-.705 1.439-1.246.354-.54.551-1.17.569-1.816zM9.662 14.85l-3.429-3.428 1.293-1.302 2.072 2.072 4.4-4.794 1.347 1.246z"/></svg>'
+      : '';
+
+    const followBtn = isOwn
+      ? ''
+      : isFollowing
+        ? `<button class="pp-follow-btn following" data-pp-action="unfollow"><span class="pp-following-label">Following</span></button>`
+        : `<button class="pp-follow-btn" data-pp-action="follow">Follow</button>`;
+
+    return `
+      <div class="pp-header">
+        <img src="${pic}" class="pp-avatar" alt="" onerror="this.src='image1.jpeg'">
+        ${followBtn}
+      </div>
+      <div class="pp-name">${name}${verifiedSvg ? `<span class="verified-icon">${verifiedSvg}</span>` : ''}</div>
+      <div class="pp-handle">${handle}</div>
+      ${bio ? `<div class="pp-bio">${bio}</div>` : ''}
+      ${postCount !== null
+        ? `<div class="pp-stats"><span><strong>${postCount}</strong> ${postCount === 1 ? 'post' : 'posts'} in view</span></div>`
+        : ''}
+      <div class="pp-view-hint">Click card to view profile →</div>
+    `;
+  }
+
+  _positionPopup(popup, anchor) {
+    const rect = anchor.getBoundingClientRect();
+    popup.style.display = 'block';
+    popup.style.visibility = 'hidden';
+    const pw = popup.offsetWidth || 320;
+    const ph = popup.offsetHeight || 200;
+    popup.style.visibility = '';
+
+    let left = rect.left;
+    let top  = rect.bottom + 8;
+    if (left + pw > window.innerWidth - 12) left = window.innerWidth - pw - 12;
+    if (left < 12) left = 12;
+    if (top + ph > window.innerHeight - 12) {
+      const flipped = rect.top - ph - 8;
+      top = flipped > 12 ? flipped : Math.max(12, window.innerHeight - ph - 12);
+    }
+    popup.style.left = left + 'px';
+    popup.style.top  = top  + 'px';
+  }
+
+  _wirePopupDismiss() {
+    /* Click handling is done by the permanent capture listener in wireListeners.
+       Here we only add ESC (keydown) and scroll — both are safe to attach once
+       per popup open since they call hideProfilePopup which is idempotent. */
+    if (this._popupHandlersAttached) return;
+    this._popupHandlersAttached = true;
+    const dismiss = e => {
+      if (e.type === 'keydown' && e.key === 'Escape') this.hideProfilePopup();
+      else if (e.type === 'scroll') this.hideProfilePopup();
+    };
+    this._popupDismiss = dismiss;
+    document.addEventListener('keydown', dismiss);
+    window.addEventListener('scroll', dismiss, { passive: true, once: false });
+  }
+
+  hideProfilePopup() {
+    const popup = this.g('profile-popup');
+    if (!popup) return;
+    /* Always clear 'visible' (idempotent, no early-return) so the popup can
+       never get stuck on screen. The deferred 'open' removal is token-guarded
+       (cleared on re-open) so a stale timer can't desync the classes. */
+    clearTimeout(popup._pendingClose); popup._pendingClose = null;
+    clearTimeout(popup._openRemoveTimer);
+    popup.classList.remove('visible');
+    popup._openRemoveTimer = setTimeout(() => popup.classList.remove('open'), 180);
+    /* Clean up ESC/scroll listener (click is handled by permanent listener) */
+    if (this._popupDismiss) {
+      document.removeEventListener('keydown', this._popupDismiss);
+      window.removeEventListener('scroll', this._popupDismiss);
+      this._popupDismiss = null;
+    }
+    this._popupHandlersAttached = false;
+  }
+
+  /* ── Share card ─────────────────────────────────────────────────── */
+  openShareCard(post) {
+    const canvas  = this.g('share-canvas');
+    const modal   = this.g('share-modal');
+    const copyBtn = this.g('share-copy-img-btn');
+    const linkBtn = this.g('share-copy-link-btn');
+    const nativeBtn = this.g('share-native-btn');
+    if (!canvas || !modal) {
+      utils.copyToClipboard(`https://otter.pulsechain.com/tx/${post.txHash}`, 'Link copied!');
+      return;
+    }
+    const dpr = window.devicePixelRatio || 1;
+    const W = 480, H = 280;
+    canvas.width  = W * dpr; canvas.height = H * dpr;
+    canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.fillStyle = '#16181c'; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = '#2f3336'; ctx.lineWidth = 1;
+    ctx.strokeRect(0.5, 0.5, W-1, H-1);
+    const c = this.state.profCache[post.reporter];
+    const displayName = c?.username || this.trunc(post.reporter);
+    const text = (post.display || '').slice(0, 280);
+    const ts = this.relTime(post.timestamp);
+    const brand = '#7c4dff';
+    ctx.fillStyle = brand; ctx.fillRect(0, 0, 4, H);
+    ctx.fillStyle = '#e7e9ea';
+    ctx.font = 'bold 15px system-ui, sans-serif';
+    ctx.fillText(displayName, 24, 36);
+    ctx.fillStyle = '#71767b';
+    ctx.font = '13px system-ui, sans-serif';
+    ctx.fillText('@' + this.trunc(post.reporter), 24, 54);
+    ctx.fillStyle = '#2f3336'; ctx.fillRect(16, 64, W-32, 1);
+    ctx.fillStyle = '#e7e9ea';
+    ctx.font = '14px system-ui, sans-serif';
+    const words = text.split(' ');
+    let line = '', y = 88;
+    for (const word of words) {
+      const test = line + (line ? ' ' : '') + word;
+      if (ctx.measureText(test).width > W-48 && line) {
+        ctx.fillText(line, 24, y); line = word; y += 22;
+        if (y > H-60) { ctx.fillText(line+'…', 24, y); line=''; break; }
+      } else line = test;
+    }
+    if (line) ctx.fillText(line, 24, y);
+    ctx.fillStyle = '#1d1f23'; ctx.fillRect(0, H-48, W, 48);
+    ctx.fillStyle = '#71767b'; ctx.font = '12px system-ui, sans-serif';
+    ctx.fillText(ts + '  ·  PulseChain', 24, H-26);
+    ctx.fillStyle = brand; ctx.font = 'bold 12px system-ui, sans-serif';
+    ctx.fillText('Say It DeFi', W-100, H-26);
+    modal.classList.add('open');
+    this._trapFocus(modal);   /* keep Tab focus inside; restore on close */
+    copyBtn.onclick = async () => {
+      try {
+        canvas.toBlob(async blob => {
+          if (!blob) { utils.toast('Canvas error'); return; }
+          await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+          utils.toast('Image copied ✓');
+        }, 'image/png');
+      } catch { utils.toast('Copy not supported — try Share'); }
+    };
+    if (navigator.share && navigator.canShare) {
+      nativeBtn.style.display = '';
+      nativeBtn.onclick = async () => {
+        try {
+          const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+          const file = new File([blob], 'post.png', { type:'image/png' });
+          if (navigator.canShare({ files:[file] })) {
+            await navigator.share({ files:[file], title:'Post on Say It DeFi',
+              text: text.slice(0,100), url:`https://otter.pulsechain.com/tx/${post.txHash}` });
+          } else {
+            await navigator.share({ title:'Post on Say It DeFi',
+              url:`https://otter.pulsechain.com/tx/${post.txHash}` });
+          }
+        } catch(err) { if(err.name!=='AbortError') utils.toast('Share failed: '+err.message); }
+      };
+    }
+    linkBtn.onclick = () => utils.copyToClipboard(
+      `https://otter.pulsechain.com/tx/${post.txHash}`, 'Link copied!');
+  }
+
+  /* ── Mute / unmute ──────────────────────────────────────────────── */
+  /* ── Lists & Communities persistence (localStorage) ─────────────── */
+  _saveLists() {
+    utils.safeLS.set(LISTS_KEY, JSON.stringify(this.state.lists));
+  }
+  _saveCommunities() {
+    utils.safeLS.set(COMMUNITIES_KEY, JSON.stringify(this.state.communities));
+  }
+
+  /* Publish a snapshot of lists + joined communities on-chain as a single
+     self-transaction. Portable across devices and publicly visible to
+     anyone scanning the user's address. One tx per publish. */
+  async publishListsOnChain() {
+    if (!this.signer) { utils.toast('Connect wallet to publish'); return; }
+    const snapshot = {
+      v: 1,
+      lists: this.state.lists.map(l => ({ id: l.id, name: l.name, members: l.members })),
+      communities: this.state.communities
+        .filter(c => c.joined)
+        .map(c => ({ address: c.address, name: c.name, desc: c.desc || '' })),
+    };
+    const body = LC_SYNC_PREFIX + JSON.stringify(snapshot);
+    /* No artificial size cap — the block gas limit is the real ceiling, and
+       it's very large. If a snapshot ever exceeds what a block can hold the
+       tx will simply fail at estimateGas, which we surface below. */
+    try {
+      const to    = this.state.signerAddr; /* self-tx */
+      const data  = ethers.hexlify(ethers.toUtf8Bytes(body));
+      const gas   = await this._estimateGasSafe({ to, value: '0', data }, (data.length - 2) / 2);
+      const tx    = await this.signer.sendTransaction({ to, value: '0', data, gasLimit: gas });
+      utils.toast('Publishing lists on-chain… you can keep browsing');
+      await tx.wait();
+      utils.toast('Lists published on-chain ✓');
+    } catch (err) {
+      const msg = err.reason || err.message || 'Unknown error';
+      const rejected = err.code === 4001 || err.code === 'ACTION_REJECTED' || /user (denied|rejected)/i.test(msg);
+      utils.toast(rejected ? 'Publish cancelled' : 'Publish failed: ' + msg);
+    }
+  }
+
+  /* Silent best-effort restore used on connect — no toasts, only applies
+     if it finds a snapshot, never overwrites a non-empty local store. */
+  async _autoRestoreLists() {
+    if (!this.state.signerAddr) return;
+    if (this.state.lists.length || this.state.communities.length) return;
+    try {
+      let snapshot = null;
+      const scanLimit = Math.min(this._getMaxScanPages(), 6);
+      outer:
+      for (let page = 1; page <= scanLimit; page++) {
+        let raw;
+        try { raw = await this.apiFetch(this.state.signerAddr, page); }
+        catch { break; }
+        for (const tx of raw) {
+          if (tx.from?.toLowerCase() !== this.state.signerAddr) continue;
+          if (!tx.input || tx.input === '0x') continue;
+          let text;
+          try { text = ethers.toUtf8String(tx.input).trim(); }
+          catch { continue; }
+          if (!text.startsWith(LC_SYNC_PREFIX)) continue;
+          try { snapshot = JSON.parse(text.slice(LC_SYNC_PREFIX.length)); break outer; }
+          catch { continue; }
+        }
+        if (raw.length < 50) break;
+      }
+      if (!snapshot) return;
+      this.state.lists = (snapshot.lists || []).map(l => ({
+        id: l.id, name: l.name, members: Array.isArray(l.members) ? l.members : [],
+      }));
+      this._saveLists();
+      this.state.communities = (snapshot.communities || []).map(c => ({
+        address: (c.address || '').toLowerCase(),
+        name: c.name || this.trunc(c.address || ''),
+        desc: c.desc || '', joined: true,
+      })).filter(c => c.address);
+      this._saveCommunities();
+      utils.toast('Restored your lists from chain ✓');
+    } catch { /* silent */ }
+  }
+
+  /* Restore lists + communities from the latest on-chain LC_SYNC snapshot
+     in the user's outbox. Merges with local (on-chain wins for matching
+     ids/addresses). Called on demand from the Lists/Communities pages. */
+  async restoreListsFromChain() {
+    if (!this.state.signerAddr) { utils.toast('Connect wallet first'); return; }
+    utils.toast('Looking for your on-chain lists…');
+    try {
+      let snapshot = null;
+      const scanLimit = Math.min(this._getMaxScanPages(), 10);
+      outer:
+      for (let page = 1; page <= scanLimit; page++) {
+        let raw;
+        try { raw = await this.apiFetch(this.state.signerAddr, page); }
+        catch { break; }
+        for (const tx of raw) {
+          if (tx.from?.toLowerCase() !== this.state.signerAddr) continue;
+          if (!tx.input || tx.input === '0x') continue;
+          let text;
+          try { text = ethers.toUtf8String(tx.input).trim(); }
+          catch { continue; }
+          if (!text.startsWith(LC_SYNC_PREFIX)) continue;
+          try { snapshot = JSON.parse(text.slice(LC_SYNC_PREFIX.length)); break outer; }
+          catch { continue; }
+        }
+        if (raw.length < 50) break;
+      }
+      if (!snapshot) { utils.toast('No on-chain lists found'); return; }
+      /* Merge lists: on-chain entries replace local ones with the same id. */
+      const localById = new Map(this.state.lists.map(l => [l.id, l]));
+      (snapshot.lists || []).forEach(l => localById.set(l.id, {
+        id: l.id, name: l.name, members: Array.isArray(l.members) ? l.members : [],
+      }));
+      this.state.lists = [...localById.values()];
+      this._saveLists();
+      /* Merge communities by address (mark restored ones joined). */
+      const localByAddr = new Map(this.state.communities.map(c => [c.address, c]));
+      (snapshot.communities || []).forEach(c => {
+        const addr = (c.address || '').toLowerCase();
+        if (!addr) return;
+        localByAddr.set(addr, { address: addr, name: c.name || this.trunc(addr), desc: c.desc || '', joined: true });
+      });
+      this.state.communities = [...localByAddr.values()];
+      this._saveCommunities();
+      utils.toast('Restored from chain ✓');
+      if (this.state.mode === 'lists') this.goLists();
+      else if (this.state.mode === 'communities') this.goCommunities();
+    } catch (err) {
+      utils.toast('Restore failed: ' + (err.message || 'error'));
+    }
+  }
+  _newListId() {
+    return 'l_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  }
+
+  /* ── LISTS ──────────────────────────────────────────────────────────
+     A list is { id, name, members:[address] }. Viewing a list scans posts
+     from all member addresses (same strategy as the Following feed). */
+  goLists() {
+    this._updateTitle('Lists');
+    this._setRoute('/lists');
+    this.setNav(null, null);
+    this.state.mode = 'lists';
+    this.state.activeList = null;
+    this.g('compose-area').style.display   = 'none';
+    this.g('channel-banner').style.display = 'none';
+    this.g('feed-tabs').style.display      = 'none';
+    this.g('new-banner').classList.remove('visible');
+    this.g('loading-more').style.display   = 'none';
+    this._pendingPageHeader = this._makePageHeader({ title: 'Lists', noBack: true });
+    const header = this._applyPageHeader();
+    this.g('feed').innerHTML = header + this._listsHTML();
+    this._wireListsPage();
+  }
+
+  _listsHTML() {
+    const lists = this.state.lists;
+    const rows = lists.length === 0
+      ? `<div class="placeholder-view" style="padding:48px 32px">
+           <span class="ph-icon">📋</span>
+           <h2>No lists yet</h2>
+           <p>Create a list to curate posts from a specific set of accounts.</p>
+         </div>`
+      : lists.map(l => `
+          <div class="lc-row" data-open-list="${utils.safe(l.id)}">
+            <div class="lc-icon">📋</div>
+            <div class="lc-body">
+              <div class="lc-name">${utils.safe(l.name)}</div>
+              <div class="lc-sub">${l.members.length} member${l.members.length === 1 ? '' : 's'}</div>
+            </div>
+            <button class="lc-action" data-edit-list="${utils.safe(l.id)}" title="Edit list" aria-label="Edit list">⚙</button>
+          </div>`).join('');
+    return `
+      <div class="lc-page">
+        <div class="lc-new-row">
+          <input type="text" id="new-list-name" placeholder="New list name…" maxlength="40" autocomplete="off">
+          <button class="go-btn" id="new-list-go">Create</button>
+        </div>
+        <div class="lc-sync-row">
+          <button class="lc-sync-btn" id="lists-publish">⬆ Publish on-chain</button>
+          <button class="lc-sync-btn ghost" id="lists-restore">⬇ Restore from chain</button>
+        </div>
+        ${rows}
+      </div>`;
+  }
+
+  _wireListsPage() {
+    const g = id => document.getElementById(id);
+    const nameInput = g('new-list-name');
+    const createBtn = g('new-list-go');
+    const pubBtn = g('lists-publish');
+    const resBtn = g('lists-restore');
+    if (pubBtn) pubBtn.onclick = () => this.publishListsOnChain();
+    if (resBtn) resBtn.onclick = () => this.restoreListsFromChain();
+    const create = () => {
+      const name = nameInput?.value.trim();
+      if (!name) { utils.toast('Enter a list name'); return; }
+      this.state.lists.push({ id: this._newListId(), name, members: [] });
+      this._saveLists();
+      this.goLists();
+      utils.toast('List created ✓');
+    };
+    if (createBtn) createBtn.onclick = create;
+    if (nameInput) nameInput.onkeydown = e => { if (e.key === 'Enter') create(); };
+    this.g('feed').querySelectorAll('[data-open-list]').forEach(el => {
+      el.onclick = e => {
+        if (e.target.closest('[data-edit-list]')) return; /* let edit handler fire */
+        this.openList(el.dataset.openList);
+      };
+    });
+    this.g('feed').querySelectorAll('[data-edit-list]').forEach(el => {
+      el.onclick = e => { e.stopPropagation(); this.openListEditor(el.dataset.editList); };
+    });
+  }
+
+  /* List editor modal — rename, add/remove members, delete. */
+  openListEditor(listId) {
+    const list = this.state.lists.find(l => l.id === listId);
+    if (!list) return;
+    const memberRows = list.members.length
+      ? list.members.map(addr => {
+          const prof = this.state.profCache[addr];
+          const name = prof?.username ? utils.safe(prof.username) : this.trunc(addr);
+          const pic  = utils.safe(utils.safeUrl(prof?.picUrl) || 'image1.jpeg');
+          return `<div class="settings-row" style="align-items:center">
+            <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">
+              <img src="${pic}" onerror="this.src='image1.jpeg'" style="width:32px;height:32px;border-radius:50%;object-fit:cover;flex-shrink:0">
+              <div style="min-width:0">
+                <div style="font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${name}</div>
+                <div style="font-size:12px;color:var(--muted)">@${utils.safe(this.trunc(addr))}</div>
+              </div>
+            </div>
+            <button class="settings-btn" data-remove-member="${utils.safe(addr)}" style="flex-shrink:0">Remove</button>
+          </div>`;
+        }).join('')
+      : `<div style="padding:12px;color:var(--muted);font-size:14px;text-align:center">No members yet. Add an address below.</div>`;
+
+    this._showGenericModal('Edit List', `
+      <div style="margin-bottom:12px">
+        <label style="font-size:13px;color:var(--muted);display:block;margin-bottom:4px">List name</label>
+        <input type="text" class="form-input" id="edit-list-name" value="${utils.safe(list.name)}" maxlength="40">
+      </div>
+      <div style="margin-bottom:8px">
+        <label style="font-size:13px;color:var(--muted);display:block;margin-bottom:4px">Add member by address</label>
+        <div style="display:flex;gap:8px">
+          <input type="text" class="form-input" id="add-member-addr" placeholder="0x…" style="flex:1">
+          <button class="btn-pri" id="add-member-btn" style="flex-shrink:0;padding:8px 16px">Add</button>
+        </div>
+      </div>
+      <div id="list-members" style="max-height:260px;overflow-y:auto;margin:8px 0">${memberRows}</div>
+      <div class="btn-row" style="margin-top:12px;justify-content:space-between">
+        <button class="btn-ghost" id="delete-list-btn" style="color:#f4212e">Delete list</button>
+        <button class="btn-pri" id="save-list-btn">Save</button>
+      </div>
+    `);
+
+    const g = id => document.getElementById(id);
+    g('add-member-btn').onclick = () => {
+      const a = g('add-member-addr').value.trim().toLowerCase();
+      if (!ethers.isAddress(a)) { utils.toast('Invalid address'); return; }
+      if (list.members.includes(a)) { utils.toast('Already in this list'); return; }
+      list.members.push(a);
+      this._saveLists();
+      this.openListEditor(listId); /* re-render */
+    };
+    g('add-member-addr').onkeydown = e => { if (e.key === 'Enter') g('add-member-btn').click(); };
+    document.querySelectorAll('[data-remove-member]').forEach(btn => {
+      btn.onclick = () => {
+        const a = btn.dataset.removeMember;
+        list.members = list.members.filter(m => m !== a);
+        this._saveLists();
+        this.openListEditor(listId);
+      };
+    });
+    g('save-list-btn').onclick = () => {
+      const newName = g('edit-list-name').value.trim();
+      if (newName) list.name = newName;
+      this._saveLists();
+      this._closeGenericModal();
+      if (this.state.mode === 'lists') this.goLists();
+      utils.toast('List saved ✓');
+    };
+    g('delete-list-btn').onclick = () => {
+      this.state.lists = this.state.lists.filter(l => l.id !== listId);
+      this._saveLists();
+      this._closeGenericModal();
+      this.goLists();
+      utils.toast('List deleted');
+    };
+  }
+
+  /* Open a list's feed — scans posts from all member addresses. */
+  async openList(listId) {
+    const list = this.state.lists.find(l => l.id === listId);
+    if (!list) return;
+    this.state.mode = 'lists';
+    this.state.activeList = listId;
+    this._updateTitle(list.name);
+    this.g('compose-area').style.display   = 'none';
+    this.g('channel-banner').style.display = 'none';
+    this.g('feed-tabs').style.display      = 'none';
+    this.g('new-banner').classList.remove('visible');
+    this.g('loading-more').style.display   = 'none';
+    this._pendingPageHeader = this._makePageHeader({
+      title: list.name, subtitle: `${list.members.length} members`, back: true });
+    const header = this._applyPageHeader();
+    if (list.members.length === 0) {
+      this.g('feed').innerHTML = header + `
+        <div class="placeholder-view" style="padding:48px 32px">
+          <span class="ph-icon">📋</span>
+          <h2>This list is empty</h2>
+          <p>Add accounts to it from the Lists page (⚙ button).</p>
+        </div>`;
+      const back = this.g('feed').querySelector('.page-header-back');
+      if (back) back.onclick = () => this.goLists();
+      return;
+    }
+    this.g('feed').innerHTML = header + `
+      <div class="placeholder-view" style="padding:48px 32px">
+        <div class="spinner" aria-hidden="true" style="margin:0 auto 14px"></div>
+        <h2>Loading ${utils.safe(list.name)}…</h2>
+        <p>Scanning posts from ${list.members.length} accounts.</p>
+      </div>`;
+    const back = this.g('feed').querySelector('.page-header-back');
+    if (back) back.onclick = () => this.goLists();
+    await this._fetchListFeed(list, header);
+  }
+
+  /* Scan posts from a list's members and render them. Reuses the
+     multi-address batch strategy from the Following feed. */
+  async _fetchListFeed(list, header) {
+    const myToken = (this._listFetchToken = (this._listFetchToken || 0) + 1);
+    const addrs = list.members.slice(0, 200);
+    const collected = [];
+    const seen = new Set();
+    const scanLimit = this._getMaxScanPages();
+    const pagesPerAddr = scanLimit === Infinity ? 3 : Math.min(3, Math.ceil(scanLimit / 30));
+    const BATCH = 5;
+    for (let i = 0; i < addrs.length; i += BATCH) {
+      if (myToken !== this._listFetchToken) return; /* superseded */
+      const batch = addrs.slice(i, i + BATCH);
+      const results = await Promise.allSettled(batch.map(async addr => {
+        const pages = [];
+        for (let pg = 1; pg <= pagesPerAddr; pg++) {
+          try {
+            const r = await this.apiFetch(addr, pg);
+            pages.push(...r);
+            if (r.length < 50) break;
+            if (pg < pagesPerAddr) await this._scanDelay(100);
+          } catch { break; }
+        }
+        return pages;
+      }));
+      results.forEach(res => {
+        if (res.status !== 'fulfilled') return;
+        res.value.forEach(tx => {
+          const hash = tx.hash?.toLowerCase();
+          if (!hash || seen.has(hash)) return;
+          if (!tx.input || tx.input === '0x') return;
+          /* Canonical parse — same poll/vote/repost/reply handling as the
+             main feed (mode 'lists'). */
+          const parsed = this._parsePostTx(tx, { mode: 'lists' });
+          if (!parsed) return;
+          seen.add(hash);
+          collected.push(parsed);
+        });
+      });
+    }
+    if (myToken !== this._listFetchToken) return;
+    if (this.state.mode !== 'lists' || this.state.activeList !== list.id) return;
+    collected.sort((a, b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()));
+    /* Render into the feed using the standard post pipeline */
+    this.state.posts = collected;
+    collected.forEach(pp => this._postMap.set(pp.txHash, pp));
+    const replyMap = this._engagement.replyMap;
+    const likeMap = this._engagement.likeMap;
+    const repostMap = this._engagement.repostMap;
+    const engagerMap = this._engagement.engagerMap;
+    this._mergeEngagement(collected, false);
+    let html = header;
+    if (collected.length === 0) {
+      html += `<div class="placeholder-view" style="padding:48px 32px">
+        <span class="ph-icon">📋</span><h2>No posts found</h2>
+        <p>These accounts haven't posted recently.</p></div>`;
+    } else {
+      html += '<div id="list-feed">' + collected.map(pp =>
+        `<div class="post-item" data-txhash="${utils.safe(pp.txHash)}">${this.postHTML(pp, false, replyMap, likeMap, repostMap, engagerMap)}</div>`
+      ).join('') + '</div>';
+    }
+    this.g('feed').innerHTML = html;
+    const back = this.g('feed').querySelector('.page-header-back');
+    if (back) back.onclick = () => this.goLists();
+    const listFeed = this.g('list-feed');
+    if (listFeed) listFeed.addEventListener('click', e => this.onFeedClick(e, false));
+    this._tallyVisiblePolls();
+    /* Lazy-load author profiles */
+    collected.slice(0, 30).forEach(pp => {
+      if (pp.reporter !== this.state.signerAddr) this.fetchOtherProfile(pp.reporter);
+    });
+  }
+
+  /* ── COMMUNITIES ────────────────────────────────────────────────────
+     A community is { address, name, desc, joined }. A community IS a
+     channel address; viewing one reuses the channel-feed flow (goCustom). */
+  goCommunities() {
+    this._updateTitle('Communities');
+    this._setRoute('/communities');
+    this.setNav(null, null);
+    this.state.mode = 'communities';
+    this.g('compose-area').style.display   = 'none';
+    this.g('channel-banner').style.display = 'none';
+    this.g('feed-tabs').style.display      = 'none';
+    this.g('new-banner').classList.remove('visible');
+    this.g('loading-more').style.display   = 'none';
+    this._pendingPageHeader = this._makePageHeader({ title: 'Communities', noBack: true });
+    const header = this._applyPageHeader();
+    this.g('feed').innerHTML = header + this._communitiesHTML();
+    this._wireCommunitiesPage();
+  }
+
+  _communitiesHTML() {
+    const comms = this.state.communities;
+    const joined = comms.filter(c => c.joined);
+    const discover = comms.filter(c => !c.joined);
+    const card = c => `
+      <div class="lc-row" data-open-comm="${utils.safe(c.address)}">
+        <div class="lc-icon">👥</div>
+        <div class="lc-body">
+          <div class="lc-name">${utils.safe(c.name)}</div>
+          <div class="lc-sub">${c.desc ? utils.safe(c.desc) : this.trunc(c.address)}</div>
+        </div>
+        <button class="lc-join ${c.joined ? 'joined' : ''}" data-toggle-join="${utils.safe(c.address)}">
+          ${c.joined ? 'Joined' : 'Join'}
+        </button>
+      </div>`;
+    let body = '';
+    if (joined.length) {
+      body += `<div class="lc-section-title">Your Communities</div>` + joined.map(card).join('');
+    }
+    if (discover.length) {
+      body += `<div class="lc-section-title">Discover</div>` + discover.map(card).join('');
+    }
+    if (comms.length === 0) {
+      body = `<div class="placeholder-view" style="padding:40px 32px">
+        <span class="ph-icon">👥</span><h2>No communities yet</h2>
+        <p>Create one by adding a channel address below.</p></div>`;
+    }
+    return `
+      <div class="lc-page">
+        <div class="lc-new-row lc-new-comm">
+          <input type="text" id="new-comm-name" placeholder="Community name…" maxlength="40" autocomplete="off">
+          <input type="text" id="new-comm-addr" placeholder="0x channel address…" autocomplete="off">
+          <button class="go-btn" id="new-comm-go">Add</button>
+        </div>
+        <div class="lc-sync-row">
+          <button class="lc-sync-btn" id="comms-publish">⬆ Publish on-chain</button>
+          <button class="lc-sync-btn ghost" id="comms-restore">⬇ Restore from chain</button>
+        </div>
+        ${body}
+      </div>`;
+  }
+
+  _wireCommunitiesPage() {
+    const g = id => document.getElementById(id);
+    const pubBtn = g('comms-publish');
+    const resBtn = g('comms-restore');
+    if (pubBtn) pubBtn.onclick = () => this.publishListsOnChain();
+    if (resBtn) resBtn.onclick = () => this.restoreListsFromChain();
+    const create = () => {
+      const name = g('new-comm-name')?.value.trim();
+      const addr = g('new-comm-addr')?.value.trim().toLowerCase();
+      if (!name) { utils.toast('Enter a community name'); return; }
+      if (!ethers.isAddress(addr)) { utils.toast('Invalid channel address'); return; }
+      if (this.state.communities.some(c => c.address === addr)) {
+        utils.toast('That community already exists'); return;
+      }
+      this.state.communities.push({ address: addr, name, desc: '', joined: true });
+      this._saveCommunities();
+      this.goCommunities();
+      utils.toast('Community added ✓');
+    };
+    const goBtn = g('new-comm-go');
+    if (goBtn) goBtn.onclick = create;
+    this.g('feed').querySelectorAll('[data-open-comm]').forEach(el => {
+      el.onclick = e => {
+        if (e.target.closest('[data-toggle-join]')) return;
+        this.openCommunity(el.dataset.openComm);
+      };
+    });
+    this.g('feed').querySelectorAll('[data-toggle-join]').forEach(el => {
+      el.onclick = e => {
+        e.stopPropagation();
+        const addr = el.dataset.toggleJoin;
+        const c = this.state.communities.find(x => x.address === addr);
+        if (c) { c.joined = !c.joined; this._saveCommunities(); this.goCommunities(); }
+      };
+    });
+  }
+
+  /* Open a community's feed — it's a channel, so reuse the channel flow. */
+  async openCommunity(addr) {
+    const c = this.state.communities.find(x => x.address === addr);
+    if (!c) return;
+    this.setNav(null, null);
+    this.state.mode    = 'custom';
+    this.state.channel = addr;
+    this.g('feed-tabs').classList.remove('tabs-sticky');
+    this.g('feed-tabs').style.display = 'none';
+    this._pendingPageHeader = this._makePageHeader({
+      title: c.name, subtitle: c.desc || 'Community', back: true });
+    this.g('compose-area').style.display = 'flex';
+    this.setChActive(null);
+    this.updateChLabel();
+    this.showChannelBanner(addr);
+    await this.resetAndFetch();
+    /* Override back button to return to the communities list */
+    const back = this.g('feed')?.querySelector('.page-header-back')
+      || document.querySelector('.page-header-back');
+    if (back) back.onclick = () => this.goCommunities();
+  }
+
+  muteAddress(addr) {
+    addr = addr.toLowerCase();
+    if (this.state.muted.has(addr)) { utils.toast('Already muted'); return; }
+    this.state.muted.add(addr);
+    const list = [...this.state.muted];
+    utils.safeLS.set(MUTE_KEY, JSON.stringify(list));
+    this.cache.saveMuted(list).catch(err => console.warn('Mute IDB save:', err));
+    utils.toast(`Muted ${this.trunc(addr)}`);
+    this.renderFeed();
+  }
+  unmuteAddress(addr) {
+    addr = addr.toLowerCase();
+    this.state.muted.delete(addr);
+    const list = [...this.state.muted];
+    utils.safeLS.set(MUTE_KEY, JSON.stringify(list));
+    this.cache.saveMuted(list).catch(err => console.warn('Unmute IDB save:', err));
+    utils.toast(`Unmuted ${this.trunc(addr)}`);
+    this.renderFeed();
+  }
+  isMuted(addr) { return !!(addr && this.state.muted.has(addr.toLowerCase())); }
+
+  /* Build a <svg><use> reference to a sprite symbol. Returns the HTML
+     string for inline injection. Defaults to 18px square. */
+  icon(id, sz = 18) {
+    return `<svg width="${sz}" height="${sz}" aria-hidden="true"><use href="#${id}"/></svg>`;
+  }
+
+  /* Focus trap for modals — keeps Tab/Shift+Tab focus inside the modal
+     while it's open, returns focus to the previously-focused element on
+     close. Called by classList.add('open') sites via openModal() if you
+     want the trap; falls back gracefully if the modal has no focusable
+     children. */
+  _trapFocus(modalEl) {
+    if (!modalEl) return;
+    /* Save the element that triggered the modal so we can restore focus */
+    modalEl._previousFocus = document.activeElement;
+    /* Find focusable children */
+    const focusableSel = 'a[href], button:not([disabled]), input:not([disabled]), ' +
+                         'textarea:not([disabled]), select:not([disabled]), ' +
+                         '[tabindex]:not([tabindex="-1"])';
+    const focusables = Array.from(modalEl.querySelectorAll(focusableSel))
+      .filter(el => !el.hasAttribute('hidden') && el.offsetParent !== null);
+    if (!focusables.length) return;
+    const first = focusables[0];
+    const last  = focusables[focusables.length - 1];
+    /* Focus the first focusable element. Wrapped in rAF so it lands AFTER
+       any close animations of other modals finish. */
+    requestAnimationFrame(() => {
+      try { first.focus(); } catch {}
+    });
+    /* Wire keydown handler. Stored on the element so we can remove it on close. */
+    const onKeyDown = (e) => {
+      if (e.key !== 'Tab') return;
+      if (focusables.length === 1) {
+        e.preventDefault();
+        return;
+      }
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    modalEl._focusTrapHandler = onKeyDown;
+    modalEl.addEventListener('keydown', onKeyDown);
+  }
+
+  /* Release focus trap and restore prior focus. Called when a modal closes. */
+  _releaseFocus(modalEl) {
+    if (!modalEl) return;
+    if (modalEl._focusTrapHandler) {
+      modalEl.removeEventListener('keydown', modalEl._focusTrapHandler);
+      modalEl._focusTrapHandler = null;
+    }
+    if (modalEl._previousFocus && modalEl._previousFocus.focus) {
+      try { modalEl._previousFocus.focus(); } catch {}
+      modalEl._previousFocus = null;
+    }
+  }
+
+  /* Render N skeleton post placeholders into the feed. Used during initial
+     fetch so the user sees structure immediately instead of a spinner. */
+  _renderSkeleton(count = 4) {
+    const feed = this.g('feed');
+    if (!feed) return;
+    const skel = Array(count).fill(0).map(() => `
+      <div class="skel-post">
+        <div class="skel-avatar"></div>
+        <div class="skel-body">
+          <div class="skel-line short"></div>
+          <div class="skel-line long"></div>
+          <div class="skel-line medium"></div>
+        </div>
+      </div>`).join('');
+    feed.innerHTML = skel;
+  }
+
+  /* Set the browser tab/window title based on the current view. */
+  _updateTitle(suffix) {
+    /* Remember the per-view suffix so a later badge update can recompose
+       the title without losing the current view label. */
+    if (suffix !== undefined) this._titleSuffix = suffix;
+    const base   = 'Say It DeFi';
+    const middle = this._titleSuffix ? `${this._titleSuffix} / ${base}` : base;
+    const prefix = this._unreadCount > 0
+      ? `(${this._unreadCount > 99 ? '99+' : this._unreadCount}) ` : '';
+    document.title = prefix + middle;
+  }
+
+  /* Draw the notification dot onto the favicon. Composites the base
+     favicon image with a small red dot in the corner when there are
+     unread notifications; restores the plain favicon when zero.
+     Falls back silently if canvas/image operations fail. */
+  _updateFavicon() {
+    try {
+      const link = document.querySelector('link[rel="icon"]');
+      if (!link) return;
+      const draw = (baseImg) => {
+        const size = 64;
+        const canvas = document.createElement('canvas');
+        canvas.width = size; canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        if (baseImg) {
+          ctx.drawImage(baseImg, 0, 0, size, size);
+        } else {
+          /* No base image available — fill with brand color */
+          ctx.fillStyle = '#000';
+          ctx.fillRect(0, 0, size, size);
+        }
+        if (this._unreadCount > 0) {
+          /* Red dot, top-right */
+          const r = 18;
+          ctx.beginPath();
+          ctx.arc(size - r - 2, r + 2, r, 0, Math.PI * 2);
+          ctx.fillStyle = '#f91880';
+          ctx.fill();
+          ctx.strokeStyle = '#000';
+          ctx.lineWidth = 3;
+          ctx.stroke();
+        }
+        link.href = canvas.toDataURL('image/png');
+      };
+      if (this._unreadCount <= 0) {
+        /* Restore the plain favicon */
+        link.href = 'title_icon.png';
+        return;
+      }
+      if (this._faviconBase) {
+        draw(this._faviconBase);
+      } else {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => { this._faviconBase = img; draw(img); };
+        img.onerror = () => draw(null); /* draw dot on solid bg if image fails */
+        img.src = 'title_icon.png';
+      }
+    } catch { /* favicon badge is non-essential — never throw */ }
+  }
+
+  /* Build and show the search suggestion dropdown for the given term.
+     Suggests up to 5 people (from profile cache, matched by username or
+     address) and up to 5 hashtags (from loaded posts). Clicking a person
+     opens their profile; clicking a hashtag filters the feed by tag. */
+  _renderSearchDropdown(term) {
+    const dd  = this.g('search-dropdown');
+    const inp = this.g('search-input');
+    if (!dd) return;
+    const q = (term || '').trim().toLowerCase();
+    if (q.length < 1) { this._hideSearchDropdown(); return; }
+
+    /* Full address typed/pasted → offer a direct jump even if we've never seen
+       this address. It needn't be indexed; addresses are shareable, so this
+       lets someone paste an address from anywhere and land on its profile. */
+    const isFullAddr = /^0x[0-9a-f]{40}$/.test(q);
+    const isTxHash   = /^0x[0-9a-f]{64}$/.test(q);
+
+    /* People: match known profiles by username or address. Searches BOTH the
+       live session cache and a lazy snapshot of the persisted profiles store,
+       so handle search covers anyone we've ever cached (not just this session). */
+    this._ensureProfileSnapshot();
+    const people = [];
+    const seen = new Set();
+    const consider = (addr, prof) => {
+      if (people.length >= 5) return;
+      const addrL = (addr || '').toLowerCase();
+      if (!addrL || !prof || seen.has(addrL)) return;
+      const uname = (prof.username || '').toLowerCase();
+      if (uname.includes(q) || addrL.includes(q)) {
+        seen.add(addrL);
+        people.push({ addr: addrL, username: prof.username || '', picUrl: prof.picUrl || 'image1.jpeg' });
+      }
+    };
+    for (const [addr, prof] of Object.entries(this.state.profCache)) consider(addr, prof);
+    if (Array.isArray(this._profileSnapshot)) {
+      for (const p of this._profileSnapshot) consider(p.addr, p);
+    }
+
+    /* Hashtags: collect from loaded posts, count frequency, match the term. */
+    const tagCounts = new Map();
+    const tagQuery = q.replace(/^#/, '');
+    for (const post of this.state.posts) {
+      if (!post.display) continue;
+      const tags = post.display.match(/#[A-Za-z0-9_]{2,30}/g);
+      if (!tags) continue;
+      for (const t of tags) {
+        const key = t.slice(1).toLowerCase();
+        if (key.includes(tagQuery)) {
+          tagCounts.set(key, (tagCounts.get(key) || 0) + 1);
+        }
+      }
+    }
+    const tags = [...tagCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5);
+
+    if (people.length === 0 && tags.length === 0 && !isFullAddr && !isTxHash) {
+      dd.innerHTML = `<div class="search-dd-empty">No people or tags match “${utils.safe(term)}”<br><span style="font-size:13px">Press Enter to search post text</span></div>`;
+      dd.classList.add('open');
+      if (inp) inp.setAttribute('aria-expanded', 'true');
+      return;
+    }
+
+    let html = '';
+    if (isTxHash) {
+      /* A full 64-hex transaction hash — offer to open it as a post thread.
+         openThreadByHash resolves it via _fetchTxByHash even when the post
+         isn't in the local cache. */
+      const sh = utils.safe(q);
+      html += `<div class="search-dd-section-title">Post</div>`;
+      html += `<div class="search-dd-item" role="option" data-search-hash="${sh}">
+        <div class="search-dd-tag-icon">📝</div>
+        <div class="search-dd-body">
+          <div class="search-dd-name">Open post</div>
+          <div class="search-dd-sub">${utils.safe(this.trunc(q))} · view this transaction as a thread</div>
+        </div>
+      </div>`;
+    }
+    if (isFullAddr) {
+      const sa = utils.safe(q), ta = utils.safe(this.trunc(q));
+      html += `<div class="search-dd-section-title">Address</div>`;
+      html += `<div class="search-dd-item" role="option" data-search-addr="${sa}" data-go="profile">
+        <div class="search-dd-tag-icon">👤</div>
+        <div class="search-dd-body">
+          <div class="search-dd-name">View profile</div>
+          <div class="search-dd-sub">${ta} · identity & posts by this address</div>
+        </div>
+      </div>`;
+      html += `<div class="search-dd-item" role="option" data-search-addr="${sa}" data-go="channel">
+        <div class="search-dd-tag-icon">#</div>
+        <div class="search-dd-body">
+          <div class="search-dd-name">Open channel</div>
+          <div class="search-dd-sub">${ta} · posts sent to this address</div>
+        </div>
+      </div>`;
+    }
+    if (people.length) {
+      html += `<div class="search-dd-section-title">People</div>`;
+      html += people.map(pp => {
+        const name = pp.username ? utils.safe(pp.username) : this.trunc(pp.addr);
+        return `<div class="search-dd-item" role="option" data-search-person="${utils.safe(pp.addr)}">
+          <img src="${utils.safe(pp.picUrl)}" alt="" onerror="this.src='image1.jpeg'">
+          <div class="search-dd-body">
+            <div class="search-dd-name">${name}</div>
+            <div class="search-dd-sub">@${utils.safe(this.trunc(pp.addr))}</div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+    if (tags.length) {
+      html += `<div class="search-dd-section-title">Tags</div>`;
+      html += tags.map(([tag, count]) =>
+        `<div class="search-dd-item" role="option" data-search-tag="${utils.safe(tag)}">
+          <div class="search-dd-tag-icon">#</div>
+          <div class="search-dd-body">
+            <div class="search-dd-name">#${utils.safe(tag)}</div>
+            <div class="search-dd-sub">${count} post${count === 1 ? '' : 's'} in view</div>
+          </div>
+        </div>`
+      ).join('');
+    }
+    dd.innerHTML = html;
+    dd.classList.add('open');
+    if (inp) inp.setAttribute('aria-expanded', 'true');
+
+    /* Wire item clicks */
+    dd.querySelectorAll('[data-search-person]').forEach(el => {
+      el.onclick = () => {
+        const addr = el.dataset.searchPerson;
+        this._hideSearchDropdown();
+        this.goProfilePage(addr, addr === this.state.signerAddr);
+      };
+    });
+    dd.querySelectorAll('[data-search-addr]').forEach(el => {
+      el.onclick = () => {
+        const addr = el.dataset.searchAddr;
+        this._hideSearchDropdown();
+        if (el.dataset.go === 'channel') {
+          this.g('custom-input').value = addr;
+          this.goCustom();
+        } else {
+          this.goProfilePage(addr, addr === this.state.signerAddr);
+        }
+      };
+    });
+    dd.querySelectorAll('[data-search-hash]').forEach(el => {
+      el.onclick = () => {
+        const hash = el.dataset.searchHash;
+        this._hideSearchDropdown();
+        this._clearSearch();
+        if (/^0x[0-9a-f]{64}$/i.test(hash)) this.openThreadByHash(hash.toLowerCase());
+      };
+    });
+    dd.querySelectorAll('[data-search-tag]').forEach(el => {
+      el.onclick = () => {
+        const tag = el.dataset.searchTag;
+        this._hideSearchDropdown();
+        const si = this.g('search-input');
+        if (si) si.value = '#' + tag;
+        this.state.searchTerm = ('#' + tag).toLowerCase();
+        this.state.activeTag = tag;
+        this._updateSearchClearBtn();
+        if (this._selfManagedModes.has(this.state.mode)) {
+          this.goHome().then(() => {
+            this.state.searchTerm = ('#' + tag).toLowerCase();
+            this.state.activeTag = tag;
+            this.renderFeed();
+          });
+        } else {
+          this.renderFeed();
+        }
+      };
+    });
+  }
+
+  _hideSearchDropdown() {
+    const dd = this.g('search-dropdown');
+    if (dd) dd.classList.remove('open');
+    const inp = this.g('search-input');
+    if (inp) inp.setAttribute('aria-expanded', 'false');
+  }
+
+  /* Show/hide the search clear (X) button based on input content. */
+  _updateSearchClearBtn() {
+    const inp = this.g('search-input');
+    const btn = this.g('search-clear');
+    if (!inp || !btn) return;
+    const has = inp.value.length > 0;
+    btn.classList.toggle('show', has);
+    inp.classList.toggle('has-value', has);
+  }
+
+  /* Reset search state + the search box. Called when navigating to a view that
+     isn't a search result (e.g. the followers/following lists, Home) so a
+     stale query can't linger in the box or filter the next feed. */
+  _clearSearch() {
+    this.state.searchTerm = '';
+    this.state.activeTag  = null;
+    const si = this.g('search-input');
+    if (si) si.value = '';
+    this._updateSearchClearBtn();
+  }
+
+  trunc = a => (a && a.length > 10) ? `${a.slice(0,6)}...${a.slice(-4)}` : (a || '');
+
+  relTime = ts => {
+    try {
+      const d = new Date(ts);
+      if (isNaN(d.getTime())) return '?';
+      const s = Math.floor((Date.now() - d) / 1000);
+      if (s < 0)       return 'just now'; /* future timestamp (clock skew) */
+      if (s < 60)      return 'just now';
+      if (s < 3600)    return `${Math.floor(s / 60)}m`;
+      if (s < 86400)   return `${Math.floor(s / 3600)}h`;
+      if (s < 86400 * 7) return `${Math.floor(s / 86400)}d`;   /* 1d–6d like X, then a date */
+      if (s < 86400 * 365) {
+        /* Same year: "Jan 5". Different year within last year: "Jan 5, 2024" */
+        const now = new Date();
+        const opts = d.getFullYear() === now.getFullYear()
+          ? { month:'short', day:'numeric' }
+          : { month:'short', day:'numeric', year:'numeric' };
+        return d.toLocaleDateString('en-US', opts);
+      }
+      /* More than a year: "Jan 5, 2023" */
+      return d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+    } catch { return '?'; }
+  };
+}
+
+const pulse = new SayIt();
+/* Capture the URL hash at load time so a deep link (#/post/…, #/profile/…)
+   isn't clobbered by the default Home bootstrap before we can route to it. */
+const INITIAL_HASH = location.hash;
+/* post/profile/channel views fetch their own data, so on a deep link to one
+   of them we skip the default home-feed scan (it would otherwise run first
+   and delay the deep-linked view's own scan). */
+const DEEP_SELF_LOADING = /^#\/?(post|profile|channel)\//.test(INITIAL_HASH);
+/* Default launch tab (Settings → Content & Feed). Honored only when the page
+   wasn't opened on a deep link / explicit hash. A non-home choice loads its
+   own data, so we skip the default home scan it would otherwise sit behind. */
+const NO_DEEP_LINK = !INITIAL_HASH || /^#\/?(home)?$/.test(INITIAL_HASH);
+let BOOT_VIEW = null;
+if (NO_DEEP_LINK) {
+  try { BOOT_VIEW = JSON.parse(localStorage.getItem('sayitSettings') || '{}').defaultView || null; } catch {}
+  if (BOOT_VIEW === 'home') BOOT_VIEW = null;
+}
+
+/* ── Service Worker — offline shell + fast repeat loads ──────────────
+   Registers sw.js which caches index.html and ethers.js for instant
+   load on repeat visits. API calls (PulseScan) bypass the cache.
+   To force a cache refresh after a new deploy:
+     1. Bump SW_CACHE_VER at the top of this file
+     2. Push to GitHub — the SW will detect the version mismatch
+        on next page load and fetch fresh assets automatically. */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js')
+      .then(reg => {
+        /* Pass the current cache version to the SW via postMessage
+           so it knows when to invalidate its cache. */
+        const sendVer = () => {
+          if (reg.active) reg.active.postMessage({ type: 'CACHE_VER', ver: SW_CACHE_VER });
+        };
+        if (reg.active) sendVer();
+        reg.addEventListener('updatefound', () => {
+          reg.installing?.addEventListener('statechange', e => {
+            if (e.target.state === 'activated') sendVer();
+          });
+        });
+        /* Resend the version when a freshly-installed worker takes control.
+           Without this, a just-activated SW that wasn't yet controlling the
+           page at load never receives the new CACHE_VER, so the "new version
+           available" toast is intermittently missed and users lag a deploy. */
+        navigator.serviceWorker.addEventListener('controllerchange', sendVer);
+        /* When the SW signals a new version is ready, show the user
+           a refresh banner so they get the update without a hard reload. */
+        navigator.serviceWorker.addEventListener('message', e => {
+          if (e.data?.type === 'NEW_VERSION_READY') {
+            utils.toast('↺ New version available — refresh to update');
+          }
+        });
+        console.info('[SW] Registered, scope:', reg.scope);
+      })
+      .catch(err => console.warn('[SW] Registration failed:', err));
+  });
+}
+pulse.init({ skipHomeFetch: DEEP_SELF_LOADING || !!BOOT_VIEW }).then(() => {
+  /* Wire back/forward + manual hash edits, then honor any deep link the page
+     was opened with (otherwise the normal Home bootstrap, or the user's chosen
+     launch tab, stands). */
+  pulse._initRouter();
+  if (INITIAL_HASH && !/^#\/?(home)?$/.test(INITIAL_HASH)) {
+    /* The Home bootstrap above may have pushed '#/home'; restore the original
+       deep-link hash (no event) before routing to it. */
+    history.replaceState(null, '', INITIAL_HASH);
+    pulse._routeTo();
+  } else if (BOOT_VIEW) {
+    pulse._goDefaultView(BOOT_VIEW);
+  }
+}).catch(err => {
+  console.error('Init error:', err);
+  if (err.stack) console.error('Stack:', err.stack);
+  utils.toast('Startup failed — reload and check console');
+});
+/* PWA install prompt — captures the beforeinstallprompt event on
+   Chromium-based browsers so we can offer Install via our own UI later.
+   Hidden if the user already installed or dismissed the prompt. */
+(function wirePWAInstall() {
+  let deferredPrompt = null;
+  const DISMISS_KEY = 'sayit_install_dismissed';
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    /* Respect the user's previous dismiss for 14 days */
+    try {
+      const dismissed = parseInt(localStorage.getItem(DISMISS_KEY) || '0', 10);
+      if (Date.now() - dismissed < 14 * 24 * 60 * 60 * 1000) return;
+    } catch {}
+    const card = document.getElementById('sb-install-card');
+    if (card) card.classList.add('visible');
+  });
+  function bindButtons() {
+    const installBtn = document.getElementById('install-btn');
+    const dismissBtn = document.getElementById('install-dismiss');
+    const card = document.getElementById('sb-install-card');
+    if (installBtn) {
+      installBtn.onclick = async () => {
+        if (!deferredPrompt) return;
+        deferredPrompt.prompt();
+        try { await deferredPrompt.userChoice; } catch {}
+        deferredPrompt = null;
+        if (card) card.classList.remove('visible');
+      };
+    }
+    if (dismissBtn) {
+      dismissBtn.onclick = () => {
+        try { localStorage.setItem(DISMISS_KEY, String(Date.now())); } catch {}
+        if (card) card.classList.remove('visible');
+      };
+    }
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bindButtons);
+  } else {
+    bindButtons();
+  }
+  /* Hide the card once installation completes */
+  window.addEventListener('appinstalled', () => {
+    const card = document.getElementById('sb-install-card');
+    if (card) card.classList.remove('visible');
+  });
+})();
+/* Scroll-to-top button: shown when user scrolls past 800px.
+   Click smoothly returns to the feed top. */
+(function wireScrollTop() {
+  function init() {
+    const btn = document.createElement('button');
+    btn.id = 'scroll-top-btn';
+    btn.setAttribute('aria-label', 'Scroll to top');
+    btn.title = 'Scroll to top';
+    btn.textContent = '↑';
+    btn.onclick = () => window.scrollTo({ top: 0, behavior: 'smooth' });
+    document.body.appendChild(btn);
+    let lastY = 0;
+    function onScroll() {
+      const y = window.scrollY;
+      if (y > 800 && lastY <= 800) btn.classList.add('visible');
+      else if (y <= 800 && lastY > 800) btn.classList.remove('visible');
+      lastY = y;
+    }
+    window.addEventListener('scroll', onScroll, { passive: true });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
