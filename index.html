@@ -2903,6 +2903,32 @@ const utils = {
     document.getElementById('loading-overlay').classList.toggle('on', show);
     document.getElementById('loading-label').textContent = label;
   },
+  /* ── Explorer-response validation (ingestion gate) ──────────────────────
+     The block explorer API is an input, not an oracle: the endpoint is
+     user-configurable and network-supplied, so a malicious or compromised
+     explorer must not be able to inject scriptable values. tx.hash/from/to
+     end up interpolated into inline-handler JS-string contexts where
+     HTML-entity escaping is decoded away before the JS engine runs — their
+     only real protection is strict shape validation here. Malformed numeric
+     fields are stripped (not dropped) so downstream Number()/Date fallbacks
+     engage instead of producing NaN. */
+  isTxShape(tx) {
+    if (!tx || typeof tx !== 'object') return false;
+    if (!/^0x[0-9a-f]{64}$/i.test(tx.hash  || '')) return false;
+    if (!/^0x[0-9a-f]{40}$/i.test(tx.from  || '')) return false;
+    /* tx.to is null/'' for contract creation — allow; otherwise strict. */
+    if (tx.to != null && tx.to !== '' && !/^0x[0-9a-f]{40}$/i.test(tx.to)) return false;
+    return true;
+  },
+  _stripBadNumerics(tx) {
+    if (tx.timeStamp   != null && !/^\d+$/.test(String(tx.timeStamp)))   delete tx.timeStamp;
+    if (tx.blockNumber != null && !/^\d+$/.test(String(tx.blockNumber))) delete tx.blockNumber;
+    return tx;
+  },
+  sanitizeTxs(list) {
+    if (!Array.isArray(list)) return [];
+    return list.filter(tx => this.isTxShape(tx)).map(tx => this._stripBadNumerics(tx));
+  },
   safe(str) {
     /* Escapes for BOTH text and attribute contexts. The old textContent→
        innerHTML trick does NOT escape quotes (HTML text-node serialization
@@ -8829,7 +8855,9 @@ class SayIt {
         if (res.ok) {
           try {
             const data = await res.json();
-            return (data.status === '1' && Array.isArray(data.result)) ? data.result : [];
+            /* Ingestion gate: drop malformed txs so no explorer-supplied
+               value can reach a render path unvalidated. */
+            return (data.status === '1' && Array.isArray(data.result)) ? utils.sanitizeTxs(data.result) : [];
           } catch (err) {
             lastErr = err; /* malformed JSON — retry */
             continue;
@@ -10999,6 +11027,9 @@ class SayIt {
      deep-links had stopped resolving.) Falls back to the JSON-RPC node,
      enriched with the block timestamp, if v2 is unreachable. */
   async _fetchTxByHash(hash) {
+    /* Guard: hash is interpolated into the request URL below — never send
+       a malformed value to the explorer (and short-circuit junk lookups). */
+    if (!/^0x[0-9a-f]{64}$/i.test(hash || '')) return null;
     const s = this._getSettings();
     const base = (s.apiUrl || 'https://api.scan.pulsechain.com/api').replace(/\/api\/?$/, '');
     let txLike = null;
@@ -11040,6 +11071,10 @@ class SayIt {
       } catch { /* give up below */ }
     }
     if (!txLike) return null;
+    /* Same ingestion gate as apiFetch — single-tx lookups must not bypass
+       the explorer-shape validation. */
+    if (!utils.isTxShape(txLike)) return null;
+    utils._stripBadNumerics(txLike);
     const parsed = this._parsePostTx(txLike, { mode: 'main' });
     if (parsed) this._postMap.set(hash, parsed);
     return parsed;
