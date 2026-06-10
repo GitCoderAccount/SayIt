@@ -23,6 +23,7 @@ const STATIC_ASSETS = [
   './',
   './index.html',
   './app.js',
+  './boot.js',
   './manifest.json',
   './image1.jpeg',
   './image1.png',
