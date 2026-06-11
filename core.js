@@ -1,0 +1,964 @@
+'use strict';
+const ethers = window.ethers;
+
+/* ── Constants ────────────────────────────────────────────────────────── */
+const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseChain burn address */
+const PULSE_CHAIN_ID = 369;
+const REPLY_PREFIX   = 'REPLY_TO:';
+const PROFILE_PREFIX = 'PROFILE_DATA:';
+/* MAX_PREVIEW: chars shown before "Show more" truncation in feed */
+const MAX_PREVIEW    = 500;
+/* POSTS_TARGET: stop fetching once we've added this many new posts in one
+   pagination pass. Higher = denser scroll, more API calls. */
+const POSTS_TARGET   = 20;
+/* MAX_PAGES: hard cap on API pages scanned per fetchPosts() call. Each
+   page = 50 txs, so 40 pages = 2000 txs max. Beyond this, the user gets
+   a manual "Load more" button to continue. */
+const MAX_PAGES      = 40;
+const POLL_FIRST_MS  = 30_000;
+const POLL_MS        = 120_000;
+const DRAFT_KEY      = 'sayitDraft';
+const PRUNE_KEY      = 'sayitLastPrune';
+const LAST_CHECK_KEY = 'sayitLastCheck';
+const DISCLAIMER_KEY = 'sayitDisclaimerAck'; /* '1' once the user has acknowledged */
+const OFFICIAL_CHANNEL  = '0x0000000000000000000000000000000000000001'; /* placeholder — update with real address */
+const LIKE_PREFIX       = 'LIKE:';
+const UNLIKE_PREFIX     = 'UNLIKE:';
+const BOOKMARK_PREFIX   = 'BOOKMARK:';
+const UNBOOKMARK_PREFIX = 'UNBOOKMARK:';
+const FOLLOW_PREFIX     = 'FOLLOW:';
+const UNFOLLOW_PREFIX   = 'UNFOLLOW:';
+const POLL_PREFIX       = 'POLL:';   /* POLL:{json}\n\nQuestion text */
+const VOTE_PREFIX       = 'VOTE:';   /* VOTE:0xpollhash:optionIndex */
+const NOTE_PREFIX       = 'NOTE:';     /* NOTE:0xposthash\n\nnote text (community note) */
+const NOTERATE_PREFIX   = 'NOTERATE:'; /* NOTERATE:0xnotehash:h|n (helpful/not, last-wins) */
+const TOKEN_PROFILE_PREFIX = 'PROFILE_FOR:'; /* PROFILE_FOR:0xtoken\n\n{json} — set a token channel's profile; only honored from the token's deployer or current owner() */
+const NOTE_SHOW_THRESHOLD = 2;         /* net helpful (helpful − not) to graduate to "context" */
+const PROFILE_INIT_PAGES  = 4;         /* pages scanned for the FIRST profile paint; rest streams on scroll */
+const SETTINGS_KEY    = 'sayitSettings';
+const MUTE_KEY        = 'sayitMuted';   /* JSON array of muted addresses */
+const LISTS_KEY       = 'sayitLists';       /* JSON array of {id,name,members[]} */
+const COMMUNITIES_KEY = 'sayitCommunities'; /* JSON array of {address,name,desc,joined} */
+/* On-chain sync: a single self-tx publishes a snapshot of all lists +
+   joined communities as JSON. Scanning the user's own outbox for the latest
+   LC_SYNC restores them on any device. One tx per publish (not per edit) —
+   keeps gas reasonable while making the data portable + publicly visible. */
+const LC_SYNC_PREFIX  = 'LC_SYNC:';
+const TIP_PREFIX      = 'TIP:';     /* TIP:0x<posthash> — tx VALUE carries the tip, sent to the post author */
+const SPACE_PREFIX    = 'SPACE:';   /* SPACE:{"r":roomId,"s":startsMs}\n\n<title> — live audio room announcement */
+const SPACE_END_PREFIX = 'SPACE_END:'; /* SPACE_END:0x<spacehash> — the host ends a Space (honored only from the Space's author) */
+const CHANNELS_KEY    = 'sayitChannelsScan';
+
+const ERC721_ABI = [
+  'function tokenURI(uint256 tokenId) view returns (string)',
+  'function ownerOf(uint256 tokenId) view returns (address)',
+];
+
+/* Linkify patterns — hoisted and compiled once. linkify() runs on every post
+   render, so recreating these regexes/Set per call was wasted work. */
+const _LK_RE         = /ipfs:\/\/\S+|ar:\/\/\S+|arweave:\/\/\S+|https?:\/\/[^\s<>"{}|\\^[\]`]+|#([a-zA-Z]\w{0,99})|@(0x[a-fA-F0-9]{40})/g;
+const _LK_IMG_RE     = /\.(jpg|jpeg|png|gif|webp|svg|avif|tiff|bmp)(\?[^\s]*)?$/i;
+const _LK_VID_RE     = /\.(mp4|webm|ogg|mov|m4v)(\?[^\s]*)?$/i;
+const _LK_IMG_DOMAINS = /\/(ipfs|ipns)\//i;          /* IPFS gateways: .../ipfs/Qm... */
+const _LK_IMG_HOSTS  = new Set([
+  'pbs.twimg.com', 'ton.twimg.com',                  /* Twitter/X image CDN */
+  'i.imgur.com', 'imgur.com',                        /* Imgur */
+  'cdn.discordapp.com', 'media.discordapp.net',      /* Discord attachments */
+  'media.tenor.com', 'c.tenor.com',                  /* Tenor GIFs */
+  'media.giphy.com', 'i.giphy.com',                  /* Giphy */
+  'media1.giphy.com', 'media2.giphy.com', 'media3.giphy.com', 'media4.giphy.com',
+  'nftstorage.link', 'gateway.pinata.cloud',         /* IPFS gateways */
+  'cloudflare-ipfs.com', 'dweb.link',
+]);
+
+/* ── Utils ────────────────────────────────────────────────────────────── */
+const utils = {
+  _t: null,
+  toast(msg, ms = 3000) {
+    /* Queue toasts so rapid-fire actions (like + repost) show both messages
+       rather than the second one immediately stomping the first. */
+    this._toastQueue = this._toastQueue || [];
+    this._toastBusy  = this._toastBusy  || false;
+    this._toastQueue.push({ msg, ms });
+    if (!this._toastBusy) this._drainToastQueue();
+  },
+  _drainToastQueue() {
+    if (!this._toastQueue?.length) { this._toastBusy = false; return; }
+    this._toastBusy = true;
+    const { msg, ms } = this._toastQueue.shift();
+    const el = document.getElementById('toast');
+    if (!el) { this._drainToastQueue(); return; }
+    el.textContent = msg;
+    el.style.display = 'block';
+    /* After this toast, wait briefly then show the next (or hide). */
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => {
+      el.style.display = 'none';
+      /* Short gap between queued toasts so the user sees the transition */
+      setTimeout(() => this._drainToastQueue(), 200);
+    }, ms);
+  },
+  loading(show, label = 'Publishing…') {
+    document.getElementById('loading-overlay').classList.toggle('on', show);
+    document.getElementById('loading-label').textContent = label;
+  },
+  /* ── Explorer-response validation (ingestion gate) ──────────────────────
+     The block explorer API is an input, not an oracle: the endpoint is
+     user-configurable and network-supplied, so a malicious or compromised
+     explorer must not be able to inject scriptable values. tx.hash/from/to
+     end up interpolated into inline-handler JS-string contexts where
+     HTML-entity escaping is decoded away before the JS engine runs — their
+     only real protection is strict shape validation here. Malformed numeric
+     fields are stripped (not dropped) so downstream Number()/Date fallbacks
+     engage instead of producing NaN. */
+  isTxShape(tx) {
+    if (!tx || typeof tx !== 'object') return false;
+    if (!/^0x[0-9a-f]{64}$/i.test(tx.hash  || '')) return false;
+    if (!/^0x[0-9a-f]{40}$/i.test(tx.from  || '')) return false;
+    /* tx.to is null/'' for contract creation — allow; otherwise strict. */
+    if (tx.to != null && tx.to !== '' && !/^0x[0-9a-f]{40}$/i.test(tx.to)) return false;
+    return true;
+  },
+  _stripBadNumerics(tx) {
+    if (tx.timeStamp   != null && !/^\d+$/.test(String(tx.timeStamp)))   delete tx.timeStamp;
+    if (tx.blockNumber != null && !/^\d+$/.test(String(tx.blockNumber))) delete tx.blockNumber;
+    return tx;
+  },
+  sanitizeTxs(list) {
+    if (!Array.isArray(list)) return [];
+    return list.filter(tx => this.isTxShape(tx)).map(tx => this._stripBadNumerics(tx));
+  },
+  /* Extract the 11-char YouTube video id from any common URL form, or the
+     numeric Vimeo id. Shared by linkify's media cards and quote-card
+     previews. Returns null when the URL isn't a video link. */
+  ytId(url) {
+    try {
+      const u = new URL(url);
+      const h = u.hostname.replace(/^www\./, '');
+      if (!/(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com)$/i.test(h)) return null;
+      let id = '';
+      if (h === 'youtu.be')                       id = u.pathname.slice(1).split('/')[0];
+      else if (u.pathname.startsWith('/shorts/')) id = u.pathname.split('/')[2] || '';
+      else if (u.pathname.startsWith('/embed/'))  id = u.pathname.split('/')[2] || '';
+      else if (u.pathname.startsWith('/live/'))   id = u.pathname.split('/')[2] || '';
+      else                                        id = u.searchParams.get('v') || '';
+      return /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
+    } catch { return null; }
+  },
+  vimeoId(url) {
+    const m = String(url).match(/vimeo\.com\/(?:video\/)?(\d+)/i);
+    return m ? m[1] : null;
+  },
+  /* Format a wei string as PLS for display (not financial math). */
+  fmtPLS(wei) {
+    const n = Number(wei || 0) / 1e18;
+    if (!isFinite(n) || n <= 0) return '0';
+    if (n >= 1000) return Math.round(n).toLocaleString();
+    return n.toLocaleString(undefined, { maximumSignificantDigits: 4 });
+  },
+  safe(str) {
+    /* Escapes for BOTH text and attribute contexts. The old textContent→
+       innerHTML trick does NOT escape quotes (HTML text-node serialization
+       never does), so any value interpolated into a "..." attribute — e.g.
+       <img src="${safe(picUrl)}"> — could close the attribute with a " and
+       inject an event handler. picUrl/website/etc. are attacker-controlled
+       on-chain data, so escaping quotes here is what blocks that XSS. */
+    return String(str ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  },
+  linkify(text, fullText) {
+    /* fullText = complete post text for image extraction (ignores MAX_PREVIEW truncation)
+       text     = possibly truncated text for body rendering */
+    /* Cheap aliases to the module-level compiled patterns (see _LK_* above). */
+    const re = _LK_RE, imgRe = _LK_IMG_RE, vidRe = _LK_VID_RE,
+          imgDomains = _LK_IMG_DOMAINS, imgHosts = _LK_IMG_HOSTS;
+    const isMediaUrl = url => {
+      if (imgRe.test(url)) return 'img';
+      if (vidRe.test(url)) return 'vid';
+      if (imgDomains.test(url)) return 'img';    /* IPFS gateway path */
+      if (url.includes('arweave.net/')) return 'img';
+      try {
+        const host = new URL(url).hostname;
+        if (imgHosts.has(host)) return 'img';
+        /* YouTube / Vimeo — embedded as click-to-play facades (can't autoplay) */
+        if (/(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com)$/i.test(host) && ytId(url)) return 'youtube';
+        if (/(^|\.)vimeo\.com$/i.test(host) && vimeoId(url)) return 'vimeo';
+      } catch { /* invalid URL — skip */ }
+      if (xPost(url)) return 'tweet';   /* X / Twitter post → styled link card */
+      return null;
+    };
+    const resolveUrl = u => {
+      if (u.startsWith('ipfs://'))    return 'https://ipfs.io/ipfs/' + u.slice(7);
+      if (u.startsWith('ar://'))      return 'https://arweave.net/' + u.slice(5);
+      if (u.startsWith('arweave://')) return 'https://arweave.net/' + u.slice(10);
+      return u;
+    };
+    /* Extract the 11-char YouTube video ID from any common URL form
+       (watch?v=, youtu.be/, /embed/, /shorts/). Returns null if not found. */
+    const ytId = url => {
+      try {
+        const u = new URL(url);
+        const h = u.hostname.replace(/^www\./, '');
+        let id = '';
+        if (h === 'youtu.be')               id = u.pathname.slice(1).split('/')[0];
+        else if (u.pathname.startsWith('/shorts/')) id = u.pathname.split('/')[2] || '';
+        else if (u.pathname.startsWith('/embed/'))  id = u.pathname.split('/')[2] || '';
+        else if (u.pathname.startsWith('/live/'))   id = u.pathname.split('/')[2] || '';
+        else                                id = u.searchParams.get('v') || '';
+        return /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
+      } catch { return null; }
+    };
+    /* Extract the numeric Vimeo video ID. Returns null if not found. */
+    const vimeoId = url => {
+      const m = url.match(/vimeo\.com\/(?:video\/)?(\d+)/i);
+      return m ? m[1] : null;
+    };
+    /* Parse an X/Twitter post URL → { handle, id } or null. Only matches
+       real status URLs (x.com/<handle>/status/<id>); anything else (profiles,
+       search, etc.) falls through to a plain link. No third-party script is
+       loaded — we render our own styled card that links out to X. */
+    const xPost = url => {
+      try {
+        const u = new URL(url);
+        const h = u.hostname.replace(/^(www|mobile|m)\./, '');
+        if (h !== 'x.com' && h !== 'twitter.com') return null;
+        const m = u.pathname.match(/^\/([A-Za-z0-9_]{1,15})\/status(?:es)?\/(\d+)/);
+        return m ? { handle: m[1], id: m[2] } : null;
+      } catch { return null; }
+    };
+
+    /* ── Pass 1: extract ALL media from fullText (never truncated) ── */
+    const scanText = fullText || text;
+    let imgHtml = '', embedHtml = '', mediaCount = 0;
+    const mediaUrls = new Set(); /* dedup */
+    let mScan;
+    re.lastIndex = 0;
+    while ((mScan = re.exec(scanText)) !== null && mediaCount < 4) {
+      const raw = mScan[0];
+      if (!raw.startsWith('http') && !raw.startsWith('ipfs://') &&
+          !raw.startsWith('ar://') && !raw.startsWith('arweave://')) continue;
+      const resolved = resolveUrl(raw);
+      if (mediaUrls.has(resolved)) continue;
+      const mtype = isMediaUrl(resolved);
+      if (mtype === 'img') {
+        mediaUrls.add(resolved);
+        const safeR = utils.safe(resolved);
+        const safeRaw = utils.safe(raw);
+        imgHtml += `<img src="${safeR}" class="post-img-thumb" alt="image"
+          loading="lazy" data-fallback="hide"
+          data-href="${safeR}" title="Right-click to copy URL"
+          data-raw-url="${safeRaw}">`;
+        mediaCount++;
+      } else if (mtype === 'vid') {
+        mediaUrls.add(resolved);
+        const safeR = utils.safe(resolved);
+        imgHtml += `<div class="post-vid-wrap">
+          <video src="${safeR}" class="post-vid-thumb"
+            autoplay muted loop playsinline preload="auto"
+            data-fallback="hide-wrap"></video>
+          <button class="vid-unmute-btn" title="Tap to unmute"
+            >🔇</button>
+        </div>`;
+        mediaCount++;
+      } else if (mtype === 'youtube') {
+        const vid = ytId(resolved);
+        if (vid) {
+          mediaUrls.add(resolved);
+          const safeVid = utils.safe(vid);
+          /* Thumbnail + play button — iframe loads on click (faster, avoids
+             Google tracking before user interaction, and works in feed context
+             where autoplay is blocked by browser sandbox). */
+          const thumbOk = (typeof pulse !== 'undefined') && pulse._embedThumbsAllowed && pulse._embedThumbsAllowed();
+          imgHtml += `<div class="post-vid-wrap post-yt-facade${thumbOk ? '' : ' yt-facade-private'}" data-yt-id="${safeVid}">
+            ${thumbOk ? `<img src="https://i.ytimg.com/vi/${safeVid}/hqdefault.jpg"
+              class="post-yt-thumb" alt="YouTube video" loading="lazy"
+              data-fallback-src="https://i.ytimg.com/vi/${safeVid}/default.jpg">`
+            : `<div class="post-yt-private-label">▶ YouTube video<span>Tap to load — connects to YouTube</span></div>`}
+            <div class="post-yt-play">
+              <svg viewBox="0 0 68 48" width="68" height="48">
+                <path d="M66.52 7.74c-.78-2.93-2.49-5.41-5.42-6.19C55.79.13 34 0 34 0S12.21.13 6.9 1.55c-2.93.78-4.63 3.26-5.42 6.19C.06 13.05 0 24 0 24s.06 10.95 1.48 16.26c.78 2.93 2.49 5.41 5.42 6.19C12.21 47.87 34 48 34 48s21.79-.13 27.1-1.55c2.93-.78 4.64-3.26 5.42-6.19C67.94 34.95 68 24 68 24s-.06-10.95-1.48-16.26z" fill="#f00"/>
+                <path d="M45 24 27 14v20" fill="#fff"/>
+              </svg>
+            </div>
+          </div>`;
+          mediaCount++;
+        }
+      } else if (mtype === 'vimeo') {
+        const vid = vimeoId(resolved);
+        if (vid) {
+          mediaUrls.add(resolved);
+          const safeVid = utils.safe(vid);
+          /* Facade: thumbnail from vumbnail.com + branded play button.
+             Clicking loads the real iframe with autoplay — same pattern as YouTube. */
+          imgHtml += `<div class="post-vid-wrap post-yt-facade post-vimeo-facade" data-vimeo-id="${safeVid}">
+            <img src="https://vumbnail.com/${safeVid}.jpg"
+              class="post-yt-thumb" alt="Vimeo video" loading="lazy"
+              data-fallback="hide">
+            <div class="post-yt-play post-vimeo-play">
+              <svg viewBox="0 0 68 48" width="68" height="48">
+                <rect width="68" height="48" rx="8" fill="#1AB7EA" opacity="0.9"/>
+                <path d="M45 24 27 14v20" fill="#fff"/>
+              </svg>
+            </div>
+          </div>`;
+          mediaCount++;
+        }
+      } else if (mtype === 'tweet') {
+        const tw = xPost(resolved);
+        if (tw) {
+          mediaUrls.add(resolved);
+          /* Canonical URL (drops tracking params); handle is [A-Za-z0-9_] only. */
+          const href = `https://x.com/${tw.handle}/status/${tw.id}`;
+          const safeHandle = utils.safe(tw.handle);
+          const safeId = utils.safe(tw.id);
+          /* Click-to-load X embed facade: nothing contacts X until the user
+             taps. On tap (with embeds allowed) we swap in X's own iframe
+             embed — it renders the full post incl. video, and X's runtime
+             runs INSIDE that sandboxed third-party iframe, so our page CSP
+             stays strict (only frame-src lists platform.twitter.com) and no
+             X script touches our origin. In strict privacy mode the tap
+             opens X in a new tab instead. */
+          embedHtml += `<div class="x-embed-card x-embed-facade" data-x-id="${safeId}" data-x-href="${utils.safe(href)}" role="button" tabindex="0">
+            <span class="x-embed-hdr">
+              <svg class="x-embed-logo" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+              <span class="x-embed-title">Post on X</span>
+            </span>
+            <span class="x-embed-handle">@${safeHandle}</span>
+            <span class="x-embed-cta">▶ Tap to load this post (text, images &amp; video)</span>
+          </div>`;
+          mediaCount++;
+        }
+      }
+    }
+
+    /* ── Pass 2: render body text (may be truncated), suppressing media URLs ── */
+    let result = '', last = 0;
+    re.lastIndex = 0;
+    while ((mScan = re.exec(text)) !== null) {
+      result += utils.safe(text.slice(last, mScan.index)).replace(/\n/g, '<br>');
+      last = mScan.index + mScan[0].length;
+      const raw = mScan[0];
+      if (mScan[1]) {
+        /* hashtag */
+        result += `<span class="post-tag" role="button" tabindex="0" data-tag="${utils.safe(mScan[1])}">#${utils.safe(mScan[1])}</span>`;
+      } else if (mScan[2]) {
+        /* @address mention */
+        const addr = mScan[2].toLowerCase();
+        result += `<span class="post-mention" role="button" tabindex="0" data-addr="${utils.safe(addr)}">@${utils.safe(addr.slice(0,6)+'…'+addr.slice(-4))}</span>`;
+      } else {
+        /* URL — suppress if it's a media URL we're already rendering as image/video */
+        const resolved = resolveUrl(raw);
+        if (mediaUrls.has(resolved)) {
+          /* Suppressed — shown as inline media instead */
+        } else {
+          const display = raw.length > 50 ? raw.slice(0, 47) + '…' : raw;
+          result += `<a href="${utils.safe(resolved)}" target="_blank" rel="noopener noreferrer"
+            class="post-link">${utils.safe(display)}</a>`;
+        }
+      }
+    }
+    result += utils.safe(text.slice(last)).replace(/\n/g, '<br>');
+    return { text: result, images: imgHtml, embeds: embedHtml };
+  },
+  resolveIPFS(uri) {
+    if (!uri) return null;
+    if (uri.startsWith('ipfs://')) return 'https://ipfs.io/ipfs/' + uri.slice(7);
+    return uri;
+  },
+  /* Defensive URL validation. Returns the URL if safe to render in an
+     <a href>, <img src>, or similar context, otherwise returns ''.
+     Blocks javascript:, data:, vbscript:, file:, and any other scheme
+     not in the allowlist. Critical: chain data is attacker-controlled
+     and CAN contain javascript: URIs that bypass client-side validation.
+     Allowed schemes: http, https, ipfs, ar, arweave, mailto. */
+  safeUrl(url) {
+    if (!url || typeof url !== 'string') return '';
+    const s = url.trim();
+    if (!s) return '';
+    /* Schemeless URLs (no colon before first /) are fine — treated as relative */
+    const colonIdx = s.indexOf(':');
+    const slashIdx = s.indexOf('/');
+    if (colonIdx === -1 || (slashIdx !== -1 && slashIdx < colonIdx)) return s;
+    /* Lowercase the scheme for comparison, strip control chars/whitespace
+       that some browsers tolerate before the colon. */
+    const scheme = s.slice(0, colonIdx).toLowerCase().replace(/[\s\x00-\x1f]/g, '');
+    const allowed = new Set(['http', 'https', 'ipfs', 'ar', 'arweave', 'mailto']);
+    return allowed.has(scheme) ? s : '';
+  },
+  /* Escape a URL for safe interpolation inside a CSS url('...') value.
+     CSS-escapes single quotes, backslashes, newlines, and control chars
+     that could break out of the url() and inject CSS declarations.
+     Returns '' if the URL fails safeUrl validation. */
+  cssUrlValue(url) {
+    const safe = this.safeUrl(url);
+    if (!safe) return '';
+    return safe.replace(/[\\\n\r\f'"]/g, c => '\\' + c.charCodeAt(0).toString(16) + ' ');
+  },
+  debounce(fn, ms) {
+    let t;
+    return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+  },
+  /* throttle: fires at most once per `ms`. Used for scroll-style events
+     where you want continuous updates during the action, not just a final
+     trailing call. The trailing setTimeout guarantees the LAST event is
+     processed even if it lands inside the cooldown window. */
+  throttle(fn, ms) {
+    let last = 0, pending = null;
+    return (...a) => {
+      const now = Date.now();
+      const remaining = ms - (now - last);
+      if (remaining <= 0) {
+        if (pending) { clearTimeout(pending); pending = null; }
+        last = now;
+        fn(...a);
+      } else if (!pending) {
+        pending = setTimeout(() => {
+          last = Date.now();
+          pending = null;
+          fn(...a);
+        }, remaining);
+      }
+    };
+  },
+  autoGrow(el) {
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 400) + 'px';
+  },
+  /* Check if an img URL is too large to render safely.
+     Loads a test Image element and checks naturalWidth*naturalHeight*4 bytes.
+     Returns true if safe, false if oversized. Timeout: 5s. */
+  async checkImageSize(url, maxBytes = 8_000_000) {
+    return new Promise(resolve => {
+      const img = new Image();
+      const timer = setTimeout(() => { img.src = ''; resolve(true); }, 5000);
+      img.onload = () => {
+        clearTimeout(timer);
+        const bytes = img.naturalWidth * img.naturalHeight * 4;
+        resolve(bytes <= maxBytes);
+      };
+      img.onerror = () => { clearTimeout(timer); resolve(true); };
+      img.src = url;
+    });
+  },
+  copyToClipboard(text, label = 'Copied!') {
+    navigator.clipboard?.writeText(text).then(() => this.toast(label)).catch(() => this.toast('Copy failed'));
+  },
+  /* Safe localStorage wrapper — silently no-ops on quota errors,
+     private-mode blocks, or other write failures. Returns true on success,
+     false on failure. Callers that care can branch on the return. */
+  safeLS: {
+    set(key, val) {
+      try { localStorage.setItem(key, val); return true; }
+      catch { return false; }
+    },
+    get(key, fallback = null) {
+      try { return localStorage.getItem(key) ?? fallback; }
+      catch { return fallback; }
+    },
+    remove(key) {
+      try { localStorage.removeItem(key); return true; }
+      catch { return false; }
+    },
+  },
+  updateCharCount(el, countEl) {
+    const n   = el.value.length;
+    const max = 62.83;
+    /* The ring belongs to the HOME composer — don't let the modal/thread
+       composers (which pass their own countEl) drive it. */
+    if (el.id === 'compose-text') {
+      const ring = document.getElementById('char-ring');
+      const fg   = document.getElementById('cr-fg');
+      const num  = document.getElementById('char-count-num');
+      if (ring && fg) {
+        ring.style.display = n > 0 ? 'flex' : 'none';   /* hide until typing (X-style) */
+        /* There's no hard character limit (long-form posts are intended), so
+           the ring is a soft length hint that tops out — not an "over the
+           limit" warning. Show the real count, never a red "over" state. */
+        const pct = Math.min(n / 1000, 1);
+        fg.setAttribute('stroke-dasharray', `${pct * max} ${max}`);
+        ring.className = 'char-ring ' + (n > 700 ? 'warn' : n > 280 ? 'note' : 'ok');
+        if (num) num.textContent = n > 280 ? n.toLocaleString() : '';
+      }
+    }
+    if (countEl && countEl !== document.getElementById('char-ring')) {
+      countEl.textContent = n > 0 ? n.toLocaleString() : '';
+    }
+  },
+};
+
+
+/* ── SpaceRTC: serverless WebRTC audio mesh ───────────────────────────
+   Signaling rides public WebTorrent trackers (the browser-torrent
+   WebSocket protocol): we "announce" the room id as an info_hash with
+   WebRTC offers attached; the tracker forwards offers to other peers on
+   the same hash and routes their answers back. ICE is non-trickle (we
+   wait for gathering, then ship one complete SDP) which keeps the
+   protocol to exactly announce → offer → answer. Mesh topology: every
+   peer offers to the room; fine for ≤8 participants (phase-1 limit). */
+class SpaceRTC {
+  static TRACKERS = [
+    'wss://tracker.openwebtorrent.com',
+    'wss://tracker.webtorrent.dev',
+    'wss://tracker.btorrent.xyz',
+  ];
+  static ICE = { iceServers: [{ urls: 'stun:stun.cloudflare.com:3478' }] };
+
+  constructor(roomId, micStream, { role, host, ice, onStatus, onPeers, onCtl, onPeerGone, onListeners, onNoRelay } = {}) {
+    /* info_hash must be exactly 20 bytes; roomId is 16 bytes hex → pad.
+       Speakers mesh on the main hash; listeners meet the host on a second
+       hash (LIST pad) where the host fans out one mixed stream each. */
+    this.hash = SpaceRTC.roomHash(roomId);
+    this.listHash = SpaceRTC.listenerHash(roomId);
+    this.role = role === 'listener' ? 'listener' : 'speaker';
+    this.isHost = !!host;
+    this.peerId = [...crypto.getRandomValues(new Uint8Array(20))]
+      .map(b => b.toString(16).padStart(2, '0')).join('');
+    this.mic = micStream || null; /* listeners have no mic */
+    this.onStatus = onStatus || (() => {});
+    this.onPeers = onPeers || (() => {});
+    this.onCtl = onCtl || (() => {});         /* (label, msg) — control message from a peer */
+    this.onPeerGone = onPeerGone || (() => {});
+    this.onListeners = onListeners || (() => {}); /* host: live listener count */
+    this.onNoRelay = onNoRelay || (() => {}); /* relay-only mode but TURN gave no candidates */
+    this.ice = ice || SpaceRTC.ICE;
+    this.identity = null;                     /* {addr,name,ts,sig} sent on ctl open */
+    this.sockets = [];
+    this.pcs = new Map();       /* speaker mesh: remote peer_id → RTCPeerConnection */
+    this.listeners = new Map(); /* host only: 'L:'+peer_id → RTCPeerConnection */
+    this.audioEls = new Map();  /* label → <audio> */
+    this.offers = new Map();    /* offer_id → RTCPeerConnection (ours, awaiting answer) */
+    this.connectedToHost = false; /* listener: stop offering once the host answered */
+    this.destroyed = false;
+  }
+
+  static LISTENER_CAP = 40; /* host upload ceiling for mixed-stream fan-out */
+
+  /* 20-byte strings, binary-safe for the tracker JSON protocol. */
+  static bin(hex) {
+    let out = '';
+    for (let i = 0; i < hex.length; i += 2) out += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16));
+    return out;
+  }
+
+  static unbin(b) {
+    return [...(b || '')].map(c => c.charCodeAt(0).toString(16).padStart(2, '0')).join('');
+  }
+
+  static roomHash(roomId) {
+    return (roomId + '00000000').slice(0, 40);
+  }
+
+  /* Listener-tier hash: same room, 'LIST' pad. */
+  static listenerHash(roomId) {
+    return (roomId + '4c495354').slice(0, 40);
+  }
+
+  /* Passive room liveness — ask the trackers how many peers are announced
+     on each room's info_hash WITHOUT joining. Powers the "N here now"
+     counts and empty-room ended detection on Space cards. Privacy: one
+     WebSocket to the tracker (an infra host, like the explorer API) — no
+     peer ever learns you looked.
+
+     Trackers differ (verified live): btorrent answers `scrape` directly;
+     openwebtorrent ignores scrape but a throwaway announce's reply carries
+     self-inclusive complete/incomplete counts, deregistered on socket
+     close. Scrape all trackers in parallel and merge by max — each tracker
+     only sees the peers that reached it, so the max is the best estimate.
+     Returns Map<roomId, peerCount> or null if no tracker answered. */
+  static async probe(roomIds) {
+    /* Count both tiers: speakers (main hash, everyone left:0) plus
+       listeners (list hash, complete only — the host parks there with
+       left:1 so it lands in `incomplete` and isn't double-counted). */
+    const byHash = new Map();
+    roomIds.forEach(r => {
+      byHash.set(SpaceRTC.roomHash(r), { r, tier: 'main' });
+      byHash.set(SpaceRTC.listenerHash(r), { r, tier: 'list' });
+    });
+    const tryTracker = url => new Promise((resolve, reject) => {
+      let ws;
+      try { ws = new WebSocket(url); } catch { reject(new Error('dial')); return; }
+      const fail = () => { try { ws.close(); } catch { /* closing */ } reject(new Error('tracker')); };
+      const timer = setTimeout(fail, 5000);
+      ws.onerror = fail;
+      const out = new Map();
+      const announcedSeen = new Set();
+      let announced = 0;
+      ws.onopen = () => ws.send(JSON.stringify({
+        action: 'scrape', info_hash: [...byHash.keys()].map(h => SpaceRTC.bin(h)),
+      }));
+      ws.onmessage = e => {
+        let msg;
+        try { msg = JSON.parse(e.data); } catch { return; }
+        const tally = (entry, complete, incomplete, probeSelf) => {
+          /* main tier: everyone counts; list tier: complete only (host is
+             incomplete there). The throwaway announce-probe registers
+             itself as complete — subtract it. */
+          const n = entry.tier === 'main'
+            ? complete + incomplete - probeSelf
+            : complete - probeSelf;
+          out.set(entry.r, (out.get(entry.r) || 0) + Math.max(0, n));
+        };
+        if (msg.action === 'scrape' && msg.files) {
+          clearTimeout(timer);
+          for (const [binHash, st] of Object.entries(msg.files)) {
+            const entry = byHash.get(SpaceRTC.unbin(binHash));
+            if (entry) tally(entry, Number(st?.complete) || 0, Number(st?.incomplete) || 0, 0);
+          }
+          try { ws.close(); } catch { /* done */ }
+          resolve(out);
+        } else if (msg.action === 'announce' && msg.info_hash && msg.complete !== undefined) {
+          const entry = byHash.get(SpaceRTC.unbin(msg.info_hash));
+          if (entry) tally(entry, Number(msg.complete) || 0, Number(msg.incomplete) || 0, 1);
+          announcedSeen.add(SpaceRTC.unbin(msg.info_hash));
+          if (announcedSeen.size >= announced) {
+            clearTimeout(timer);
+            try { ws.close(); } catch { /* done — closing also deregisters the probes */ }
+            resolve(out);
+          }
+        }
+      };
+      /* No scrape answer after 2s → fall back to throwaway announces. */
+      setTimeout(() => {
+        if (ws.readyState !== 1 || out.size) return;
+        for (const h of byHash.keys()) {
+          announced++;
+          ws.send(JSON.stringify({
+            action: 'announce', info_hash: SpaceRTC.bin(h),
+            peer_id: SpaceRTC.bin([...crypto.getRandomValues(new Uint8Array(20))]
+              .map(b => b.toString(16).padStart(2, '0')).join('')),
+            numwant: 0, uploaded: 0, downloaded: 0, left: 0, event: 'started', offers: [],
+          }));
+        }
+      }, 2000);
+    });
+    const results = await Promise.allSettled(SpaceRTC.TRACKERS.map(tryTracker));
+    let merged = null;
+    for (const r of results) {
+      if (r.status !== 'fulfilled') continue;
+      merged ||= new Map();
+      for (const [roomId, n] of r.value) merged.set(roomId, Math.max(merged.get(roomId) || 0, n));
+    }
+    return merged;
+  }
+
+  start() {
+    this.onStatus('Connecting to signaling…');
+    this._open = new Set();
+    if (this.isHost) this._mixedStream(); /* ready before the first listener offer */
+    SpaceRTC.TRACKERS.forEach(url => this._dial(url, 0));
+    /* re-announce periodically so late joiners find us */
+    this._interval = setInterval(() => {
+      this.sockets.forEach(ws => { if (ws.readyState === 1) this._announce(ws); });
+    }, 50000);
+    /* Listener offers reach the host probabilistically (the tracker hands
+       each offer to a random peer on the hash), so retry briskly until the
+       host answers. */
+    if (this.role === 'listener') {
+      this._listInterval = setInterval(() => {
+        if (this.connectedToHost) { clearInterval(this._listInterval); return; }
+        this.sockets.forEach(ws => { if (ws.readyState === 1) this._announce(ws); });
+      }, 9000);
+    }
+    setTimeout(() => {
+      if (!this.destroyed && this._open.size === 0) this.onStatus('✗ No signaling tracker reachable — try again later');
+    }, 8000);
+  }
+
+  /* One tracker connection, self-healing. A down tracker logs a console
+     line per attempt (browser-level, can't be suppressed), so back off
+     exponentially and give up after a few tries while another tracker is
+     carrying the room — but never stop retrying if we'd otherwise have
+     no signaling at all. */
+  _dial(url, attempt) {
+    if (this.destroyed) return;
+    let ws;
+    try { ws = new WebSocket(url); } catch { return; }
+    this.sockets.push(ws);
+    ws.onopen = () => {
+      this._open.add(url);
+      this.onStatus(`Looking for participants… (signaling ${this._open.size}/${SpaceRTC.TRACKERS.length})`);
+      this._announce(ws);
+    };
+    ws.onmessage = e => this._onMessage(ws, e);
+    ws.onerror = () => { /* close fires next; reconnect handled there */ };
+    ws.onclose = () => {
+      this._open.delete(url);
+      this.sockets = this.sockets.filter(s => s !== ws);
+      if (this.destroyed) return;
+      if (attempt < 4 || this._open.size === 0) {
+        setTimeout(() => this._dial(url, attempt + 1), Math.min(30000, 2000 * 2 ** attempt));
+      }
+    };
+  }
+
+  async _newPC(remoteLabel, { offerer, recvonly, sendStream } = {}) {
+    const pc = new RTCPeerConnection(this.ice);
+    /* The label is LIVE: a PC we created for an offer ('offer:<id>') is
+       re-labeled to the remote's real peer_id when answered. Handlers read
+       pc._label at fire time so audio elements and drops stay keyed
+       consistently (fixed: drops used to miss the re-keyed audio el). */
+    pc._label = remoteLabel;
+    if (recvonly || !this.mic) {
+      if (!sendStream) pc.addTransceiver('audio', { direction: 'recvonly' });
+    }
+    if (sendStream) sendStream.getTracks().forEach(t => pc.addTrack(t, sendStream));
+    else if (this.mic && !recvonly) this.mic.getTracks().forEach(t => pc.addTrack(t, this.mic));
+    /* Per-peer 'ctl' data channel: identity claims + host controls. The
+       offerer creates it; the answerer receives it via ondatachannel. */
+    if (offerer) this._wireCtl(pc, pc.createDataChannel('ctl'));
+    pc.ondatachannel = ev => { if (ev.channel.label === 'ctl') this._wireCtl(pc, ev.channel); };
+    pc.ontrack = ev => {
+      const label = pc._label;
+      let el = this.audioEls.get(label);
+      if (!el) {
+        el = document.createElement('audio');
+        el.autoplay = true;
+        el.style.display = 'none';
+        document.body.appendChild(el);
+        this.audioEls.set(label, el);
+      }
+      el.srcObject = ev.streams[0] || new MediaStream([ev.track]);
+      /* Host: feed every speaker's audio into the listener mix. (The
+         stream must also be playing in an <audio> el — it is, above — or
+         Chrome's WebAudio taps silence from remote streams.) */
+      if (this.isHost) this._mixAdd(pc._label, el.srcObject);
+      this._peersChanged();
+    };
+    pc.onconnectionstatechange = () => {
+      if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) {
+        this._dropPeer(pc._label);
+      } else if (pc.connectionState === 'connected') {
+        this.onStatus('Live — connected');
+        this._peersChanged();
+      }
+    };
+    return pc;
+  }
+
+  _wireCtl(pc, ch) {
+    pc._ctl = ch;
+    ch.onopen = () => { if (this.identity) this._ctlSend(ch, { t: 'hi', ...this.identity }); };
+    ch.onmessage = e => {
+      let msg;
+      try { msg = JSON.parse(e.data); } catch { return; }
+      if (msg && typeof msg.t === 'string') this.onCtl(pc._label, msg);
+    };
+  }
+
+  _ctlSend(ch, msg) {
+    if (ch?.readyState === 'open') {
+      try { ch.send(JSON.stringify(msg)); } catch { /* racing close */ }
+    }
+  }
+
+  broadcast(msg) {
+    this.pcs.forEach(pc => this._ctlSend(pc._ctl, msg));
+    this.listeners.forEach(pc => this._ctlSend(pc._ctl, msg));
+  }
+
+  broadcastListeners(msg) { this.listeners.forEach(pc => this._ctlSend(pc._ctl, msg)); }
+
+  sendTo(label, msg) {
+    this._ctlSend((this.pcs.get(label) || this.listeners.get(label))?._ctl, msg);
+  }
+
+  _gathered(pc) {
+    return new Promise(res => {
+      if (pc.iceGatheringState === 'complete') return res();
+      const t = setTimeout(res, 3000); /* don't hang on pathological NATs */
+      pc.addEventListener('icegatheringstatechange', () => {
+        if (pc.iceGatheringState === 'complete') { clearTimeout(t); res(); }
+      });
+    });
+  }
+
+  async _announce(ws) {
+    if (this.role === 'listener') {
+      /* Listener: recvonly offers on the listener hash; once the host has
+         answered, keep announcing bare (stays in the live count). */
+      const offers = this.connectedToHost ? [] : await this._makeOffers(6, { recvonly: true, tier: 'list' });
+      this._send(ws, this.listHash, { left: 0, offers });
+      return;
+    }
+    /* Speaker: mesh offers on the main hash. */
+    const offers = await this._makeOffers(4, { tier: 'main' });
+    this._send(ws, this.hash, { left: 0, offers });
+    /* Host also sits on the listener hash (no offers — listeners offer to
+       us) with left:1 so probes can tell host (incomplete) from listeners
+       (complete) and count rooms cleanly. */
+    if (this.isHost) this._send(ws, this.listHash, { left: 1, offers: [] });
+  }
+
+  _send(ws, hash, extra) {
+    if (ws.readyState !== 1 || this.destroyed) return;
+    ws.send(JSON.stringify({
+      action: 'announce', info_hash: SpaceRTC.bin(hash), peer_id: SpaceRTC.bin(this.peerId),
+      numwant: 8, uploaded: 0, downloaded: 0, event: 'started', ...extra,
+    }));
+  }
+
+  async _makeOffers(n, { recvonly, tier }) {
+    const offers = [];
+    for (let i = 0; i < n; i++) {
+      const id = [...crypto.getRandomValues(new Uint8Array(20))].map(b => b.toString(16).padStart(2, '0')).join('');
+      const pc = await this._newPC('offer:' + id, { offerer: true, recvonly });
+      pc._tier = tier;
+      const offer = await pc.createOffer({ offerToReceiveAudio: true });
+      await pc.setLocalDescription(offer);
+      await this._gathered(pc);
+      /* Relay-only mode sanity check: if the TURN server produced zero
+         relay candidates our SDP is empty of routes — nobody could ever
+         reach us. Surface it once instead of failing silently. */
+      if (!this._relayChecked && this.ice.iceTransportPolicy === 'relay') {
+        this._relayChecked = true;
+        if (!/ typ relay/.test(pc.localDescription.sdp)) this.onNoRelay();
+      }
+      this.offers.set(id, pc);
+      offers.push({ offer_id: SpaceRTC.bin(id), offer: { type: 'offer', sdp: pc.localDescription.sdp } });
+    }
+    return offers;
+  }
+
+  async _onMessage(ws, e) {
+    if (this.destroyed) return;
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
+    const hex = b => [...(b || '')].map(c => c.charCodeAt(0).toString(16).padStart(2, '0')).join('');
+    /* Someone answered one of our offers. */
+    if (msg.answer && msg.offer_id) {
+      const id = hex(msg.offer_id);
+      const pc = this.offers.get(id);
+      if (pc && !pc.currentRemoteDescription) {
+        const remote = hex(msg.peer_id) || ('peer:' + id);
+        this.offers.delete(id);
+        pc._label = remote; /* re-key before media/ctl start flowing */
+        this.pcs.set(remote, pc);
+        if (pc._tier === 'list') {
+          /* The host took one of our listener offers — stop offering and
+             retire the rest. */
+          this.connectedToHost = true;
+          for (const [oid, opc] of [...this.offers]) {
+            if (opc._tier === 'list') { this.offers.delete(oid); try { opc.close(); } catch { /* closing */ } }
+          }
+        }
+        try { await pc.setRemoteDescription(msg.answer); } catch { this._dropPeer(remote); }
+      }
+      return;
+    }
+    /* Someone offered to us — answer it. */
+    if (msg.offer && msg.offer_id) {
+      const remote = hex(msg.peer_id);
+      if (!remote || remote === this.peerId) return;
+      const onList = hex(msg.info_hash) === this.listHash;
+      if (onList) {
+        /* Listener-tier offer: only the host answers, with the mixed
+           speaker audio attached (one stream per listener). */
+        if (!this.isHost || this.role === 'listener') return;
+        if (this.listeners.size >= SpaceRTC.LISTENER_CAP) return;
+        const label = 'L:' + remote;
+        if (this.listeners.has(label)) return;
+        const pc = await this._newPC(label, { sendStream: this._mixedStream() });
+        this.listeners.set(label, pc);
+        if (!(await this._answerVia(ws, pc, msg, this.listHash))) this._dropPeer(label);
+        else this.onListeners(this.listeners.size);
+        return;
+      }
+      if (this.role === 'listener' || this.pcs.has(remote)) return;
+      const pc = await this._newPC(remote, {});
+      this.pcs.set(remote, pc);
+      if (!(await this._answerVia(ws, pc, msg, this.hash))) this._dropPeer(remote);
+    }
+  }
+
+  async _answerVia(ws, pc, msg, hash) {
+    try {
+      await pc.setRemoteDescription(msg.offer);
+      const ans = await pc.createAnswer();
+      await pc.setLocalDescription(ans);
+      await this._gathered(pc);
+      if (ws.readyState === 1) ws.send(JSON.stringify({
+        action: 'announce', info_hash: SpaceRTC.bin(hash), peer_id: SpaceRTC.bin(this.peerId),
+        to_peer_id: msg.peer_id, offer_id: msg.offer_id,
+        answer: { type: 'answer', sdp: pc.localDescription.sdp },
+      }));
+      return true;
+    } catch { return false; }
+  }
+
+  _dropPeer(label) {
+    const isList = label.startsWith('L:');
+    const map = isList ? this.listeners : this.pcs;
+    const pc = map.get(label);
+    if (pc) { try { pc.close(); } catch { /* already closed */ } }
+    const had = map.delete(label);
+    const el = this.audioEls.get(label);
+    if (el) { el.remove(); this.audioEls.delete(label); }
+    this._mixRemove(label);
+    if (isList) { if (had) this.onListeners(this.listeners.size); return; }
+    this._peersChanged();
+    if (had) this.onPeerGone(label);
+  }
+
+  /* ── Host listener-tier mix: one WebAudio graph blending the host mic
+     with every speaker's stream; its output stream is what every listener
+     receives (so listener count doesn't multiply mesh traffic). */
+  _mixedStream() {
+    if (this._mixDest) return this._mixDest.stream;
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    this._mixCtx = new Ctx();
+    this._mixCtx.resume?.().catch(() => { /* resumes on first gesture */ });
+    this._mixDest = this._mixCtx.createMediaStreamDestination();
+    this._mixSrcs = new Map();
+    if (this.mic) {
+      const s = this._mixCtx.createMediaStreamSource(this.mic);
+      s.connect(this._mixDest);
+      this._mixSrcs.set('me', s);
+    }
+    return this._mixDest.stream;
+  }
+
+  _mixAdd(label, stream) {
+    if (!this._mixDest || this._mixSrcs.has(label) || label.startsWith('L:')) return;
+    try {
+      const s = this._mixCtx.createMediaStreamSource(stream);
+      s.connect(this._mixDest);
+      this._mixSrcs.set(label, s);
+    } catch { /* stream without audio track */ }
+  }
+
+  _mixRemove(label) {
+    const s = this._mixSrcs?.get(label);
+    if (s) { try { s.disconnect(); } catch { /* detached */ } this._mixSrcs.delete(label); }
+  }
+
+  _peersChanged() {
+    const live = [...this.pcs.values()].filter(pc => pc.connectionState === 'connected').length;
+    this.onPeers(live);
+  }
+
+  toggleMute() {
+    const t = this.mic.getAudioTracks()[0];
+    if (!t) return false;
+    t.enabled = !t.enabled;
+    return !t.enabled; /* true = now muted */
+  }
+
+  destroy() {
+    this.destroyed = true;
+    clearInterval(this._interval);
+    clearInterval(this._listInterval);
+    this._open?.clear();
+    this.sockets.forEach(ws => { try { ws.close(); } catch { /* closing */ } });
+    [...this.pcs.keys()].forEach(k => this._dropPeer(k));
+    [...this.listeners.keys()].forEach(k => this._dropPeer(k));
+    this.offers.forEach(pc => { try { pc.close(); } catch { /* closing */ } });
+    this.offers.clear();
+    this._mixCtx?.close().catch(() => { /* closing */ });
+    this._mixCtx = this._mixDest = this._mixSrcs = null;
+    this.mic?.getTracks().forEach(t => t.stop());
+  }
+}
