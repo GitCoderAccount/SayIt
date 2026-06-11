@@ -2125,6 +2125,35 @@ body.mode-settings #mobile-fab { display:none; }
   pointer-events:none;
 }
 
+/* X-style two-pane Settings */
+.settings-layout { display:flex; align-items:flex-start; }
+.settings-nav {
+  flex:0 0 230px; display:flex; flex-direction:column;
+  border-right:1px solid var(--border); padding:8px 0;
+  position:sticky; top:53px; min-height:60vh;
+}
+.settings-nav-item {
+  display:flex; justify-content:space-between; align-items:center; gap:8px;
+  padding:14px 16px; background:none; border:none;
+  color:var(--text); font-size:15px; cursor:pointer; text-align:left;
+}
+.settings-nav-item:hover { background:var(--hov-2); }
+.settings-nav-item.active { font-weight:800; box-shadow:inset -2px 0 0 var(--primary); }
+.sn-chev { color:var(--muted); }
+.settings-pane { flex:1; min-width:0; padding:0 16px 32px; }
+.settings-pane-back { display:none; }
+@media (max-width:768px) {
+  .settings-nav { flex:1 1 auto; width:100%; border-right:none; position:static; min-height:0; }
+  .settings-pane { display:none; }
+  .settings-layout.pane-open .settings-nav { display:none; }
+  .settings-layout.pane-open .settings-pane { display:block; }
+  .settings-pane-back {
+    display:flex; align-items:center; gap:8px; width:100%;
+    background:none; border:none; color:var(--text);
+    font-size:15px; font-weight:700; padding:12px 0; cursor:pointer;
+  }
+}
+
 /* Storage overview bar (Settings → Cache & Storage) */
 .storage-bar {
   height:8px; border-radius:9999px; background:var(--bg-mid);

@@ -6,7 +6,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260611-142';
+const SW_CACHE_VER = '20260611-143';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -3866,6 +3866,57 @@ class SayIt {
     const headerHTML = this._applyPageHeader();
     this.g('feed').innerHTML = headerHTML + this._settingsHTML();
     this._wireSettingsListeners();
+    this._settingsNavify();
+  }
+
+  /* X-style two-pane Settings: post-processes the rendered sections into a
+     left nav (section list) + right pane (active section). Works on
+     whatever sections _settingsHTML emits — adding a section needs no
+     changes here. Mobile: list first, drill into a section, back returns.
+     All control ids/wiring stay intact — sections are only re-parented
+     and visibility-toggled. */
+  _settingsNavify() {
+    const feed = this.g('feed');
+    const sections = [...feed.querySelectorAll('.settings-section')];
+    if (sections.length < 2) return;
+    const layout = document.createElement('div');
+    layout.className = 'settings-layout';
+    const nav  = document.createElement('nav');
+    nav.className = 'settings-nav';
+    nav.setAttribute('aria-label', 'Settings sections');
+    const pane = document.createElement('div');
+    pane.className = 'settings-pane';
+    sections[0].parentNode.insertBefore(layout, sections[0]);
+
+    const back = document.createElement('button');
+    back.className = 'settings-pane-back';
+    back.innerHTML = '← All settings';
+    back.onclick = () => layout.classList.remove('pane-open');
+    pane.appendChild(back);
+
+    const items = [];
+    const activate = (i, drill) => {
+      sections.forEach((sec, j) => { sec.style.display = j === i ? '' : 'none'; });
+      items.forEach((b, j) => b.classList.toggle('active', j === i));
+      if (drill) layout.classList.add('pane-open');
+      this._settingsActiveSec = i;
+      pane.scrollTop = 0;
+    };
+    sections.forEach((sec, i) => {
+      const title = sec.querySelector('.settings-section-title')?.textContent?.trim() || `Section ${i + 1}`;
+      pane.appendChild(sec);
+      const btn = document.createElement('button');
+      btn.className = 'settings-nav-item';
+      btn.innerHTML = `<span>${utils.safe(title)}</span><span class="sn-chev">›</span>`;
+      btn.onclick = () => activate(i, true);
+      nav.appendChild(btn);
+      items.push(btn);
+    });
+    layout.appendChild(nav);
+    layout.appendChild(pane);
+    /* Desktop opens on the remembered (or first) section; mobile starts on
+       the list (pane hidden by CSS until a section is chosen). */
+    activate(Math.min(this._settingsActiveSec || 0, sections.length - 1), false);
   }
 
   /* ── More menu ──────────────────────────────────────────────────────── */
