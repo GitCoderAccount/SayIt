@@ -6,7 +6,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260611-152';
+const SW_CACHE_VER = '20260611-153';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -1766,6 +1766,8 @@ class SayIt {
     if (mbBtn) mbBtn.onclick = () => { this.hideMoreMenu(); this.goBookmarks(); };
     const maBtn = g('more-analytics');
     if (maBtn) maBtn.onclick = () => { this.hideMoreMenu(); this.goAnalytics(); };
+    const mdBtn = g('more-studio');
+    if (mdBtn) mdBtn.onclick = () => { this.hideMoreMenu(); this.goDashboard(); };
     const mvBtn = g('more-verify');
     if (mvBtn) mvBtn.onclick = () => { this.hideMoreMenu(); this.goVerify(); };
     const msBtn = g('more-space');
@@ -4405,6 +4407,160 @@ class SayIt {
     });
   }
 
+  /* ── Creator dashboard ──────────────────────────────────────────────
+     Your on-chain creator stats, computed locally and only for you: tips
+     received (bounded scan of txs to your address), likes from the local
+     archive, replies from the cache, followers gained in the scanned
+     window, and the Spaces you've hosted. Nothing leaves the browser. */
+  async goDashboard() {
+    this._updateTitle('Creator dashboard');
+    this._setRoute('/dashboard');
+    this.setNav(null, null);
+    this.state.mode = 'dashboard';
+    this.g('compose-area').style.display   = 'none';
+    this.g('channel-banner').style.display = 'none';
+    this.g('feed-tabs').style.display      = 'none';
+    this.g('loading-more').style.display   = 'none';
+    this._pendingPageHeader = this._makePageHeader({ title: 'Creator dashboard', noBack: true });
+    const headerHTML = this._applyPageHeader();
+    const feed = this.g('feed');
+    const me = this.state.signerAddr;
+    if (!me) {
+      feed.innerHTML = headerHTML + `<div class="prof-empty"><h3>Connect your wallet</h3>
+        <p style="color:var(--muted)">The dashboard shows tips, engagement, followers and Spaces for your account — all computed locally.</p></div>`;
+      return;
+    }
+    feed.innerHTML = headerHTML + `<div class="prof-empty"><div class="spinner" aria-hidden="true"></div><h3>Crunching your chain history…</h3></div>`;
+
+    const range = this._dashRange || 30; /* 7 | 14 | 30 days */
+    const DAY = 86400000;
+
+    /* Bounded scan of my address: tips + follow events to me, posts by me. */
+    const tips = [];           /* { ts, wei, from, post } */
+    let followsGained = 0;
+    const myPosts = new Map(); /* txHash → parsed post */
+    const seenTx = new Set();
+    const pages = Math.min(this._getMaxScanPages(), 6);
+    for (let page = 1; page <= pages; page++) {
+      let raw = [];
+      try { raw = await this.apiFetch(me, page); } catch { break; }
+      if (this.state.mode !== 'dashboard') return;
+      raw.forEach(tx => {
+        if (!tx.hash || seenTx.has(tx.hash)) return;
+        seenTx.add(tx.hash);
+        if (!tx.input || tx.input === '0x') return;
+        const from = tx.from?.toLowerCase();
+        let text;
+        try { text = ethers.toUtf8String(tx.input).trim(); } catch { return; }
+        if (from === me) {
+          const parsed = this._parsePostTx(tx, { mode: 'dashboard' });
+          if (parsed) myPosts.set(parsed.txHash, parsed);
+          return;
+        }
+        if (text.startsWith(TIP_PREFIX)) {
+          let wei = 0n;
+          try { wei = BigInt(tx.value || 0); } catch { /* odd value field */ }
+          tips.push({ ts: Number(tx.timeStamp) * 1000 || 0, wei, from,
+            post: text.slice(TIP_PREFIX.length).trim().toLowerCase() });
+        } else if (text.startsWith(FOLLOW_PREFIX)) followsGained++;
+        else if (text.startsWith(UNFOLLOW_PREFIX)) followsGained--;
+      });
+      if (raw.length < 50) break;
+    }
+    const spacesHosted = [...myPosts.values()].filter(p => p.postType === 'space');
+
+    /* Cache: replies to my posts; archive: likes. */
+    let cached = [];
+    try { cached = await this.cache.getPosts(() => true); } catch { /* cache empty */ }
+    const likeCounts = await this.cache.likeCounts();
+    if (this.state.mode !== 'dashboard') return;
+    const replyCounts = new Map();
+    cached.forEach(p => {
+      if (p.parentTx && myPosts.has(p.parentTx)) replyCounts.set(p.parentTx, (replyCounts.get(p.parentTx) || 0) + 1);
+    });
+    const tipByPost = new Map();
+    tips.forEach(t => tipByPost.set(t.post, (tipByPost.get(t.post) || 0n) + t.wei));
+    let likesTotal = 0;
+    const engage = [...myPosts.values()].map(p => {
+      const likes = likeCounts.get(p.txHash) || 0;
+      likesTotal += likes;
+      return { post: p, likes, replies: replyCounts.get(p.txHash) || 0, tipWei: tipByPost.get(p.txHash) || 0n };
+    });
+    const topPosts = engage
+      .filter(e => e.likes + e.replies > 0 || e.tipWei > 0n)
+      .sort((a, b) => Number(b.tipWei - a.tipWei) || (b.likes * 2 + b.replies) - (a.likes * 2 + a.replies))
+      .slice(0, 5);
+
+    /* Supporters: who tipped me the most. */
+    const byTipper = new Map();
+    tips.forEach(t => byTipper.set(t.from, (byTipper.get(t.from) || 0n) + t.wei));
+    const topTippers = [...byTipper.entries()].sort((a, b) => Number(b[1] - a[1])).slice(0, 5);
+
+    /* Tips per day for the chart. */
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const byDay = new Map();
+    for (let i = range - 1; i >= 0; i--) byDay.set(today.getTime() - i * DAY, 0n);
+    tips.forEach(t => {
+      const d = new Date(t.ts); d.setHours(0, 0, 0, 0);
+      if (byDay.has(d.getTime())) byDay.set(d.getTime(), byDay.get(d.getTime()) + t.wei);
+    });
+    const maxDay = [...byDay.values()].reduce((a, b) => (b > a ? b : a), 1n);
+    const fmtDay = ts => new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const tipWeiTotal = tips.reduce((a, t) => a + t.wei, 0n);
+
+    const stat = (label, value) => `
+      <div class="ana-stat"><div class="ana-num">${value}</div><div class="ana-label">${label}</div></div>`;
+    const bars = [...byDay.entries()].map(([ts, wei]) => `
+      <div class="ana-bar-col" title="${fmtDay(ts)}: ${utils.fmtPLS(wei.toString())} PLS">
+        <div class="ana-bar" style="height:${Math.round(Number(wei * 100n / maxDay))}%"></div>
+        <div class="ana-bar-day">${fmtDay(ts).split(' ')[1]}</div>
+      </div>`).join('');
+    const postRows = topPosts.map(x => {
+      const text = utils.safe((x.post.display || '').replace(/https?:\/\/\S+/g, '').trim().slice(0, 70)) || '🖼 Media post';
+      const tipTxt = x.tipWei > 0n ? ` · 💎 ${utils.fmtPLS(x.tipWei.toString())} PLS` : '';
+      return `<div class="ana-row" role="button" tabindex="0" data-act="open-thread" data-act-arg="${utils.safe(x.post.txHash)}">
+        <span class="ana-row-name" style="font-weight:500">${text}</span>
+        <span class="ana-row-val">♥ ${x.likes} · 💬 ${x.replies}${tipTxt}</span></div>`;
+    }).join('') || '<div class="ana-empty">No engagement on your posts in the scanned window yet — likes need a Deep sync archive (Settings → Cache &amp; Storage).</div>';
+    const tipperRows = topTippers.map(([addr, wei]) => {
+      const prof = this.state.profCache[addr];
+      const name = prof?.username ? utils.safe(prof.username) : this.trunc(addr);
+      this.fetchOtherProfile(addr);
+      return `<div class="ana-row" role="button" tabindex="0" data-act="open-profile" data-act-arg="${utils.safe(addr)}">
+        <span class="ana-row-name">${name}</span><span class="ana-row-val">💎 ${utils.fmtPLS(wei.toString())} PLS</span></div>`;
+    }).join('') || '<div class="ana-empty">No tips received in the scanned window yet</div>';
+    const spaceRows = spacesHosted.map(p => {
+      const ended = this._spaceIsEnded(p);
+      return `<div class="ana-row" role="button" tabindex="0" data-act="open-thread" data-act-arg="${utils.safe(p.txHash)}">
+        <span class="ana-row-name">🎙 ${utils.safe(p.space.title)}</span>
+        <span class="ana-row-val">${ended ? 'Ended' : '🔴 Live'} · ${this.relTime(p.timestamp)}</span></div>`;
+    }).join('') || '<div class="ana-empty">No Spaces hosted yet — More → 🎙 Start a Space</div>';
+
+    feed.innerHTML = headerHTML + `
+      <div class="ana-page">
+        <div class="ana-note">Computed locally from the last ${pages} page(s) of your address history and your cached archive — nothing is sent anywhere.</div>
+        <div class="ana-range" role="tablist">
+          ${[7, 14, 30].map(d => `<button class="ana-range-btn${range === d ? ' active' : ''}" data-dash-range="${d}" role="tab">${d}d</button>`).join('')}
+        </div>
+        <div class="ana-stats">
+          ${stat('Tips received', tips.length.toLocaleString())}
+          ${stat('PLS earned', utils.fmtPLS(tipWeiTotal.toString()))}
+          ${stat('Likes received', likesTotal.toLocaleString())}
+          ${stat('Posts scanned', myPosts.size.toLocaleString())}
+          ${stat('Followers gained', Math.max(0, followsGained).toLocaleString())}
+          ${stat('Spaces hosted', spacesHosted.length.toLocaleString())}
+        </div>
+        <div class="ana-section"><h3>PLS tipped to you — last ${range} days</h3>
+          <div class="ana-chart">${bars}</div></div>
+        <div class="ana-section"><h3>Your top posts</h3>${postRows}</div>
+        <div class="ana-section"><h3>Top supporters</h3>${tipperRows}</div>
+        <div class="ana-section"><h3>Your Spaces</h3>${spaceRows}</div>
+      </div>`;
+    feed.querySelectorAll('[data-dash-range]').forEach(btn => {
+      btn.onclick = () => { this._dashRange = Number(btn.dataset.dashRange); this.goDashboard(); };
+    });
+  }
+
   goSettings() {
     this._updateTitle('Settings');
     this._setRoute('/settings');
@@ -6536,7 +6692,8 @@ class SayIt {
       : `background:linear-gradient(135deg,rgba(124,77,255,0.55),rgba(179,136,255,0.25),rgba(43,134,197,0.15))`;
 
     const followBtn = isOwn
-      ? `<button class="prof-edit-btn" id="prof-edit-trigger">Edit profile</button>`
+      ? `<button class="prof-edit-btn" id="prof-dash-btn" title="Creator dashboard" style="margin-right:8px">📊 Dashboard</button>
+         <button class="prof-edit-btn" id="prof-edit-trigger">Edit profile</button>`
       : this.state.following.has(address.toLowerCase())
         ? `<button class="prof-following-btn" id="prof-follow-btn">Following</button>`
         : `<button class="prof-follow-btn" id="prof-follow-btn">Follow</button>`;
@@ -6714,6 +6871,8 @@ class SayIt {
     /* Edit profile button (own profile) */
     const editBtn = document.getElementById('prof-edit-trigger');
     if (editBtn) editBtn.onclick = () => this.showEditForm();
+    const dashBtn = document.getElementById('prof-dash-btn');
+    if (dashBtn) dashBtn.onclick = () => this.goDashboard();
 
     /* Follow/Unfollow (other profiles) */
     const followBtn = document.getElementById('prof-follow-btn');
@@ -9980,6 +10139,7 @@ class SayIt {
         case 'settings':       this.goSettings(); break;
         case 'lists':          this.goLists?.(); break;
         case 'analytics':      this.goAnalytics?.(); break;
+        case 'dashboard':      this.goDashboard?.(); break;
         case 'verify':         this.goVerify?.(); break;
         case 'communities':    this.goCommunities?.(); break;
         case 'profile':        /^0x[a-f0-9]{40}$/i.test(arg)
