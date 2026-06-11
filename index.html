@@ -30,7 +30,7 @@
      (IPFS, Arweave, any gateway) and the explorer/RPC endpoints are
      user-configurable in Settings. frame-ancestors can't be set via a meta
      tag (header-only, and GitHub Pages can't send custom headers). -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * data: blob:; connect-src *; frame-src https://www.youtube-nocookie.com https://player.vimeo.com; object-src 'none'; base-uri 'self'; form-action 'none'; worker-src 'self'; manifest-src 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * data: blob:; connect-src *; frame-src https://www.youtube-nocookie.com https://player.vimeo.com https://platform.twitter.com; object-src 'none'; base-uri 'self'; form-action 'none'; worker-src 'self'; manifest-src 'self'">
 <script src="boot.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.15.0/ethers.umd.min.js" integrity="sha384-OwtfwhPoP4aGLIw192UbPWjNbSkb7AllEbIhEJ01Yp8MxhNLLNUMA+DSjh6Zct05" crossorigin="anonymous"></script>
 <style>
@@ -2314,7 +2314,10 @@ body.mode-settings #mobile-fab { display:none; }
 .x-embed-title { font-size:14px; font-weight:700; }
 .x-embed-arrow { color:var(--muted); font-size:13px; margin-left:auto; }
 .x-embed-handle { display:block; font-size:14px; color:var(--primary-lt); margin-top:6px; }
-.x-embed-cta { display:block; font-size:13px; color:var(--muted); margin-top:2px; }
+.x-embed-cta { display:block; font-size:13px; color:var(--primary-lt); margin-top:2px; }
+.x-embed-facade { cursor:pointer; }
+.x-embed-loaded { padding:0; border:none; background:none; }
+.x-embed-frame { width:100%; min-height:280px; border:0; border-radius:14px; display:block; }
 
 /* Community notes */
 .note-slot:empty { display:none; }
