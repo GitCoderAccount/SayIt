@@ -6,7 +6,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260611-144';
+const SW_CACHE_VER = '20260611-145';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -49,6 +49,7 @@ const COMMUNITIES_KEY = 'sayitCommunities'; /* JSON array of {address,name,desc,
    keeps gas reasonable while making the data portable + publicly visible. */
 const LC_SYNC_PREFIX  = 'LC_SYNC:';
 const TIP_PREFIX      = 'TIP:';     /* TIP:0x<posthash> — tx VALUE carries the tip, sent to the post author */
+const SPACE_PREFIX    = 'SPACE:';   /* SPACE:{"r":roomId,"s":startsMs}\n\n<title> — live audio room announcement */
 const CHANNELS_KEY    = 'sayitChannelsScan';
 
 const ERC721_ABI = [
@@ -915,6 +916,188 @@ class Cache {
   }
 }
 
+/* ── SpaceRTC: serverless WebRTC audio mesh ───────────────────────────
+   Signaling rides public WebTorrent trackers (the browser-torrent
+   WebSocket protocol): we "announce" the room id as an info_hash with
+   WebRTC offers attached; the tracker forwards offers to other peers on
+   the same hash and routes their answers back. ICE is non-trickle (we
+   wait for gathering, then ship one complete SDP) which keeps the
+   protocol to exactly announce → offer → answer. Mesh topology: every
+   peer offers to the room; fine for ≤8 participants (phase-1 limit). */
+class SpaceRTC {
+  static TRACKERS = [
+    'wss://tracker.openwebtorrent.com',
+    'wss://tracker.webtorrent.dev',
+    'wss://tracker.btorrent.xyz',
+  ];
+  static ICE = { iceServers: [{ urls: 'stun:stun.cloudflare.com:3478' }] };
+
+  constructor(roomId, micStream, { onStatus, onPeers } = {}) {
+    /* info_hash must be exactly 20 bytes; roomId is 16 bytes hex → pad. */
+    this.hash = (roomId + '00000000').slice(0, 40);
+    this.peerId = [...crypto.getRandomValues(new Uint8Array(20))]
+      .map(b => b.toString(16).padStart(2, '0')).join('');
+    this.mic = micStream;
+    this.onStatus = onStatus || (() => {});
+    this.onPeers = onPeers || (() => {});
+    this.sockets = [];
+    this.pcs = new Map();      /* remote peer_id → RTCPeerConnection */
+    this.audioEls = new Map(); /* remote peer_id → <audio> */
+    this.offers = new Map();   /* offer_id → RTCPeerConnection (ours, awaiting answer) */
+    this.destroyed = false;
+  }
+
+  /* 20-byte strings, binary-safe for the tracker JSON protocol. */
+  static bin(hex) {
+    let out = '';
+    for (let i = 0; i < hex.length; i += 2) out += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16));
+    return out;
+  }
+
+  start() {
+    this.onStatus('Connecting to signaling…');
+    let opened = 0;
+    SpaceRTC.TRACKERS.forEach(url => {
+      let ws;
+      try { ws = new WebSocket(url); } catch { return; }
+      this.sockets.push(ws);
+      ws.onopen = () => { opened++; this.onStatus('Looking for participants…'); this._announce(ws); };
+      ws.onmessage = e => this._onMessage(ws, e);
+      ws.onerror = () => { /* tracker down — others may still work */ };
+    });
+    /* re-announce periodically so late joiners find us */
+    this._interval = setInterval(() => {
+      this.sockets.forEach(ws => { if (ws.readyState === 1) this._announce(ws); });
+    }, 50000);
+    setTimeout(() => {
+      if (!this.destroyed && opened === 0) this.onStatus('✗ No signaling tracker reachable — try again later');
+    }, 8000);
+  }
+
+  async _newPC(remoteLabel) {
+    const pc = new RTCPeerConnection(SpaceRTC.ICE);
+    this.mic.getTracks().forEach(t => pc.addTrack(t, this.mic));
+    pc.ontrack = ev => {
+      let el = this.audioEls.get(remoteLabel);
+      if (!el) {
+        el = document.createElement('audio');
+        el.autoplay = true;
+        el.style.display = 'none';
+        document.body.appendChild(el);
+        this.audioEls.set(remoteLabel, el);
+      }
+      el.srcObject = ev.streams[0] || new MediaStream([ev.track]);
+      this._peersChanged();
+    };
+    pc.onconnectionstatechange = () => {
+      if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) {
+        this._dropPeer(remoteLabel);
+      } else if (pc.connectionState === 'connected') {
+        this.onStatus('Live — connected');
+        this._peersChanged();
+      }
+    };
+    return pc;
+  }
+
+  _gathered(pc) {
+    return new Promise(res => {
+      if (pc.iceGatheringState === 'complete') return res();
+      const t = setTimeout(res, 3000); /* don't hang on pathological NATs */
+      pc.addEventListener('icegatheringstatechange', () => {
+        if (pc.iceGatheringState === 'complete') { clearTimeout(t); res(); }
+      });
+    });
+  }
+
+  async _announce(ws) {
+    /* Attach a few fresh offers for unknown peers to answer. */
+    const offers = [];
+    for (let i = 0; i < 4; i++) {
+      const id = [...crypto.getRandomValues(new Uint8Array(20))].map(b => b.toString(16).padStart(2, '0')).join('');
+      const pc = await this._newPC('offer:' + id);
+      const offer = await pc.createOffer({ offerToReceiveAudio: true });
+      await pc.setLocalDescription(offer);
+      await this._gathered(pc);
+      this.offers.set(id, pc);
+      offers.push({ offer_id: SpaceRTC.bin(id), offer: { type: 'offer', sdp: pc.localDescription.sdp } });
+    }
+    if (ws.readyState !== 1 || this.destroyed) return;
+    ws.send(JSON.stringify({
+      action: 'announce', info_hash: SpaceRTC.bin(this.hash), peer_id: SpaceRTC.bin(this.peerId),
+      numwant: 8, uploaded: 0, downloaded: 0, left: 0, event: 'started', offers,
+    }));
+  }
+
+  async _onMessage(ws, e) {
+    if (this.destroyed) return;
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
+    const hex = b => [...(b || '')].map(c => c.charCodeAt(0).toString(16).padStart(2, '0')).join('');
+    /* Someone answered one of our offers. */
+    if (msg.answer && msg.offer_id) {
+      const id = hex(msg.offer_id);
+      const pc = this.offers.get(id);
+      if (pc && !pc.currentRemoteDescription) {
+        const remote = hex(msg.peer_id) || ('peer:' + id);
+        this.offers.delete(id);
+        this.pcs.set(remote, pc);
+        try { await pc.setRemoteDescription(msg.answer); } catch { this._dropPeer(remote); }
+      }
+      return;
+    }
+    /* Someone offered to us — answer it. */
+    if (msg.offer && msg.offer_id) {
+      const remote = hex(msg.peer_id);
+      if (!remote || remote === this.peerId || this.pcs.has(remote)) return;
+      const pc = await this._newPC(remote);
+      this.pcs.set(remote, pc);
+      try {
+        await pc.setRemoteDescription(msg.offer);
+        const ans = await pc.createAnswer();
+        await pc.setLocalDescription(ans);
+        await this._gathered(pc);
+        if (ws.readyState === 1) ws.send(JSON.stringify({
+          action: 'announce', info_hash: SpaceRTC.bin(this.hash), peer_id: SpaceRTC.bin(this.peerId),
+          to_peer_id: msg.peer_id, offer_id: msg.offer_id,
+          answer: { type: 'answer', sdp: pc.localDescription.sdp },
+        }));
+      } catch { this._dropPeer(remote); }
+    }
+  }
+
+  _dropPeer(label) {
+    const pc = this.pcs.get(label);
+    if (pc) { try { pc.close(); } catch { /* already closed */ } }
+    this.pcs.delete(label);
+    const el = this.audioEls.get(label);
+    if (el) { el.remove(); this.audioEls.delete(label); }
+    this._peersChanged();
+  }
+
+  _peersChanged() {
+    const live = [...this.pcs.values()].filter(pc => pc.connectionState === 'connected').length;
+    this.onPeers(live);
+  }
+
+  toggleMute() {
+    const t = this.mic.getAudioTracks()[0];
+    if (!t) return false;
+    t.enabled = !t.enabled;
+    return !t.enabled; /* true = now muted */
+  }
+
+  destroy() {
+    this.destroyed = true;
+    clearInterval(this._interval);
+    this.sockets.forEach(ws => { try { ws.close(); } catch { /* closing */ } });
+    [...this.pcs.keys()].forEach(k => this._dropPeer(k));
+    this.offers.forEach(pc => { try { pc.close(); } catch { /* closing */ } });
+    this.offers.clear();
+    this.mic?.getTracks().forEach(t => t.stop());
+  }
+}
+
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
   constructor() {
@@ -1288,6 +1471,8 @@ class SayIt {
     if (maBtn) maBtn.onclick = () => { this.hideMoreMenu(); this.goAnalytics(); };
     const mvBtn = g('more-verify');
     if (mvBtn) mvBtn.onclick = () => { this.hideMoreMenu(); this.goVerify(); };
+    const msBtn = g('more-space');
+    if (msBtn) msBtn.onclick = () => { this.hideMoreMenu(); this.openCreateSpace(); };
 
     document.querySelectorAll('[data-mn]').forEach(b => {
       b.onclick = (ev) => {
@@ -2073,6 +2258,9 @@ class SayIt {
     } else if (action === 'tip') {
       e.stopPropagation();
       this.openTipModal(post);
+    } else if (action === 'join-space') {
+      e.stopPropagation();
+      this.joinSpace(post);
     } else if (action === 'like') {
       e.stopPropagation();
       this.toggleLike(post, item);
@@ -7241,6 +7429,33 @@ class SayIt {
     if (text.startsWith(VOTE_PREFIX)) { this._captureVote(text, tx); return null; }
     if (text.startsWith(TOKEN_PROFILE_PREFIX)) return null; /* token-profile metadata, not a feed post */
     if (text.startsWith(TIP_PREFIX)) return null; /* tips surface via notifications, never as posts */
+    /* SPACE announcements are feed posts with a live-room card. */
+    if (text.startsWith(SPACE_PREFIX)) {
+      try {
+        const rest = text.slice(SPACE_PREFIX.length);
+        const nl = rest.indexOf('\n\n');
+        const meta = JSON.parse(nl >= 0 ? rest.slice(0, nl) : rest);
+        const title = (nl >= 0 ? rest.slice(nl + 2) : '').trim() || 'Live Space';
+        if (typeof meta?.r === 'string' && /^[a-f0-9]{16,40}$/.test(meta.r)) {
+          return {
+            content: text, display: title, parentTx: null, repostOf: null,
+            poll: null, postType: 'space',
+            space: { roomId: meta.r, startsMs: Number(meta.s) || 0, title },
+            reactionTarget: null, direction: null,
+            reporter: tx.from?.toLowerCase(),
+            to: tx.to?.toLowerCase() ?? null,
+            channel: tx.to?.toLowerCase(),
+            timestamp: tx.timeStamp
+              ? new Date(Number(tx.timeStamp) * 1000).toISOString()
+              : new Date().toISOString(),
+            txHash: hash,
+            blockNumber: tx.blockNumber ? Number(tx.blockNumber) : null,
+            mode: opts.mode || 'main',
+            ...opts.extra,
+          };
+        }
+      } catch { /* malformed SPACE json — fall through to plain post */ }
+    }
     /* Community notes + ratings are not feed posts — gathered via _scanChannelNotes. */
     if (text.startsWith(NOTE_PREFIX) || text.startsWith(NOTERATE_PREFIX)) return null;
     if (text.startsWith(LIKE_PREFIX) || text.startsWith(UNLIKE_PREFIX)
@@ -8385,6 +8600,7 @@ class SayIt {
             <span class="post-name">${displayName}</span> reposted</div>` : ''}
           <div class="post-body${nonText ? ' is-nontext' : ''}">${nonText ? '<div class="post-nontext">⚠ Non-text content (binary data)</div>' : ''}${bodyHtml}</div>
           ${post.poll ? this._pollHTML(post) : ''}
+          ${post.space ? this._spaceCardHTML(post) : ''}
           ${repostCard}
           ${embedHtml || ''}
           <div class="note-slot" data-note-host="${utils.safe(post.txHash)}">${this._noteHTML(post)}</div>
@@ -9617,6 +9833,104 @@ class SayIt {
     } finally {
       this._fetchingParents.delete(hash);
     }
+  }
+
+  /* ── Live Spaces (experimental) ──────────────────────────────────────
+     Phase 1: small-room live audio, fully serverless.
+     - DISCOVERY is on-chain: a SPACE: post announces the room (uncensorable).
+     - SIGNALING rides public WebTorrent trackers over WebSocket — the same
+       infrastructure browser torrents use; we speak the tracker's announce/
+       offer/answer protocol directly. No server of ours, no accounts.
+     - AUDIO is a WebRTC mesh (everyone connects to everyone), which holds
+       up for roughly 6–8 active participants — the documented phase-1
+       limit; bigger rooms need a relay tier later.
+     - STUN via Cloudflare (IP visible to them during connection setup —
+       called out in the room UI). */
+  _spaceCardHTML(post) {
+    const sp = post.space;
+    const live = !sp.startsMs || sp.startsMs <= Date.now();
+    return `
+      <div class="space-card">
+        <div class="space-card-badge">${live ? '🔴 LIVE' : '🎙 Scheduled'}<span class="space-exp">experimental</span></div>
+        <div class="space-card-title">${utils.safe(sp.title)}</div>
+        <div class="space-card-sub">${live ? 'Audio Space — tap to join with your mic' : 'Starts ' + utils.safe(this.relTime(new Date(sp.startsMs).toISOString()))}</div>
+        <button class="btn-pri space-join-btn" data-action="join-space" style="flex:0 0 auto;width:auto;padding:8px 22px">Join</button>
+      </div>`;
+  }
+
+  openCreateSpace() {
+    if (!this.signer) { utils.toast('Connect wallet to start a Space'); return; }
+    const body = `
+      <div style="font-size:14px;color:var(--muted);margin-bottom:12px">
+        A Space is a live audio room. The announcement is an on-chain post;
+        the audio is a direct peer-to-peer mesh between participants
+        (works best with up to ~8 people — experimental).
+      </div>
+      <input type="text" id="space-title" maxlength="80" placeholder="What are we talking about?"
+        style="width:100%;background:var(--bg-mid);border:1px solid var(--border);border-radius:10px;padding:12px;color:var(--text)">
+      <div style="display:flex;justify-content:flex-end;margin-top:12px">
+        <button class="btn-pri" id="space-create" style="flex:0 0 auto;padding:10px 24px">Go live 🎙</button>
+      </div>`;
+    this._showGenericModal('Start a Space', body);
+    const btn = this.g('space-create');
+    if (btn) btn.onclick = async () => {
+      const title = (this.g('space-title')?.value || '').trim() || 'Live Space';
+      const roomId = [...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(16).padStart(2, '0')).join('');
+      btn.disabled = true; btn.textContent = 'Publishing…';
+      const ok = await this.publish(`${SPACE_PREFIX}${JSON.stringify({ r: roomId, s: Date.now() })}\n\n${title}`);
+      btn.disabled = false; btn.textContent = 'Go live 🎙';
+      if (ok) {
+        this._closeGenericModal();
+        this.joinSpace({ space: { roomId, title, startsMs: Date.now() } });
+      }
+    };
+  }
+
+  async joinSpace(post) {
+    const sp = post.space;
+    if (this._spaceRoom) this.leaveSpace();
+    const body = `
+      <div class="space-room">
+        <div class="space-room-title">🎙 ${utils.safe(sp.title)}<span class="space-exp">experimental</span></div>
+        <div class="space-room-status" id="space-status">Requesting microphone…</div>
+        <div class="space-peers" id="space-peers"></div>
+        <div class="space-room-note">Peer-to-peer audio: your IP is visible to other participants and to the
+          STUN/tracker infrastructure during connection setup. Best with ≤8 speakers.</div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px">
+          <button class="settings-btn" id="space-mute">🎙 Mute</button>
+          <button class="settings-btn danger" id="space-leave">Leave</button>
+        </div>
+      </div>`;
+    this._showGenericModal('Space', body);
+    const status = () => this.g('space-status');
+    try {
+      const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const room = new SpaceRTC(sp.roomId, mic, {
+        onStatus: t => { const el = status(); if (el) el.textContent = t; },
+        onPeers: n => {
+          const el = this.g('space-peers');
+          if (el) el.innerHTML = `<span class="space-peer-pill">You</span>` +
+            Array.from({ length: n }, (_, i) => `<span class="space-peer-pill">Peer ${i + 1}</span>`).join('');
+        },
+      });
+      this._spaceRoom = room;
+      room.start();
+      const muteBtn = this.g('space-mute');
+      if (muteBtn) muteBtn.onclick = () => {
+        const on = room.toggleMute();
+        muteBtn.textContent = on ? '🔇 Unmute' : '🎙 Mute';
+      };
+      const leaveBtn = this.g('space-leave');
+      if (leaveBtn) leaveBtn.onclick = () => { this.leaveSpace(); this._closeGenericModal(); };
+    } catch (err) {
+      const el = status();
+      if (el) el.textContent = '✗ Microphone unavailable: ' + (err?.message || err);
+    }
+  }
+
+  leaveSpace() {
+    this._spaceRoom?.destroy();
+    this._spaceRoom = null;
   }
 
   /* ── Tipping ─────────────────────────────────────────────────────────
