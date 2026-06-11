@@ -6,120 +6,105 @@
 
 **Uncensorable social media, built entirely on the PulseChain blockchain.** — [sayitdefi.com](https://sayitdefi.com) · [@SayItDeFi](https://x.com/SayItDeFi)
 
-Say It DeFi is a decentralized social platform where every post, reply, like, follow, poll, profile, and community note lives on-chain. There is no central server storing your content, no database that can be wiped, and no company that can delete your account or silence your voice. If your wallet can sign a transaction, you can speak — and what you say is permanent, public, and owned by no one but the network itself.
+Say It DeFi is a decentralized social platform where every post, reply, like, follow, poll, tip, profile, and community note lives on-chain. There is no central server storing your content, no database that can be wiped, no company that can delete your account or silence your voice, and **no tracking of any kind**. If your wallet can sign a transaction, you can speak — and what you say is permanent, public, and owned by no one but the network itself.
 
-This repository hosts the **front-end**: a single, self-contained web application that reads the social graph directly from the blockchain and lets you write to it with your own wallet. The front-end is just a window. The data is the chain.
+This repository hosts the **front-end**: a small, self-contained, from-scratch web application that reads the social graph directly from the blockchain and lets you write to it with your own wallet. The front-end is just a window. The data is the chain.
 
 ---
 
 ## What it is
 
-Say It DeFi is a client for a permissionless social protocol. Instead of trusting a platform to host your posts, every action is encoded as a blockchain transaction:
+A client for a permissionless social protocol. Instead of trusting a platform to host your posts, every action is a blockchain transaction:
 
 - A **post** is a transaction whose data payload contains your message.
 - A **reply** references the transaction hash of the post it answers.
 - A **like**, **bookmark**, **follow**, or **repost** is a small tagged transaction.
-- A **poll** embeds its question and options on-chain; **votes** are transactions tallied by scanning the chain.
-- A **community note** and its **ratings** are tagged transactions that surface reader context on a post.
-- Your **profile** (display name, bio, avatar, banner, links) is written on-chain and read back by any client.
+- A **tip** is a PLS transfer straight to an author, tagged with the post it rewards.
+- A **poll** embeds its question and options on-chain; **votes** are tallied by scanning the chain.
+- A **community note** and its **ratings** surface reader context on a post.
+- Your **profile** (name, bio, avatar, banner, links) is written on-chain and read back by any client.
 
-Because all of this is just blockchain data, anyone can build their own interface to the same network. This front-end is one such interface — open, auditable, and dependency-free. (See [The on-chain protocol](#the-on-chain-protocol) below if you want to build your own.)
+Because all of this is just blockchain data, anyone can build their own interface to the same network. This front-end is one such interface — open, auditable, and dependency-light. (See [The on-chain protocol](#the-on-chain-protocol) to build your own.)
+
+---
+
+## Privacy — no cookies, no trackers, no server
+
+Say It DeFi is built for people who want to speak freely without being watched. We mean that literally:
+
+- **No cookies. No analytics. No telemetry. No fingerprinting.** The in-app Analytics page is computed entirely inside your browser from your own local cache — nothing is ever sent anywhere.
+- **No server of ours.** The app is static files served from a host like GitHub Pages or IPFS. There is no backend to log you, and nothing in this project ever receives your IP or activity.
+- **A strict Content-Security-Policy** means no inline or third-party script can execute on the page; code loads only from this origin and one pinned library.
+- **Your data stays on your device.** Caches, settings, and archives live in your browser and can be wiped from Settings anytime.
+- **You can verify all of this yourself** — open the in-app **"Verify it yourself"** page (More → 🛡️), watch your browser's Network tab, or read the source. Public scrutiny is the security model.
+
+As with any website, your IP is technically visible to whoever serves you bytes: the static host, the block-explorer API **you** configure in Settings, and the hosts of media **you** choose to view. For the best feed experience, videos and embedded previews (YouTube/Vimeo, and shared X posts) **autoplay/load by default** — which connects you to those providers. Prefer zero third-party contact? Flip it off in **Settings → Privacy** (or enable **Data saver**), and embeds become click-to-load with neutral placeholders.
 
 ---
 
 ## Core features
 
 ### Posting and conversation
-- **Write anything.** No character limit — short thoughts, long essays, or full articles. Long posts collapse behind a "Show more" expander in the feed.
-- **Threaded replies** with visual connector lines, so conversations are easy to follow.
-- **Reposts and quote-posts** to amplify others, with the original post embedded inline.
-- **Rich media** — attach images, GIFs, and video by URL (including IPFS and Arweave links, which are resolved automatically). YouTube, Vimeo, and X/Twitter links render as inline cards.
-- **Emoji picker** with categorized, multi-select emoji, plus a draft autosave so you never lose a half-written post.
-- **Offline queue** — if a post fails to send (offline or a network hiccup), it's saved and automatically retried when you reconnect.
+- **Write anything** — no character limit. Long posts collapse behind a "Show more" expander.
+- **Threaded replies** rendered X-style: a reply in your feed carries the **original post above it**, joined by a thread line, and conversations show the full ancestor chain.
+- **Reposts and quote-posts** with the original embedded inline (including its media).
+- **Rich media** — images, GIFs, and video by URL (IPFS/Arweave auto-resolved). Videos **autoplay muted, one at a time**, and pause when scrolled off-screen. YouTube, Vimeo, and **X/Twitter posts** render as click-to-load embeds — a shared X post shows its full text, images, and **playable video** in place.
+- **Emoji picker**, draft autosave, and an **offline queue** that retries failed posts when you reconnect.
 
 ### Engagement
-- **Likes, bookmarks, and follows**, all recorded on-chain and reflected live across the interface.
-- **On-chain polls** — create a poll with multiple options and an optional time limit. Votes are counted directly from the blockchain on a last-vote-wins basis, so the tally is verifiable by anyone. Closed polls surface their final results.
-- **Community notes** — X-style reader context. Anyone can attach a note to a post; readers rate notes *helpful* / *not helpful*, and a note graduates to a public "Readers added context" card once it passes the net-helpfulness threshold.
-- **Real engagement counts** derived from chain data, not from a private server.
+- **Likes, bookmarks, follows, and tips**, all on-chain. Tip any author in PLS with one tap (💎); a profile shows how many tips and how much PLS it has received.
+- **On-chain polls** with optional time limits, tallied verifiably from the chain.
+- **Community notes** — X-style reader context that graduates to a public card once it passes a net-helpfulness threshold.
 
 ### Discovery
-- **For You and Following feeds** to switch between the whole network and the accounts you follow. The Following feed shows each followed account's own posts wherever they posted them — main timeline, their channel, token channels, or replies — fetched efficiently per-account so even accounts buried under heavy incoming engagement surface correctly.
-- **Explore** and a **trending** panel that highlights active hashtags on the network.
-- **Search** people (by display name **or** address), hashtags, and full post text. Paste a complete **0x address** for a direct jump to that account's **profile** or **channel**, or paste a **transaction hash** to open that post as a thread — Enter jumps straight there.
-- **Profile hovercards** — hover any name or avatar (in the feed, followers lists, or the who-to-follow panel) for a quick profile preview without leaving the page.
-- **Today's News** and **Latest Polls** side panels surfacing the most active recent content.
-- **Who to follow** suggestions derived from active accounts in your current feed.
+- **For You and Following feeds.** The Following feed shows each followed account's own posts wherever they posted, fetched efficiently so even busy accounts surface correctly.
+- **Explore**, X-style: a "Happening now" hero, trending terms, and a Latest preview.
+- **Search** people (by name **or** address), hashtags, and full post text — paste a **0x address** to jump to a profile/channel, or a **transaction hash** to open that post; Enter jumps straight there.
+- **Profile hovercards**, **Today's News**, **Latest Polls**, and **Who to follow** panels.
 
-### Channels
-A **channel** is simply an address you post *to*. The default channel is the main public timeline; every wallet, contract, or token address is its own channel.
+### Live Spaces (experimental)
+- **Serverless audio rooms.** Announce a Space on-chain; the audio is a direct peer-to-peer WebRTC mesh between participants — no server, no accounts. Best with a small group (~8 speakers) in this first phase. (More → 🎙 Start a Space.)
 
-- A redesigned **Channels** page: a tabbed inbox of every channel you touch — **All**, **Unread**, and **Following**.
-- Quick-access rows pinned at the top: **Main Feed**, **Your inbox** (posts addressed *to you*), and the **Say It DeFi Channel** (official updates).
-- **Unread indicators** — channels with new activity since you last opened them are flagged; "mark all read" clears them.
-- Open any address as a channel from the search bar or the channel input; your visited channels build up automatically.
+### Channels, lists & organization
+- A **channel** is any address you post *to* — the main timeline, any wallet, or any **token contract** (which auto-shows the token's logo/name/socials, and lets the deployer/owner publish a verified profile).
+- **Lists** and **Communities**, optionally **published on-chain** as a portable snapshot.
+- **Bookmarks**, **mutes**, and a tabbed **Channels** inbox with unread indicators and post counts.
 
-### Token channels
-Every **token contract** is a channel where holders can talk about it — and it gets a real identity automatically:
-
-- **Auto-identity** — a token channel shows the token's **logo, name (SYMBOL), banner, website, and socials**, pulled from DexScreener, with a "Token" badge. No setup required.
-- **Verified profiles** — a token's **deployer** or current **`owner()`** can publish a profile for it ("Set token profile"), shown with a green **✓ Verified** badge. This lets projects claim and brand their channel, and because the profile is signed by the contract's on-chain deployer/owner, anyone can verify it's authentic. Tokens are detected and the editor appears only when *your* connected wallet is the deployer/owner.
-
-### Organization
-- **Lists** — group accounts into named lists and view a combined feed of just those members.
-- **Communities** — follow address-scoped community channels.
-- **Hybrid on-chain sync** — Lists and Communities work instantly and locally by default, and can be **published on-chain** as a single snapshot transaction so they travel with you across devices and are publicly portable. A matching **restore** reads your latest snapshot back. Returning on a fresh device auto-restores them in the background.
-- **Bookmarks** — save posts to revisit later.
-- **Analytics** (More → Analytics) — local network stats computed from your own cached slice of the chain: posts per day, most active authors, trending terms, and totals. No server, no tracking.
-
-### Notifications
-- A unified notifications view with **All / Mentions / Likes** tabs.
-- Alerts for likes, follows, replies, reposts — plus **poll notifications**: get notified when someone votes on a poll you created and when one of your polls ends.
-- A live unread badge (title + favicon) for quick activity, with full poll-activity scanning when you open the notifications page.
-
-### Profiles
-- Editable **display name, bio, avatar, banner, website, and location**, all stored on-chain.
-- An **on-chain "verified"** check appears next to any account that has published a profile — free, gatekeeper-free proof of identity.
-- Tabbed profile view: **Posts, Replies, Media, Likes** (plus **Highlights** and **Articles**, coming soon).
-- **Follower and following** lists, counted by scanning the chain, with hover previews.
+### Notifications & profiles
+- Unified **All / Mentions / Likes** notifications, including likes, replies, reposts, follows, poll activity, and **tips**.
+- Editable on-chain profiles with a free **"verified" check** for any account that has published one; tabbed **Posts / Replies / Media** (Media includes images **and** video).
 
 ### Experience
-- **Progressive Web App** — installable to your home screen or desktop, with a service worker for fast loads and offline-aware behavior.
-- **Virtualized feed** that recycles DOM nodes, so even very long timelines stay smooth.
-- **Real links** — nav items, channels, and profiles are proper links, so **right-click / middle-click / ⌘-click open them in a new tab** like any website; plain clicks route instantly in-app.
-- **Keyboard shortcuts** for power users — press <kbd>?</kbd> anywhere to see the full list (navigate with `j`/`k`, act with `l`/`r`/`t`/`b`, jump pages with `g` then a key, compose with `n`/`e`, search with `/`).
-- **Two-standard button system** (purple primary, outline secondary), centered responsive layout, **relative timestamps** that refresh themselves, sticky "new posts" indicators, focus-trapped modals, ARIA labelling, and other accessibility and polish touches throughout.
-- A first-visit **disclaimer** that explains the decentralized, non-custodial nature of the platform.
+- **Progressive Web App**, installable, offline-aware.
+- **Three themes** — Dark, Dim, and Light — applied before first paint.
+- **X-style two-pane Settings**, a virtualized feed, real links (⌘/middle-click open new tabs), keyboard shortcuts (press <kbd>?</kbd>), and **local-first deep sync** that archives the feed's full history into your browser for instant search, threads, and analytics — exportable as a portable snapshot.
 
 ---
 
 ## How it works
 
 ```
-Your wallet  ──signs──►  PulseChain transaction  ──contains──►  your post / action
-                                   │
-                                   ▼
-                        The blockchain (chain ID 369)
-                                   │
-        Say It DeFi reads it back ─┘  via a PulseChain block explorer API
-                                   │
-                                   ▼
-                        Rendered in your feed
+Your wallet ──signs──► PulseChain transaction ──contains──► your post / action
+                                  │
+                                  ▼
+                       The blockchain (chain ID 369)
+                                  │
+       Say It DeFi reads it back ─┘  via a configurable block-explorer API
+                                  │
+                                  ▼
+                          Rendered in your feed
 ```
 
-Every social action is a transaction whose input data carries a small, human-readable payload (for example, a post is plain text; a follow is a short tagged marker addressed to the followed account; a vote references a poll's transaction hash). The front-end scans the chain through a public block explorer API, decodes these payloads, and assembles them into feeds, threads, profiles, tallies, and notes. Reactions and engagement are computed the same way — by reading what's already on-chain.
-
-Nothing is stored on a private server. The only local storage is your own browser cache (for speed) and your personal preferences.
+Every social action is a transaction whose input data carries a small, human-readable payload. The front-end scans the chain through a public block-explorer API, decodes these payloads, and assembles them into feeds, threads, profiles, tallies, and notes — computing reactions and engagement the same way. Nothing is stored on a private server; the only local storage is your own browser cache and preferences.
 
 - **Network:** PulseChain (chain ID **369**)
-- **Default channel:** a fixed on-chain address that serves as the main public timeline
-- **Data source:** a configurable PulseChain block explorer API (defaults to the public PulseScan endpoint), with an optional backup endpoint for resilience. Token identity is read from DexScreener; contract deployer/owner lookups use the explorer and a public RPC.
+- **Data source:** a configurable block-explorer API (defaults to PulseScan) with an optional backup endpoint. Token identity is read from DexScreener; contract owner lookups use a public RPC.
 
 ---
 
 ## The on-chain protocol
 
-Want to build your own client, bot, or analytics on the same network? Everything is just a transaction sent **to a channel address** with a UTF-8 payload in the `input` field. The payload's prefix determines its type:
+Everything is a transaction sent **to a channel/recipient address** with a UTF-8 payload in the `input` field. The prefix determines its type:
 
 | Prefix | Meaning |
 |---|---|
@@ -129,28 +114,22 @@ Want to build your own client, bot, or analytics on the same network? Everything
 | `LIKE:0x<txhash>` / `UNLIKE:0x<txhash>` | Like / unlike (last action wins) |
 | `BOOKMARK:0x<txhash>` / `UNBOOKMARK:` | Private bookmark (sent to self) |
 | `FOLLOW:0x<addr>` / `UNFOLLOW:0x<addr>` | Follow / unfollow (sent to the target) |
+| `TIP:0x<txhash>` | Tip the post's author — the tx **value** is the tip (PLS) |
 | `PROFILE_DATA:{json}` | Your own profile (sent to self) |
-| `PROFILE_FOR:0x<token>\n\n{json}` | A token's profile — honored only from the token's deployer or current `owner()` |
+| `PROFILE_FOR:0x<token>\n\n{json}` | A token's profile — honored only from its deployer/`owner()` |
 | `POLL:{json}\n\n<question>` | A poll |
 | `VOTE:0x<pollhash>:<optionIndex>` | A poll vote (last vote wins) |
 | `NOTE:0x<posthash>\n\n<text>` | A community note on a post |
 | `NOTERATE:0x<notehash>:h\|n` | Rate a note helpful / not (last rating wins) |
+| `SPACE:{json}\n\n<title>` | A live audio Space announcement |
 
-Likes, follows, votes, notes, etc. are derived by scanning and applying these in chain order, so any client computes the same state.
+Likes, follows, votes, tips, etc. are derived by scanning and applying these in chain order, so any client computes the same state.
 
 ---
 
 ## Running it
 
-This is a single self-contained front-end. There is no build step and no backend to deploy.
-
-1. Serve the files (`index.html` and `sw.js`) from any static host — GitHub Pages, IPFS, or any web server. (For the service worker / PWA features, it must be served over HTTP(S), not opened as a `file://`.)
-2. Open the site in a browser with a Web3 wallet (such as one supporting PulseChain).
-3. Connect your wallet, make sure it's on PulseChain (chain ID 369), and start posting.
-
-To read the timeline you don't even need a wallet — connect one only when you want to post or interact.
-
-Locally:
+No build step, no backend.
 
 ```bash
 cd SayIt
@@ -158,49 +137,33 @@ python3 -m http.server 8080
 # then open http://localhost:8080
 ```
 
-### Configuration
+Serve over HTTP(S) (not `file://`) so the service worker works. Open in a browser with a Web3 wallet on PulseChain (chain ID 369). You don't need a wallet to read — only to post or interact. Deploy by serving the static files from any host (GitHub Pages, IPFS, your own server).
 
-Most settings are adjustable in-app under **Settings**, including:
-
-- The block explorer **API endpoint** (and an optional backup endpoint).
-- **Scan depth** — how many pages of chain history to read when building feeds and follower lists (set to unlimited for the deepest history, at the cost of slower scans).
-- **Feed post cap** and local cache pruning, plus buttons to clear the post cache, channel history, and offline queue.
-- **Deep sync** — opt-in, resumable archive of the main feed's full history into your browser; search, threads, and analytics then work from your complete local copy. Export the archive as a **posts snapshot** to share or restore on another device (imports are strictly validated).
-- **Themes** — Dark, Dim, and Light, applied before first paint.
-- **Export / Import** your settings, mutes, lists and communities as a JSON backup — and a one-click **Reset to defaults** for all settings.
-
----
-
-## Privacy, permanence, and responsibility
-
-Say It DeFi is a front-end to a public, permissionless network. Please understand:
-
-- Everything you post is **public, permanent, and immutable**. Once a post is on-chain, no one — including the operators of this interface — can edit or remove it.
-- This interface does **not** host, store, moderate, or control any content. It only reads and displays what already exists on the blockchain.
-- **You are responsible** for your wallet, your keys, and everything you post. On-chain transactions cost gas and cannot be reversed.
-- Nothing in the app is financial, legal, or investment advice.
-
-By using the interface, you acknowledge that the creators and operators are not liable for content posted or actions taken on the underlying decentralized network.
-
-### Privacy
-
-This interface sets **no cookies** and uses **no analytics, telemetry, or tracking services** of any kind. The in-app Analytics page is computed entirely inside your browser from your own local cache — nothing is sent anywhere. All stored data (post cache, settings, archives) lives in your browser only and can be wiped from Settings at any time. As with any website, your IP address is technically visible to the infrastructure that serves bytes to you: the static host, the block-explorer API endpoint **you** configure, and the hosts of media **you** choose to view — none of which is operated by, or reports to, this project. Embedded YouTube/Vimeo previews are disabled by default; nothing contacts those services until you explicitly tap a video card.
-
-### Original, independent software
-
-This application was **built from scratch** as free, open-source software. It is not affiliated with, endorsed by, or derived from any other platform or company. Any resemblance to other social applications is purely coincidental and limited to familiar user-interface conventions (timelines, replies, reposts) that are common across the industry. The entire source code is public in this repository — it may be freely inspected, shared, forked, and built upon.
+Most settings are adjustable in-app under **Settings** (two-pane, X-style): block-explorer endpoint, scan depth, feed/media controls, privacy, deep-sync archive + snapshot export/import, and a one-click reset.
 
 ---
 
 ## Tech notes
 
-- **Single-file front-end** — the entire application is one `index.html` (HTML, CSS, and JavaScript inlined), paired with a service worker (`sw.js`) for PWA caching. No frameworks, no bundler, no build pipeline. The only runtime dependency is **ethers.js v6**, loaded from a CDN with a pinned version and SRI integrity hash.
-- **Wallet & chain access** via ethers.js and the browser's injected Web3 provider; read-only contract calls (e.g. token `owner()`) use a public PulseChain RPC.
-- **Trust but verify** — the explorer API is treated as an input, not an oracle: every transaction it returns is shape-validated at ingestion before anything touches a render path, and a Content-Security-Policy restricts what the page can load and where scripts may come from.
-- **Local cache** in IndexedDB (posts, profiles, channels, search index, offline queue) keeps the timeline fast and reduces redundant chain reads.
-- **Resilient reads** — the chain-scanning layer retries with backoff and can fail over to a backup explorer endpoint; storage and external lookups (DexScreener, RPC) degrade gracefully when unavailable.
-- **Tested in CI** — every push runs syntax checks, ESLint, protocol unit tests (every payload prefix incl. malformed and adversarial shapes), and a headless-Chromium boot smoke test that fails the build if the app doesn't start.
-- **Deploys** are just a push to the static host. After changing `index.html`, bump `SW_CACHE_VER` so the service worker invalidates its cache on the next load.
+- **Three-file front-end** — `index.html` (HTML + CSS), `app.js` (all application JavaScript), and `sw.js` (service worker for PWA caching), plus a tiny `boot.js` pre-paint theme script. No framework, no bundler, no build pipeline. The only runtime dependency is **ethers.js v6**, pinned with an SRI integrity hash.
+- **Trust but verify** — the explorer API is treated as an input, not an oracle: every transaction it returns is shape-validated at ingestion before anything touches a render path. A strict CSP, sink-level escaping, and delegated (never inline) event handlers form a layered defense.
+- **Local cache** in IndexedDB (posts, profiles, channels, search index, likes archive, offline queue) keeps the timeline fast; deep sync can archive full history locally.
+- **Resilient** — chain reads retry with backoff and fail over to a backup endpoint; external lookups degrade gracefully.
+- **Tested** — every push runs syntax checks, ESLint, protocol unit tests, and a headless-Chromium boot smoke test; a nightly job smokes the live site, and `.ci/regression.py` is a 16-check behavioral gate for releases.
+- **Deploys** are a push to the static host. After editing `index.html`/`app.js`, bump `SW_CACHE_VER` (CI enforces this).
+
+---
+
+## Privacy, permanence, and responsibility
+
+- Everything you post is **public, permanent, and immutable**. No one — including the operators of this interface — can edit or remove an on-chain post.
+- This interface does **not** host, store, moderate, or control any content. It only reads and displays what already exists on the blockchain.
+- **You are responsible** for your wallet, your keys, and everything you post. On-chain transactions cost gas and cannot be reversed.
+- Nothing in the app is financial, legal, or investment advice.
+
+### Original, independent software
+
+This application was **built from scratch** as free, open-source software. It is not affiliated with, endorsed by, or derived from any other platform or company. Any resemblance to other social applications is purely coincidental and limited to familiar user-interface conventions (timelines, replies, reposts) common across the industry. The entire source code is public in this repository — it may be freely inspected, shared, forked, and built upon.
 
 ---
 
