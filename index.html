@@ -2193,18 +2193,24 @@ body.mode-settings #mobile-fab { display:none; }
 }
 @keyframes livePulse { 0%,100%{opacity:1} 50%{opacity:.3} }
 @media (prefers-reduced-motion: reduce) { .live-dot { animation:none; } }
-/* Right-column Live module */
+/* Right-column Live module — avatar | flexible text column | fixed button,
+   all vertically centered (X-style). The text column flexes and ellipsizes;
+   the button never wraps or overflows the row. */
 .sb-live-row { display:flex; align-items:center; gap:10px; padding:10px 0; }
 .sb-live-row + .sb-live-row { border-top:1px solid var(--border); }
 .sb-live-pic { width:36px; height:36px; border-radius:50%; object-fit:cover; flex:0 0 auto; }
-.sb-live-info { flex:1; min-width:0; }
+.sb-live-info { flex:1 1 auto; min-width:0; }
 .sb-live-title {
+  display:flex; align-items:center; gap:6px;
   font-size:14px; font-weight:800; color:var(--text);
-  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  overflow:hidden; white-space:nowrap;
 }
+.sb-live-title .live-dot { margin-right:0; flex:0 0 auto; }
+.sb-live-title-text { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .sb-live-meta { font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .sb-live-btn {
-  flex:0 0 auto; border:none; border-radius:9999px; padding:7px 14px; cursor:pointer;
+  flex:0 0 auto; white-space:nowrap; border:none; border-radius:9999px;
+  padding:7px 14px; cursor:pointer;
   font-size:13px; font-weight:800; color:#fff;
   background:linear-gradient(120deg, #7c4dff, #ff3cac);
 }
@@ -2225,6 +2231,112 @@ body.mode-settings #mobile-fab { display:none; }
 }
 .space-chip-btn:hover { opacity:1; }
 .space-room-note { font-size:12px; color:var(--muted); margin-top:12px; line-height:1.5; }
+
+/* ── Live Space dock (X-style bottom-right player) ────────────────────────
+   z-index 499 = one below the generic modal overlay (.modal-bg = 500), so
+   the preview/tip modals always layer above the dock. */
+.space-dock {
+  position:fixed; right:18px; bottom:18px; z-index:499;
+  background:var(--bg-mid); border:1px solid var(--primary-dim);
+  border-radius:16px; box-shadow:0 12px 40px rgba(0,0,0,0.45);
+  color:var(--text); overflow:hidden;
+}
+/* Collapsed: compact pill bar. */
+.space-dock.collapsed {
+  width:300px; display:flex; align-items:center; gap:10px;
+  padding:9px 12px; cursor:pointer;
+}
+.space-dock-bar-title {
+  flex:1; min-width:0; font-size:13px; font-weight:800;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.space-dock-bar-avs { display:flex; flex:0 0 auto; }
+.space-dock-bar-avs img {
+  width:22px; height:22px; border-radius:50%; object-fit:cover;
+  border:2px solid var(--bg-mid); margin-left:-7px; background:var(--bg-card);
+}
+.space-dock-bar-avs img:first-child { margin-left:0; }
+.space-dock-leave-mini {
+  flex:0 0 auto; background:none; border:none; color:var(--primary-lt);
+  font-size:12px; font-weight:800; cursor:pointer; padding:2px 4px;
+}
+.space-dock-leave-mini:hover { text-decoration:underline; }
+/* Expanded: full panel. */
+.space-dock.expanded {
+  width:380px; max-height:70vh; display:flex; flex-direction:column;
+}
+.space-dock-head {
+  display:flex; align-items:center; gap:8px; padding:12px 14px;
+  border-bottom:1px solid var(--border); flex:0 0 auto;
+  background:linear-gradient(120deg, rgba(124,77,255,0.22), rgba(255,60,172,0.14));
+}
+.space-dock-head-title {
+  flex:1; min-width:0; font-size:15px; font-weight:800;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.space-dock-toggle {
+  flex:0 0 auto; background:none; border:none; color:var(--muted);
+  font-size:18px; cursor:pointer; width:30px; height:30px; border-radius:50%;
+  display:flex; align-items:center; justify-content:center; line-height:1;
+}
+.space-dock-toggle:hover { background:var(--bg-card); color:var(--text); }
+.space-dock-body { display:flex; flex-direction:column; min-height:0; flex:1; overflow:hidden; }
+/* Messages nest at the TOP. */
+.space-dock-msgs {
+  flex:1; min-height:120px; overflow-y:auto; padding:10px 14px;
+  display:flex; flex-direction:column; gap:10px;
+}
+.space-dock-msg { display:flex; gap:8px; align-items:flex-start; }
+.space-dock-msg img { width:24px; height:24px; border-radius:50%; object-fit:cover; flex:0 0 auto; }
+.space-dock-msg-body { min-width:0; flex:1; }
+.space-dock-msg-name { font-size:12px; font-weight:800; }
+.space-dock-msg-time { font-size:11px; color:var(--muted); font-weight:600; margin-left:6px; }
+.space-dock-msg-text { font-size:13px; color:var(--text); word-break:break-word; white-space:pre-wrap; }
+.space-dock-msgs-empty { font-size:12px; color:var(--muted); text-align:center; padding:14px 0; }
+.space-dock-composer { display:flex; gap:8px; padding:8px 12px; border-top:1px solid var(--border); flex:0 0 auto; }
+#space-msg-input {
+  flex:1; min-width:0; background:var(--bg-card); border:1px solid var(--border);
+  border-radius:9999px; padding:8px 12px; color:var(--text); font-size:13px;
+}
+#space-msg-send {
+  flex:0 0 auto; border:none; border-radius:9999px; padding:8px 16px; cursor:pointer;
+  font-size:13px; font-weight:800; color:#fff; background:linear-gradient(120deg,#7c4dff,#ff3cac);
+}
+#space-msg-send:disabled { opacity:0.6; cursor:default; }
+/* Participants grid. */
+.space-peers {
+  display:flex; flex-wrap:wrap; gap:6px; padding:10px 12px;
+  border-top:1px solid var(--border); max-height:180px; overflow-y:auto;
+  align-content:flex-start; align-items:flex-start; margin-top:0; min-height:0;
+}
+.space-tile { width:64px; flex:0 0 auto; display:flex; flex-direction:column; align-items:center; gap:2px; }
+.space-tile-av { position:relative; width:44px; height:44px; }
+.space-tile-av img { width:44px; height:44px; border-radius:50%; object-fit:cover; display:block; }
+.space-tile-av.speaking::after {
+  content:''; position:absolute; inset:-3px; border-radius:50%;
+  box-shadow:0 0 0 3px #7c4dff; animation:spkPulse 1s ease-in-out infinite;
+}
+@keyframes spkPulse { 0%,100%{box-shadow:0 0 0 3px #7c4dff} 50%{box-shadow:0 0 0 3px rgba(124,77,255,0.35)} }
+@media (prefers-reduced-motion: reduce) { .space-tile-av.speaking::after { animation:none; } }
+.space-tile-name { font-size:11px; font-weight:700; max-width:64px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:center; }
+.space-tile-role { font-size:9px; font-weight:800; text-transform:uppercase; letter-spacing:0.3px; color:var(--primary-lt); }
+.space-tile-btns { display:flex; gap:2px; }
+.space-tile-extra { width:100%; flex-basis:100%; font-size:12px; color:var(--muted); padding:2px 2px 0; }
+.space-dock-status { font-size:12px; color:var(--primary-lt); padding:6px 14px 0; flex:0 0 auto; }
+.space-dock-note { font-size:11px; color:var(--muted); padding:4px 14px 0; line-height:1.45; flex:0 0 auto; }
+.space-dock-foot {
+  display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end;
+  padding:10px 12px 12px; border-top:1px solid var(--border); flex:0 0 auto;
+}
+.space-dock-foot .settings-btn { padding:6px 12px; font-size:13px; }
+/* Mobile: expanded becomes a bottom sheet; collapsed sits above the bottom nav. */
+@media (max-width:700px) {
+  .space-dock.expanded {
+    left:0; right:0; bottom:0; width:auto; max-height:75vh;
+    border-radius:16px 16px 0 0;
+  }
+  .space-dock.collapsed { right:12px; left:12px; bottom:70px; width:auto; }
+}
 .space-strip {
   margin-top:8px; padding:8px 12px; border-radius:10px; font-size:12px; font-weight:800; color:#ff6e6e;
   background:linear-gradient(120deg, rgba(124,77,255,0.25), rgba(255,60,172,0.18));
@@ -2292,8 +2404,14 @@ body.mode-settings #mobile-fab { display:none; }
    The parent block draws the connector from its avatar down through the
    block gap to the reply's avatar. */
 .feed-parent-item { position:relative; cursor:pointer; padding-bottom:6px; }
+/* The parent post HTML is injected directly inside .feed-parent-item (no
+   .post-item wrapper → its 16px padding does NOT apply here), so the avatar
+   sits at the item's left edge: measured center-x = 20px from the left, hence
+   left:19px (center − 1) to center the 2px line under the 40px avatar. top
+   starts just below the avatar (bottom ≈ 40px + 4px); bottom extends into the
+   gap so the line visually reaches the reply's avatar below. */
 .feed-parent-item::after {
-  content:''; position:absolute; left:35px; top:58px; bottom:-14px;
+  content:''; position:absolute; left:19px; top:44px; bottom:-14px;
   width:2px; background:var(--border);
 }
 .feed-parent-item.feed-parent-missing {
@@ -2776,7 +2894,7 @@ html.force-reduce-motion *, html.force-reduce-motion *::before, html.force-reduc
     <!-- Live on Say It — live Spaces, first content card (X puts its
          live module straight under search). Hidden until something is live. -->
     <div class="sb-card" id="sb-live-card" style="display:none">
-      <div class="sb-card-title">Live on Say It</div>
+      <div class="sb-card-title">Live on Say It DeFi</div>
       <div id="sb-live-list"><!-- populated by renderLiveSpaces() --></div>
     </div>
 
@@ -3139,6 +3257,10 @@ html.force-reduce-motion *, html.force-reduce-motion *::before, html.force-reduc
 
 <!-- Profile popup card — appears on click of post-name/post-avatar -->
 <div class="profile-popup" id="profile-popup" role="dialog" aria-label="Profile preview"></div>
+
+<!-- Live Space dock — X-style bottom-right player. Lives outside #feed so
+     feed re-renders never tear it down; collapsed/expanded toggled by class. -->
+<div id="space-dock" class="space-dock collapsed" style="display:none" role="dialog" aria-label="Live Space"></div>
 
 <!-- Classic scripts share the global lexical scope: core.js (constants,
      utils, SpaceRTC) and cache.js (IndexedDB Cache) load before app.js. -->
