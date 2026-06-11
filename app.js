@@ -6,7 +6,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260611-149';
+const SW_CACHE_VER = '20260611-150';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -939,23 +939,33 @@ class SpaceRTC {
   ];
   static ICE = { iceServers: [{ urls: 'stun:stun.cloudflare.com:3478' }] };
 
-  constructor(roomId, micStream, { onStatus, onPeers, onCtl, onPeerGone } = {}) {
-    /* info_hash must be exactly 20 bytes; roomId is 16 bytes hex → pad. */
+  constructor(roomId, micStream, { role, host, onStatus, onPeers, onCtl, onPeerGone, onListeners } = {}) {
+    /* info_hash must be exactly 20 bytes; roomId is 16 bytes hex → pad.
+       Speakers mesh on the main hash; listeners meet the host on a second
+       hash (LIST pad) where the host fans out one mixed stream each. */
     this.hash = SpaceRTC.roomHash(roomId);
+    this.listHash = SpaceRTC.listenerHash(roomId);
+    this.role = role === 'listener' ? 'listener' : 'speaker';
+    this.isHost = !!host;
     this.peerId = [...crypto.getRandomValues(new Uint8Array(20))]
       .map(b => b.toString(16).padStart(2, '0')).join('');
-    this.mic = micStream;
+    this.mic = micStream || null; /* listeners have no mic */
     this.onStatus = onStatus || (() => {});
     this.onPeers = onPeers || (() => {});
     this.onCtl = onCtl || (() => {});         /* (label, msg) — control message from a peer */
     this.onPeerGone = onPeerGone || (() => {});
+    this.onListeners = onListeners || (() => {}); /* host: live listener count */
     this.identity = null;                     /* {addr,name,ts,sig} sent on ctl open */
     this.sockets = [];
-    this.pcs = new Map();      /* remote peer_id → RTCPeerConnection */
-    this.audioEls = new Map(); /* remote peer_id → <audio> */
-    this.offers = new Map();   /* offer_id → RTCPeerConnection (ours, awaiting answer) */
+    this.pcs = new Map();       /* speaker mesh: remote peer_id → RTCPeerConnection */
+    this.listeners = new Map(); /* host only: 'L:'+peer_id → RTCPeerConnection */
+    this.audioEls = new Map();  /* label → <audio> */
+    this.offers = new Map();    /* offer_id → RTCPeerConnection (ours, awaiting answer) */
+    this.connectedToHost = false; /* listener: stop offering once the host answered */
     this.destroyed = false;
   }
+
+  static LISTENER_CAP = 40; /* host upload ceiling for mixed-stream fan-out */
 
   /* 20-byte strings, binary-safe for the tracker JSON protocol. */
   static bin(hex) {
@@ -972,6 +982,11 @@ class SpaceRTC {
     return (roomId + '00000000').slice(0, 40);
   }
 
+  /* Listener-tier hash: same room, 'LIST' pad. */
+  static listenerHash(roomId) {
+    return (roomId + '4c495354').slice(0, 40);
+  }
+
   /* Passive room liveness — ask the trackers how many peers are announced
      on each room's info_hash WITHOUT joining. Powers the "N here now"
      counts and empty-room ended detection on Space cards. Privacy: one
@@ -985,7 +1000,14 @@ class SpaceRTC {
      only sees the peers that reached it, so the max is the best estimate.
      Returns Map<roomId, peerCount> or null if no tracker answered. */
   static async probe(roomIds) {
-    const byHash = new Map(roomIds.map(r => [SpaceRTC.roomHash(r), r]));
+    /* Count both tiers: speakers (main hash, everyone left:0) plus
+       listeners (list hash, complete only — the host parks there with
+       left:1 so it lands in `incomplete` and isn't double-counted). */
+    const byHash = new Map();
+    roomIds.forEach(r => {
+      byHash.set(SpaceRTC.roomHash(r), { r, tier: 'main' });
+      byHash.set(SpaceRTC.listenerHash(r), { r, tier: 'list' });
+    });
     const tryTracker = url => new Promise((resolve, reject) => {
       let ws;
       try { ws = new WebSocket(url); } catch { reject(new Error('dial')); return; }
@@ -993,6 +1015,7 @@ class SpaceRTC {
       const timer = setTimeout(fail, 5000);
       ws.onerror = fail;
       const out = new Map();
+      const announcedSeen = new Set();
       let announced = 0;
       ws.onopen = () => ws.send(JSON.stringify({
         action: 'scrape', info_hash: [...byHash.keys()].map(h => SpaceRTC.bin(h)),
@@ -1000,20 +1023,28 @@ class SpaceRTC {
       ws.onmessage = e => {
         let msg;
         try { msg = JSON.parse(e.data); } catch { return; }
+        const tally = (entry, complete, incomplete, probeSelf) => {
+          /* main tier: everyone counts; list tier: complete only (host is
+             incomplete there). The throwaway announce-probe registers
+             itself as complete — subtract it. */
+          const n = entry.tier === 'main'
+            ? complete + incomplete - probeSelf
+            : complete - probeSelf;
+          out.set(entry.r, (out.get(entry.r) || 0) + Math.max(0, n));
+        };
         if (msg.action === 'scrape' && msg.files) {
           clearTimeout(timer);
           for (const [binHash, st] of Object.entries(msg.files)) {
-            const roomId = byHash.get(SpaceRTC.unbin(binHash));
-            if (roomId) out.set(roomId, (Number(st?.complete) || 0) + (Number(st?.incomplete) || 0));
+            const entry = byHash.get(SpaceRTC.unbin(binHash));
+            if (entry) tally(entry, Number(st?.complete) || 0, Number(st?.incomplete) || 0, 0);
           }
           try { ws.close(); } catch { /* done */ }
           resolve(out);
         } else if (msg.action === 'announce' && msg.info_hash && msg.complete !== undefined) {
-          /* announce-probe reply: count includes the probe itself */
-          const roomId = byHash.get(SpaceRTC.unbin(msg.info_hash));
-          if (roomId) out.set(roomId, Math.max(0,
-            (Number(msg.complete) || 0) + (Number(msg.incomplete) || 0) - 1));
-          if (out.size >= announced) {
+          const entry = byHash.get(SpaceRTC.unbin(msg.info_hash));
+          if (entry) tally(entry, Number(msg.complete) || 0, Number(msg.incomplete) || 0, 1);
+          announcedSeen.add(SpaceRTC.unbin(msg.info_hash));
+          if (announcedSeen.size >= announced) {
             clearTimeout(timer);
             try { ws.close(); } catch { /* done — closing also deregisters the probes */ }
             resolve(out);
@@ -1047,11 +1078,21 @@ class SpaceRTC {
   start() {
     this.onStatus('Connecting to signaling…');
     this._open = new Set();
+    if (this.isHost) this._mixedStream(); /* ready before the first listener offer */
     SpaceRTC.TRACKERS.forEach(url => this._dial(url, 0));
     /* re-announce periodically so late joiners find us */
     this._interval = setInterval(() => {
       this.sockets.forEach(ws => { if (ws.readyState === 1) this._announce(ws); });
     }, 50000);
+    /* Listener offers reach the host probabilistically (the tracker hands
+       each offer to a random peer on the hash), so retry briskly until the
+       host answers. */
+    if (this.role === 'listener') {
+      this._listInterval = setInterval(() => {
+        if (this.connectedToHost) { clearInterval(this._listInterval); return; }
+        this.sockets.forEach(ws => { if (ws.readyState === 1) this._announce(ws); });
+      }, 9000);
+    }
     setTimeout(() => {
       if (!this.destroyed && this._open.size === 0) this.onStatus('✗ No signaling tracker reachable — try again later');
     }, 8000);
@@ -1084,17 +1125,21 @@ class SpaceRTC {
     };
   }
 
-  async _newPC(remoteLabel, isOfferer) {
+  async _newPC(remoteLabel, { offerer, recvonly, sendStream } = {}) {
     const pc = new RTCPeerConnection(SpaceRTC.ICE);
     /* The label is LIVE: a PC we created for an offer ('offer:<id>') is
        re-labeled to the remote's real peer_id when answered. Handlers read
        pc._label at fire time so audio elements and drops stay keyed
        consistently (fixed: drops used to miss the re-keyed audio el). */
     pc._label = remoteLabel;
-    this.mic.getTracks().forEach(t => pc.addTrack(t, this.mic));
+    if (recvonly || !this.mic) {
+      if (!sendStream) pc.addTransceiver('audio', { direction: 'recvonly' });
+    }
+    if (sendStream) sendStream.getTracks().forEach(t => pc.addTrack(t, sendStream));
+    else if (this.mic && !recvonly) this.mic.getTracks().forEach(t => pc.addTrack(t, this.mic));
     /* Per-peer 'ctl' data channel: identity claims + host controls. The
        offerer creates it; the answerer receives it via ondatachannel. */
-    if (isOfferer) this._wireCtl(pc, pc.createDataChannel('ctl'));
+    if (offerer) this._wireCtl(pc, pc.createDataChannel('ctl'));
     pc.ondatachannel = ev => { if (ev.channel.label === 'ctl') this._wireCtl(pc, ev.channel); };
     pc.ontrack = ev => {
       const label = pc._label;
@@ -1107,6 +1152,10 @@ class SpaceRTC {
         this.audioEls.set(label, el);
       }
       el.srcObject = ev.streams[0] || new MediaStream([ev.track]);
+      /* Host: feed every speaker's audio into the listener mix. (The
+         stream must also be playing in an <audio> el — it is, above — or
+         Chrome's WebAudio taps silence from remote streams.) */
+      if (this.isHost) this._mixAdd(pc._label, el.srcObject);
       this._peersChanged();
     };
     pc.onconnectionstatechange = () => {
@@ -1136,9 +1185,16 @@ class SpaceRTC {
     }
   }
 
-  broadcast(msg) { this.pcs.forEach(pc => this._ctlSend(pc._ctl, msg)); }
+  broadcast(msg) {
+    this.pcs.forEach(pc => this._ctlSend(pc._ctl, msg));
+    this.listeners.forEach(pc => this._ctlSend(pc._ctl, msg));
+  }
 
-  sendTo(label, msg) { this._ctlSend(this.pcs.get(label)?._ctl, msg); }
+  broadcastListeners(msg) { this.listeners.forEach(pc => this._ctlSend(pc._ctl, msg)); }
+
+  sendTo(label, msg) {
+    this._ctlSend((this.pcs.get(label) || this.listeners.get(label))?._ctl, msg);
+  }
 
   _gathered(pc) {
     return new Promise(res => {
@@ -1151,22 +1207,43 @@ class SpaceRTC {
   }
 
   async _announce(ws) {
-    /* Attach a few fresh offers for unknown peers to answer. */
+    if (this.role === 'listener') {
+      /* Listener: recvonly offers on the listener hash; once the host has
+         answered, keep announcing bare (stays in the live count). */
+      const offers = this.connectedToHost ? [] : await this._makeOffers(6, { recvonly: true, tier: 'list' });
+      this._send(ws, this.listHash, { left: 0, offers });
+      return;
+    }
+    /* Speaker: mesh offers on the main hash. */
+    const offers = await this._makeOffers(4, { tier: 'main' });
+    this._send(ws, this.hash, { left: 0, offers });
+    /* Host also sits on the listener hash (no offers — listeners offer to
+       us) with left:1 so probes can tell host (incomplete) from listeners
+       (complete) and count rooms cleanly. */
+    if (this.isHost) this._send(ws, this.listHash, { left: 1, offers: [] });
+  }
+
+  _send(ws, hash, extra) {
+    if (ws.readyState !== 1 || this.destroyed) return;
+    ws.send(JSON.stringify({
+      action: 'announce', info_hash: SpaceRTC.bin(hash), peer_id: SpaceRTC.bin(this.peerId),
+      numwant: 8, uploaded: 0, downloaded: 0, event: 'started', ...extra,
+    }));
+  }
+
+  async _makeOffers(n, { recvonly, tier }) {
     const offers = [];
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < n; i++) {
       const id = [...crypto.getRandomValues(new Uint8Array(20))].map(b => b.toString(16).padStart(2, '0')).join('');
-      const pc = await this._newPC('offer:' + id, true);
+      const pc = await this._newPC('offer:' + id, { offerer: true, recvonly });
+      pc._tier = tier;
       const offer = await pc.createOffer({ offerToReceiveAudio: true });
       await pc.setLocalDescription(offer);
       await this._gathered(pc);
       this.offers.set(id, pc);
       offers.push({ offer_id: SpaceRTC.bin(id), offer: { type: 'offer', sdp: pc.localDescription.sdp } });
     }
-    if (ws.readyState !== 1 || this.destroyed) return;
-    ws.send(JSON.stringify({
-      action: 'announce', info_hash: SpaceRTC.bin(this.hash), peer_id: SpaceRTC.bin(this.peerId),
-      numwant: 8, uploaded: 0, downloaded: 0, left: 0, event: 'started', offers,
-    }));
+    return offers;
   }
 
   async _onMessage(ws, e) {
@@ -1183,6 +1260,14 @@ class SpaceRTC {
         this.offers.delete(id);
         pc._label = remote; /* re-key before media/ctl start flowing */
         this.pcs.set(remote, pc);
+        if (pc._tier === 'list') {
+          /* The host took one of our listener offers — stop offering and
+             retire the rest. */
+          this.connectedToHost = true;
+          for (const [oid, opc] of [...this.offers]) {
+            if (opc._tier === 'list') { this.offers.delete(oid); try { opc.close(); } catch { /* closing */ } }
+          }
+        }
         try { await pc.setRemoteDescription(msg.answer); } catch { this._dropPeer(remote); }
       }
       return;
@@ -1190,31 +1275,87 @@ class SpaceRTC {
     /* Someone offered to us — answer it. */
     if (msg.offer && msg.offer_id) {
       const remote = hex(msg.peer_id);
-      if (!remote || remote === this.peerId || this.pcs.has(remote)) return;
-      const pc = await this._newPC(remote);
+      if (!remote || remote === this.peerId) return;
+      const onList = hex(msg.info_hash) === this.listHash;
+      if (onList) {
+        /* Listener-tier offer: only the host answers, with the mixed
+           speaker audio attached (one stream per listener). */
+        if (!this.isHost || this.role === 'listener') return;
+        if (this.listeners.size >= SpaceRTC.LISTENER_CAP) return;
+        const label = 'L:' + remote;
+        if (this.listeners.has(label)) return;
+        const pc = await this._newPC(label, { sendStream: this._mixedStream() });
+        this.listeners.set(label, pc);
+        if (!(await this._answerVia(ws, pc, msg, this.listHash))) this._dropPeer(label);
+        else this.onListeners(this.listeners.size);
+        return;
+      }
+      if (this.role === 'listener' || this.pcs.has(remote)) return;
+      const pc = await this._newPC(remote, {});
       this.pcs.set(remote, pc);
-      try {
-        await pc.setRemoteDescription(msg.offer);
-        const ans = await pc.createAnswer();
-        await pc.setLocalDescription(ans);
-        await this._gathered(pc);
-        if (ws.readyState === 1) ws.send(JSON.stringify({
-          action: 'announce', info_hash: SpaceRTC.bin(this.hash), peer_id: SpaceRTC.bin(this.peerId),
-          to_peer_id: msg.peer_id, offer_id: msg.offer_id,
-          answer: { type: 'answer', sdp: pc.localDescription.sdp },
-        }));
-      } catch { this._dropPeer(remote); }
+      if (!(await this._answerVia(ws, pc, msg, this.hash))) this._dropPeer(remote);
     }
   }
 
+  async _answerVia(ws, pc, msg, hash) {
+    try {
+      await pc.setRemoteDescription(msg.offer);
+      const ans = await pc.createAnswer();
+      await pc.setLocalDescription(ans);
+      await this._gathered(pc);
+      if (ws.readyState === 1) ws.send(JSON.stringify({
+        action: 'announce', info_hash: SpaceRTC.bin(hash), peer_id: SpaceRTC.bin(this.peerId),
+        to_peer_id: msg.peer_id, offer_id: msg.offer_id,
+        answer: { type: 'answer', sdp: pc.localDescription.sdp },
+      }));
+      return true;
+    } catch { return false; }
+  }
+
   _dropPeer(label) {
-    const pc = this.pcs.get(label);
+    const isList = label.startsWith('L:');
+    const map = isList ? this.listeners : this.pcs;
+    const pc = map.get(label);
     if (pc) { try { pc.close(); } catch { /* already closed */ } }
-    const had = this.pcs.delete(label);
+    const had = map.delete(label);
     const el = this.audioEls.get(label);
     if (el) { el.remove(); this.audioEls.delete(label); }
+    this._mixRemove(label);
+    if (isList) { if (had) this.onListeners(this.listeners.size); return; }
     this._peersChanged();
     if (had) this.onPeerGone(label);
+  }
+
+  /* ── Host listener-tier mix: one WebAudio graph blending the host mic
+     with every speaker's stream; its output stream is what every listener
+     receives (so listener count doesn't multiply mesh traffic). */
+  _mixedStream() {
+    if (this._mixDest) return this._mixDest.stream;
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    this._mixCtx = new Ctx();
+    this._mixCtx.resume?.().catch(() => { /* resumes on first gesture */ });
+    this._mixDest = this._mixCtx.createMediaStreamDestination();
+    this._mixSrcs = new Map();
+    if (this.mic) {
+      const s = this._mixCtx.createMediaStreamSource(this.mic);
+      s.connect(this._mixDest);
+      this._mixSrcs.set('me', s);
+    }
+    return this._mixDest.stream;
+  }
+
+  _mixAdd(label, stream) {
+    if (!this._mixDest || this._mixSrcs.has(label) || label.startsWith('L:')) return;
+    try {
+      const s = this._mixCtx.createMediaStreamSource(stream);
+      s.connect(this._mixDest);
+      this._mixSrcs.set(label, s);
+    } catch { /* stream without audio track */ }
+  }
+
+  _mixRemove(label) {
+    const s = this._mixSrcs?.get(label);
+    if (s) { try { s.disconnect(); } catch { /* detached */ } this._mixSrcs.delete(label); }
   }
 
   _peersChanged() {
@@ -1232,11 +1373,15 @@ class SpaceRTC {
   destroy() {
     this.destroyed = true;
     clearInterval(this._interval);
+    clearInterval(this._listInterval);
     this._open?.clear();
     this.sockets.forEach(ws => { try { ws.close(); } catch { /* closing */ } });
     [...this.pcs.keys()].forEach(k => this._dropPeer(k));
+    [...this.listeners.keys()].forEach(k => this._dropPeer(k));
     this.offers.forEach(pc => { try { pc.close(); } catch { /* closing */ } });
     this.offers.clear();
+    this._mixCtx?.close().catch(() => { /* closing */ });
+    this._mixCtx = this._mixDest = this._mixSrcs = null;
     this.mic?.getTracks().forEach(t => t.stop());
   }
 }
@@ -10185,21 +10330,28 @@ class SayIt {
     };
   }
 
-  async joinSpace(post) {
+  /* Join a Space. X model: the host (Space author) joins as a speaker;
+     everyone else starts as a LISTENER — no mic permission, receive-only —
+     and can request the mic (host approves → rejoin as speaker). */
+  async joinSpace(post, role) {
     const sp = this._reviveSpace(post).space;
     if (!sp) return;
     if (this._spaceIsEnded(post)) { utils.toast('This Space has ended'); return; }
     if (this._spaceRoom) this.leaveSpace();
     const isHost = !!this.state.signerAddr && post.reporter === this.state.signerAddr;
+    role = role || (isHost ? 'speaker' : 'listener');
+    const asSpeaker = role === 'speaker';
     const body = `
       <div class="space-room">
         <div class="space-room-title">🎙 ${utils.safe(sp.title)}<span class="space-exp">experimental</span></div>
-        <div class="space-room-status" id="space-status">Requesting microphone…</div>
+        <div class="space-room-status" id="space-status">${asSpeaker ? 'Requesting microphone…' : 'Tuning in…'}</div>
         <div class="space-peers" id="space-peers"></div>
         <div class="space-room-note">Peer-to-peer audio: your IP is visible to other participants and to the
           STUN/tracker infrastructure during connection setup. Best with ≤8 speakers.</div>
-        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px">
-          <button class="settings-btn" id="space-mute">🎙 Mute</button>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px;flex-wrap:wrap">
+          ${asSpeaker ? '<button class="settings-btn" id="space-mute">🎙 Mute</button>'
+            : `<button class="settings-btn" id="space-req">🎙 Request to speak</button>
+               <button class="settings-btn" id="space-asspeaker" style="display:none">🎙 Join with mic</button>`}
           <button class="settings-btn" id="space-leave">Leave</button>
           ${isHost ? '<button class="settings-btn danger" id="space-end">End Space</button>' : ''}
         </div>
@@ -10207,29 +10359,54 @@ class SayIt {
     this._showGenericModal('Space', body);
     const status = () => this.g('space-status');
     try {
-      const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mic = asSpeaker ? await navigator.mediaDevices.getUserMedia({ audio: true }) : null;
       const room = new SpaceRTC(sp.roomId, mic, {
+        role, host: isHost,
         onStatus: t => { const el = status(); if (el) el.textContent = t; },
         onPeers: () => this._renderSpaceRoster(),
         onCtl: (label, msg) => this._onSpaceCtl(label, msg),
         onPeerGone: label => this._onSpacePeerGone(label),
+        onListeners: () => this._renderSpaceRoster(),
       });
       this._spaceRoom = room;
       this._spaceRoomPost = post;
+      this._spaceRole = role;
       this._spacePeers = new Map();   /* label → {addr, name, verified} */
       this._spaceCohosts = new Set(); /* lowercase addresses granted by the host */
+      this._spaceSpeakReqs = new Map(); /* host: label → {addr, name} */
+      this._spaceRosterInfo = null;     /* listener: host's room summary */
       this._spaceHostLabel = isHost ? 'me' : null;
       /* Identity: one free wallet signature proves who you are to the room
-         (that's what makes the Host chip unforgeable). Declining the
-         signature just joins you as a guest. */
-      room.identity = await this._spaceIdentity(sp.roomId, room.peerId);
+         (that's what makes the Host chip unforgeable). Declining it — or
+         listening — joins as a guest; listeners sign when requesting
+         the mic instead. */
+      if (asSpeaker) room.identity = await this._spaceIdentity(sp.roomId, room.peerId);
       room.start();
       this._renderSpaceRoster();
+      if (isHost) {
+        /* Periodic room summary so listeners (who only connect to the
+           host) still see who's speaking and how many are listening. */
+        this._spaceRosterTimer = setInterval(() => {
+          if (!this._spaceRoom) return;
+          this._spaceRoom.broadcastListeners({ t: 'roster', ...this._spaceRosterSummary() });
+        }, 10000);
+      }
       const muteBtn = this.g('space-mute');
       if (muteBtn) muteBtn.onclick = () => {
         const on = room.toggleMute();
         muteBtn.textContent = on ? '🔇 Unmute' : '🎙 Mute';
       };
+      const reqBtn = this.g('space-req');
+      if (reqBtn) reqBtn.onclick = async () => {
+        if (!this.signer) { utils.toast('Connect wallet to request the mic'); return; }
+        const claim = await this._spaceIdentity(sp.roomId, room.peerId);
+        if (!claim) return;
+        room.broadcast({ t: 'speak', ...claim });
+        reqBtn.disabled = true;
+        reqBtn.textContent = '✋ Requested…';
+      };
+      const asSpkBtn = this.g('space-asspeaker');
+      if (asSpkBtn) asSpkBtn.onclick = () => { this.leaveSpace(); this.joinSpace(post, 'speaker'); };
       const leaveBtn = this.g('space-leave');
       if (leaveBtn) leaveBtn.onclick = () => { this.leaveSpace(); this._closeGenericModal(); };
       const endBtn = this.g('space-end');
@@ -10238,6 +10415,17 @@ class SayIt {
       const el = status();
       if (el) el.textContent = '✗ Microphone unavailable: ' + (err?.message || err);
     }
+  }
+
+  _spaceRosterSummary() {
+    const me = this.state.signerAddr;
+    const speakers = [{ addr: me || null, name: me ? (this.state.profCache[me]?.username || null) : null }];
+    for (const [label, pc] of this._spaceRoom?.pcs || []) {
+      if (pc.connectionState !== 'connected') continue;
+      const info = this._spacePeers?.get(label);
+      speakers.push({ addr: info?.addr || null, name: info?.name || null });
+    }
+    return { speakers: speakers.slice(0, 12), n: this._spaceRoom?.listeners.size || 0 };
   }
 
   /* Sign a per-room identity claim. The message binds room + OUR peerId +
@@ -10310,6 +10498,41 @@ class SayIt {
         if (msg.addr.toLowerCase() === this.state.signerAddr) utils.toast('The host made you a co-host 🎉');
         this._renderSpaceRoster();
       }
+    } else if (msg.t === 'speak') {
+      /* A listener asks for the mic (host side) — carries a fresh signed
+         claim; unsigned requests are ignored. */
+      if (!label.startsWith('L:') || this.state.signerAddr !== post.reporter) return;
+      let addr = null;
+      const name = typeof msg.name === 'string' ? msg.name.slice(0, 40) : null;
+      if (typeof msg.addr === 'string' && /^0x[a-f0-9]{40}$/i.test(msg.addr)
+        && typeof msg.sig === 'string' && Math.abs(Date.now() - Number(msg.ts)) < 15 * 60 * 1000) {
+        try {
+          const m = `Say It DeFi Space\nroom:${post.space.roomId}\npeer:${label.slice(2)}\nts:${msg.ts}`;
+          if (ethers.verifyMessage(m, msg.sig).toLowerCase() === msg.addr.toLowerCase()) {
+            addr = msg.addr.toLowerCase();
+            this.fetchOtherProfile(addr);
+          }
+        } catch { /* bad signature */ }
+      }
+      if (!addr) return;
+      this._spaceSpeakReqs.set(label, { addr, name });
+      utils.toast(`🎙 ${name || this.trunc(addr)} wants to speak`);
+      this._renderSpaceRoster();
+    } else if (msg.t === 'promote') {
+      /* The host approved our speak request (listener side): rejoin the
+         room as a speaker — mic permission happens on the way in. */
+      if (label !== this._spaceHostLabel || this._spaceRole !== 'listener') return;
+      utils.toast('🎙 The host invited you to speak');
+      this.leaveSpace();
+      this.joinSpace(post, 'speaker');
+    } else if (msg.t === 'roster') {
+      /* Host's periodic room summary (listener side). */
+      if (label !== this._spaceHostLabel) return;
+      this._spaceRosterInfo = {
+        speakers: Array.isArray(msg.speakers) ? msg.speakers.slice(0, 12) : [],
+        n: Number(msg.n) || 0,
+      };
+      this._renderSpaceRoster();
     }
   }
 
@@ -10333,8 +10556,10 @@ class SayIt {
     }
   }
 
-  /* Roster: me + every connected peer, with avatar, name, role chip, and —
-     for the host/co-hosts — per-peer mute + co-host controls. */
+  /* Roster: speakers as pills (avatar, name, role chip; host/co-hosts get
+     per-peer mute + co-host controls), listener count, and — host side —
+     pending speak requests with Approve. Listeners see the host's
+     periodic summary instead (they only connect to the host). */
   _renderSpaceRoster() {
     const el = this.g('space-peers');
     const room = this._spaceRoom, post = this._spaceRoomPost;
@@ -10348,7 +10573,7 @@ class SayIt {
       const shown = isMe ? 'You' : (name || prof?.username || (addr ? this.trunc(addr) : 'Guest'));
       const role = addr === post.reporter && (verified || isMe) ? 'Host'
         : (addr && this._spaceCohosts.has(addr)) ? 'Co-host' : '';
-      const btns = (iAmAdmin && !isMe)
+      const btns = (iAmAdmin && !isMe && label)
         ? `<button class="space-chip-btn" data-space-mute="${utils.safe(label)}" title="Mute their mic">🔇</button>`
           + (iAmHost && verified && addr && addr !== post.reporter && !this._spaceCohosts.has(addr)
             ? `<button class="space-chip-btn" data-space-cohost="${utils.safe(addr)}" title="Make co-host">⭐</button>` : '')
@@ -10357,13 +10582,49 @@ class SayIt {
         <img src="${pic}" class="space-pill-pic" alt="" data-fallback-src="image1.jpeg">
         ${utils.safe(String(shown).slice(0, 24))}${role ? ` <span class="space-host-chip">${role}</span>` : ''}${btns}</span>`;
     };
-    let html = chip('me', me, null, true, true);
-    for (const [label, pc] of room.pcs) {
-      if (pc.connectionState !== 'connected') continue;
-      const info = this._spacePeers.get(label);
-      html += chip(label, info?.addr || null, info?.name || null, !!info?.verified, false);
+    let html = '';
+    let listenerCount = 0;
+    if (this._spaceRole === 'listener') {
+      /* What we know: the host's summary, plus our own presence. */
+      const sum = this._spaceRosterInfo;
+      if (sum?.speakers?.length) {
+        sum.speakers.forEach(s => {
+          const addr = typeof s?.addr === 'string' && /^0x[a-f0-9]{40}$/i.test(s.addr) ? s.addr.toLowerCase() : null;
+          html += chip(null, addr, typeof s?.name === 'string' ? s.name : null, !!addr, false);
+        });
+      } else {
+        for (const [label] of room.pcs) {
+          const info = this._spacePeers.get(label);
+          html += chip(null, info?.addr || null, info?.name || null, !!info?.verified, false);
+        }
+      }
+      html += chip(null, me, null, !!me, true);
+      listenerCount = Math.max(sum?.n || 0, 1);
+    } else {
+      html = chip('me', me, null, true, true);
+      for (const [label, pc] of room.pcs) {
+        if (pc.connectionState !== 'connected') continue;
+        const info = this._spacePeers.get(label);
+        html += chip(label, info?.addr || null, info?.name || null, !!info?.verified, false);
+      }
+      listenerCount = room.listeners.size;
+      /* Pending mic requests (host only). */
+      if (iAmHost) {
+        for (const [label, req] of this._spaceSpeakReqs || []) {
+          if (!room.listeners.has(label)) { this._spaceSpeakReqs.delete(label); continue; }
+          const prof = this.state.profCache[req.addr];
+          html += `<span class="space-peer-pill">✋
+            ${utils.safe(String(req.name || prof?.username || this.trunc(req.addr)).slice(0, 24))}
+            <button class="space-chip-btn" data-space-approve="${utils.safe(label)}" title="Let them speak">✓ Approve</button></span>`;
+        }
+      }
     }
+    if (listenerCount) html += `<span class="space-peer-pill">👂 ${listenerCount} listening</span>`;
     el.innerHTML = html;
+    /* Listener view: "Join with mic" only makes sense while no verified
+       host runs the room (small rooms among friends). */
+    const asSpk = this.g('space-asspeaker');
+    if (asSpk) asSpk.style.display = this._spaceHostLabel ? 'none' : '';
     el.querySelectorAll('[data-space-mute]').forEach(b => {
       b.onclick = () => { room.sendTo(b.dataset.spaceMute, { t: 'mute', peer: b.dataset.spaceMute }); utils.toast('Mute request sent'); };
     });
@@ -10371,6 +10632,14 @@ class SayIt {
       b.onclick = () => {
         this._spaceCohosts.add(b.dataset.spaceCohost);
         room.broadcast({ t: 'cohost', addr: b.dataset.spaceCohost });
+        this._renderSpaceRoster();
+      };
+    });
+    el.querySelectorAll('[data-space-approve]').forEach(b => {
+      b.onclick = () => {
+        room.sendTo(b.dataset.spaceApprove, { t: 'promote' });
+        this._spaceSpeakReqs.delete(b.dataset.spaceApprove);
+        utils.toast('Approved — they can join the mic now');
         this._renderSpaceRoster();
       };
     });
@@ -10396,11 +10665,15 @@ class SayIt {
 
   leaveSpace() {
     clearTimeout(this._spaceHostGone);
+    clearInterval(this._spaceRosterTimer);
     this._spaceRoom?.destroy();
     this._spaceRoom = null;
     this._spaceRoomPost = null;
+    this._spaceRole = null;
     this._spacePeers = null;
     this._spaceCohosts = null;
+    this._spaceSpeakReqs = null;
+    this._spaceRosterInfo = null;
     this._spaceHostLabel = null;
   }
 
