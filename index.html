@@ -2179,6 +2179,36 @@ body.mode-settings #mobile-fab { display:none; }
 }
 .space-card-title { font-size:17px; font-weight:800; color:var(--text); }
 .space-card-sub { font-size:13px; color:var(--muted); }
+.space-card-host { display:flex; align-items:center; gap:7px; font-size:13px; font-weight:700; color:var(--text); }
+.space-host-pic { width:22px; height:22px; border-radius:50%; object-fit:cover; }
+.space-host-chip {
+  font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:0.4px;
+  background:rgba(124,77,255,0.35); color:var(--text); border-radius:4px; padding:1px 6px;
+}
+.space-card-ended { background:var(--bg-mid); border-color:var(--border); opacity:0.8; }
+.space-card-badge.ended { color:var(--muted); }
+.live-dot {
+  width:8px; height:8px; border-radius:50%; background:#ff4d6d; display:inline-block;
+  margin-right:5px; animation:livePulse 1.6s ease-in-out infinite;
+}
+@keyframes livePulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+@media (prefers-reduced-motion: reduce) { .live-dot { animation:none; } }
+/* Right-column Live module */
+.sb-live-row { display:flex; align-items:center; gap:10px; padding:10px 0; }
+.sb-live-row + .sb-live-row { border-top:1px solid var(--border); }
+.sb-live-pic { width:36px; height:36px; border-radius:50%; object-fit:cover; flex:0 0 auto; }
+.sb-live-info { flex:1; min-width:0; }
+.sb-live-title {
+  font-size:14px; font-weight:800; color:var(--text);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.sb-live-meta { font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sb-live-btn {
+  flex:0 0 auto; border:none; border-radius:9999px; padding:7px 14px; cursor:pointer;
+  font-size:13px; font-weight:800; color:#fff;
+  background:linear-gradient(120deg, #7c4dff, #ff3cac);
+}
+.sb-live-btn:hover { filter:brightness(1.1); }
 .space-room-title { font-size:17px; font-weight:800; color:var(--text); display:flex; gap:8px; align-items:center; }
 .space-room-status { font-size:13px; color:var(--primary-lt); margin-top:6px; }
 .space-peers { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; min-height:30px; }
@@ -2733,6 +2763,13 @@ html.force-reduce-motion *, html.force-reduce-motion *::before, html.force-reduc
         </button>
         <div class="search-dropdown" id="search-dropdown" role="listbox"></div>
       </div>
+    </div>
+
+    <!-- Live on Say It — live Spaces, first content card (X puts its
+         live module straight under search). Hidden until something is live. -->
+    <div class="sb-card" id="sb-live-card" style="display:none">
+      <div class="sb-card-title">Live on Say It</div>
+      <div id="sb-live-list"><!-- populated by renderLiveSpaces() --></div>
     </div>
 
     <!-- Premium upsell — top of the right column, matching X's
