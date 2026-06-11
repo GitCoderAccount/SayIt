@@ -507,7 +507,7 @@ class SpaceRTC {
   ];
   static ICE = { iceServers: [{ urls: 'stun:stun.cloudflare.com:3478' }] };
 
-  constructor(roomId, micStream, { role, host, ice, onStatus, onPeers, onCtl, onPeerGone, onListeners, onNoRelay } = {}) {
+  constructor(roomId, micStream, { role, host, ice, onStatus, onPeers, onCtl, onPeerGone, onListeners, onNoRelay, onSpeaking } = {}) {
     /* info_hash must be exactly 20 bytes; roomId is 16 bytes hex → pad.
        Speakers mesh on the main hash; listeners meet the host on a second
        hash (LIST pad) where the host fans out one mixed stream each. */
@@ -524,6 +524,10 @@ class SpaceRTC {
     this.onPeerGone = onPeerGone || (() => {});
     this.onListeners = onListeners || (() => {}); /* host: live listener count */
     this.onNoRelay = onNoRelay || (() => {}); /* relay-only mode but TURN gave no candidates */
+    this.onSpeaking = onSpeaking || (() => {}); /* (Set<label>) — fires when the speaking set changes */
+    this.speaking = new Set();    /* labels currently above the speaking threshold */
+    this._anaCtx = null;          /* lazy AudioContext for level analysis */
+    this._analysers = new Map();  /* label → {analyser, data} */
     this.ice = ice || SpaceRTC.ICE;
     this.identity = null;                     /* {addr,name,ts,sig} sent on ctl open */
     this.sockets = [];
@@ -645,10 +649,63 @@ class SpaceRTC {
     return merged;
   }
 
+  /* ── Speaking detection ───────────────────────────────────────────────
+     One shared AudioContext + a per-label AnalyserNode reading time-domain
+     samples; a 300ms poll computes RMS deviation from the 128 midpoint and
+     flips labels in/out of this.speaking, firing onSpeaking on change.
+     Listeners send no audio, so 'L:' labels are never wired. */
+  _wireAnalyser(label, stream) {
+    if (!stream || label?.startsWith('L:') || this._analysers.has(label)) return;
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      this._anaCtx ||= new Ctx();
+      this._anaCtx.resume?.().catch(() => { /* resumes on first gesture */ });
+      const src = this._anaCtx.createMediaStreamSource(stream);
+      const analyser = this._anaCtx.createAnalyser();
+      analyser.fftSize = 512;
+      src.connect(analyser);
+      this._analysers.set(label, { analyser, src, data: new Uint8Array(analyser.fftSize) });
+    } catch { /* stream without an audio track */ }
+  }
+
+  _dropAnalyser(label) {
+    const a = this._analysers.get(label);
+    if (a) { try { a.src.disconnect(); } catch { /* detached */ } this._analysers.delete(label); }
+    if (this.speaking.delete(label)) this.onSpeaking(this.speaking);
+  }
+
+  _pollSpeaking() {
+    const now = Date.now();
+    this._spkLastLoud ||= new Map(); /* label → last ts above threshold */
+    const next = new Set();
+    for (const [label, { analyser, data }] of this._analysers) {
+      /* Own mic muted (track disabled) → never speaking; also clear any hold. */
+      if (label === 'me') {
+        const t = this.mic?.getAudioTracks()[0];
+        if (t && t.enabled === false) { this._spkLastLoud.delete(label); continue; }
+      }
+      analyser.getByteTimeDomainData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) { const d = data[i] - 128; sum += d * d; }
+      const rms = Math.sqrt(sum / data.length);
+      if (rms > 4) this._spkLastLoud.set(label, now);
+      /* Hold "speaking" for 600ms after the last loud sample so the ring
+         doesn't flicker between syllables (X-style), and so a brief pip is
+         reliably observable. */
+      if (now - (this._spkLastLoud.get(label) || 0) < 600) next.add(label);
+    }
+    /* Only fire on a content change. */
+    let changed = next.size !== this.speaking.size;
+    if (!changed) { for (const l of next) if (!this.speaking.has(l)) { changed = true; break; } }
+    if (changed) { this.speaking = next; this.onSpeaking(this.speaking); }
+  }
+
   start() {
     this.onStatus('Connecting to signaling…');
     this._open = new Set();
     if (this.isHost) this._mixedStream(); /* ready before the first listener offer */
+    if (this.mic) this._wireAnalyser('me', this.mic);
+    this._spkInterval = setInterval(() => this._pollSpeaking(), 300);
     SpaceRTC.TRACKERS.forEach(url => this._dial(url, 0));
     /* re-announce periodically so late joiners find us */
     this._interval = setInterval(() => {
@@ -726,6 +783,8 @@ class SpaceRTC {
          stream must also be playing in an <audio> el — it is, above — or
          Chrome's WebAudio taps silence from remote streams.) */
       if (this.isHost) this._mixAdd(pc._label, el.srcObject);
+      /* Speaking detection for this remote stream (listeners send none). */
+      this._wireAnalyser(pc._label, el.srcObject);
       this._peersChanged();
     };
     pc.onconnectionstatechange = () => {
@@ -898,6 +957,7 @@ class SpaceRTC {
     const el = this.audioEls.get(label);
     if (el) { el.remove(); this.audioEls.delete(label); }
     this._mixRemove(label);
+    this._dropAnalyser(label);
     if (isList) { if (had) this.onListeners(this.listeners.size); return; }
     this._peersChanged();
     if (had) this.onPeerGone(label);
@@ -951,6 +1011,12 @@ class SpaceRTC {
     this.destroyed = true;
     clearInterval(this._interval);
     clearInterval(this._listInterval);
+    clearInterval(this._spkInterval);
+    this._analysers.forEach(a => { try { a.src.disconnect(); } catch { /* detached */ } });
+    this._analysers.clear();
+    this._anaCtx?.close().catch(() => { /* closing */ });
+    this._anaCtx = null;
+    this.speaking.clear();
     this._open?.clear();
     this.sockets.forEach(ws => { try { ws.close(); } catch { /* closing */ } });
     [...this.pcs.keys()].forEach(k => this._dropPeer(k));
