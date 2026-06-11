@@ -6,7 +6,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260611-147';
+const SW_CACHE_VER = '20260611-148';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -50,6 +50,7 @@ const COMMUNITIES_KEY = 'sayitCommunities'; /* JSON array of {address,name,desc,
 const LC_SYNC_PREFIX  = 'LC_SYNC:';
 const TIP_PREFIX      = 'TIP:';     /* TIP:0x<posthash> — tx VALUE carries the tip, sent to the post author */
 const SPACE_PREFIX    = 'SPACE:';   /* SPACE:{"r":roomId,"s":startsMs}\n\n<title> — live audio room announcement */
+const SPACE_END_PREFIX = 'SPACE_END:'; /* SPACE_END:0x<spacehash> — the host ends a Space (honored only from the Space's author) */
 const CHANNELS_KEY    = 'sayitChannelsScan';
 
 const ERC721_ABI = [
@@ -940,7 +941,7 @@ class SpaceRTC {
 
   constructor(roomId, micStream, { onStatus, onPeers } = {}) {
     /* info_hash must be exactly 20 bytes; roomId is 16 bytes hex → pad. */
-    this.hash = (roomId + '00000000').slice(0, 40);
+    this.hash = SpaceRTC.roomHash(roomId);
     this.peerId = [...crypto.getRandomValues(new Uint8Array(20))]
       .map(b => b.toString(16).padStart(2, '0')).join('');
     this.mic = micStream;
@@ -958,6 +959,86 @@ class SpaceRTC {
     let out = '';
     for (let i = 0; i < hex.length; i += 2) out += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16));
     return out;
+  }
+
+  static unbin(b) {
+    return [...(b || '')].map(c => c.charCodeAt(0).toString(16).padStart(2, '0')).join('');
+  }
+
+  static roomHash(roomId) {
+    return (roomId + '00000000').slice(0, 40);
+  }
+
+  /* Passive room liveness — ask the trackers how many peers are announced
+     on each room's info_hash WITHOUT joining. Powers the "N here now"
+     counts and empty-room ended detection on Space cards. Privacy: one
+     WebSocket to the tracker (an infra host, like the explorer API) — no
+     peer ever learns you looked.
+
+     Trackers differ (verified live): btorrent answers `scrape` directly;
+     openwebtorrent ignores scrape but a throwaway announce's reply carries
+     self-inclusive complete/incomplete counts, deregistered on socket
+     close. Scrape all trackers in parallel and merge by max — each tracker
+     only sees the peers that reached it, so the max is the best estimate.
+     Returns Map<roomId, peerCount> or null if no tracker answered. */
+  static async probe(roomIds) {
+    const byHash = new Map(roomIds.map(r => [SpaceRTC.roomHash(r), r]));
+    const tryTracker = url => new Promise((resolve, reject) => {
+      let ws;
+      try { ws = new WebSocket(url); } catch { reject(new Error('dial')); return; }
+      const fail = () => { try { ws.close(); } catch { /* closing */ } reject(new Error('tracker')); };
+      const timer = setTimeout(fail, 5000);
+      ws.onerror = fail;
+      const out = new Map();
+      let announced = 0;
+      ws.onopen = () => ws.send(JSON.stringify({
+        action: 'scrape', info_hash: [...byHash.keys()].map(h => SpaceRTC.bin(h)),
+      }));
+      ws.onmessage = e => {
+        let msg;
+        try { msg = JSON.parse(e.data); } catch { return; }
+        if (msg.action === 'scrape' && msg.files) {
+          clearTimeout(timer);
+          for (const [binHash, st] of Object.entries(msg.files)) {
+            const roomId = byHash.get(SpaceRTC.unbin(binHash));
+            if (roomId) out.set(roomId, (Number(st?.complete) || 0) + (Number(st?.incomplete) || 0));
+          }
+          try { ws.close(); } catch { /* done */ }
+          resolve(out);
+        } else if (msg.action === 'announce' && msg.info_hash && msg.complete !== undefined) {
+          /* announce-probe reply: count includes the probe itself */
+          const roomId = byHash.get(SpaceRTC.unbin(msg.info_hash));
+          if (roomId) out.set(roomId, Math.max(0,
+            (Number(msg.complete) || 0) + (Number(msg.incomplete) || 0) - 1));
+          if (out.size >= announced) {
+            clearTimeout(timer);
+            try { ws.close(); } catch { /* done — closing also deregisters the probes */ }
+            resolve(out);
+          }
+        }
+      };
+      /* No scrape answer after 2s → fall back to throwaway announces. */
+      setTimeout(() => {
+        if (ws.readyState !== 1 || out.size) return;
+        for (const h of byHash.keys()) {
+          announced++;
+          ws.send(JSON.stringify({
+            action: 'announce', info_hash: SpaceRTC.bin(h),
+            peer_id: SpaceRTC.bin([...crypto.getRandomValues(new Uint8Array(20))]
+              .map(b => b.toString(16).padStart(2, '0')).join('')),
+            numwant: 0, uploaded: 0, downloaded: 0, left: 0, event: 'started', offers: [],
+          }));
+        }
+      }, 2000);
+    });
+    const results = await Promise.allSettled(SpaceRTC.TRACKERS.map(tryTracker));
+    let merged = null;
+    for (const r of results) {
+      if (r.status !== 'fulfilled') continue;
+      merged ||= new Map();
+      for (const [roomId, n] of r.value) merged.set(roomId, Math.max(merged.get(roomId) || 0, n));
+    }
+    return merged;
   }
 
   start() {
@@ -7463,6 +7544,8 @@ class SayIt {
     if (text.startsWith(VOTE_PREFIX)) { this._captureVote(text, tx); return null; }
     if (text.startsWith(TOKEN_PROFILE_PREFIX)) return null; /* token-profile metadata, not a feed post */
     if (text.startsWith(TIP_PREFIX)) return null; /* tips surface via notifications, never as posts */
+    /* A host ending their Space — recorded, never rendered. */
+    if (text.startsWith(SPACE_END_PREFIX)) { this._captureSpaceEnd(text, tx); return null; }
     /* SPACE announcements are feed posts with a live-room card. */
     if (text.startsWith(SPACE_PREFIX)) {
       const space = this._parseSpacePayload(text);
@@ -7941,7 +8024,7 @@ class SayIt {
     const displayList = list.filter(p => {
       if (this._notInterested?.has(p.txHash)) return false; /* locally hidden */
       if (p.content && p.content.startsWith(VOTE_PREFIX)) return false;
-      if (!(!p.postType || p.postType === 'post' || p.postType === 'repost' || p.postType === 'poll')) return false;
+      if (!(!p.postType || p.postType === 'post' || p.postType === 'repost' || p.postType === 'poll' || p.postType === 'space')) return false;
       /* User content filters (Settings → Content & Feed). */
       if (cf.hideReposts && p.postType === 'repost') return false;
       if (cf.hidePolls   && p.postType === 'poll')   return false;
@@ -9221,6 +9304,7 @@ class SayIt {
           !body.startsWith(NOTERATE_PREFIX) &&
           !body.startsWith(TOKEN_PROFILE_PREFIX) &&
           !body.startsWith(NOTE_PREFIX) &&
+          !body.startsWith(SPACE_END_PREFIX) &&
           !body.startsWith(LC_SYNC_PREFIX)) {
         /* If this is a poll, parse it so the feed renders the poll UI
            rather than the raw POLL:{json} text. */
@@ -9938,15 +10022,103 @@ class SayIt {
     return `<div class="space-strip">${live ? '🔴 LIVE' : '🎙 Scheduled'} · Audio Space</div>`;
   }
 
+  /* Record a SPACE_END marker seen on-chain. Sender is validated against
+     the Space's author at render time (we may see the end before the
+     announcement during a scan). */
+  _captureSpaceEnd(text, tx) {
+    const m = text.match(/^SPACE_END:(0x[a-f0-9]{64})/i);
+    if (!m) return;
+    (this._spaceEnds ||= new Map()).set(m[1].toLowerCase(), tx.from?.toLowerCase());
+  }
+
+  /* A Space is over when: the host published SPACE_END for it; OR it's
+     older than the 24h hard cap; OR the trackers say the room is empty
+     after a 10-minute grace period (host gone without paying for an end
+     marker — the "still going with no people in it" case). */
+  _spaceIsEnded(post) {
+    const sp = post.space;
+    if (!sp) return false;
+    if (this._spaceEnds?.get(post.txHash) === post.reporter) return true;
+    const started = sp.startsMs || new Date(post.timestamp).getTime();
+    const age = Date.now() - started;
+    if (age > 24 * 3600 * 1000) return true;
+    const probed = this._spaceProbeCache?.get(sp.roomId);
+    return !!(probed && probed.n === 0 && age > 10 * 60 * 1000
+      && Date.now() - probed.t < 5 * 60 * 1000);
+  }
+
+  /* Coalesce probe requests from render paths; keep counts fresh while
+     any Space card is on screen. */
+  _scheduleSpaceProbe() {
+    if (this._spaceProbeTimer) return;
+    this._spaceProbeTimer = setTimeout(() => {
+      this._spaceProbeTimer = null;
+      this._hydrateSpaceCounts();
+    }, 600);
+    this._spaceProbeInterval ||= setInterval(() => {
+      if (document.querySelector('[data-space-count]')) this._hydrateSpaceCounts();
+    }, 60000);
+  }
+
+  async _hydrateSpaceCounts() {
+    const els = [...document.querySelectorAll('[data-space-count]')];
+    if (!els.length) return;
+    this._spaceProbeCache ||= new Map();
+    const stale = [...new Set(els.map(el => el.dataset.spaceCount))].filter(id => {
+      const c = this._spaceProbeCache.get(id);
+      return !c || Date.now() - c.t > 45000;
+    });
+    if (stale.length) {
+      const res = await SpaceRTC.probe(stale.slice(0, 12));
+      if (res) stale.forEach(id => this._spaceProbeCache.set(id, { n: res.get(id) ?? 0, t: Date.now() }));
+    }
+    document.querySelectorAll('[data-space-count]').forEach(el => {
+      const c = this._spaceProbeCache.get(el.dataset.spaceCount);
+      if (c) el.textContent = c.n > 0
+        ? `${c.n} ${c.n === 1 ? 'person' : 'people'} here now`
+        : 'Nobody here yet';
+    });
+    /* Probe may have just revealed an empty room — flip those cards to the
+       ended state in place (full re-derive via _spaceCardHTML). */
+    document.querySelectorAll('.space-card[data-space-host]').forEach(card => {
+      const hash = card.closest('[data-txhash]')?.dataset.txhash;
+      const post = hash && (this._postMap.get(hash) || this._parentCache?.get(hash));
+      if (post && this._spaceIsEnded(post)) card.outerHTML = this._spaceCardHTML(post);
+    });
+  }
+
   _spaceCardHTML(post) {
     const sp = post.space;
+    const ended = this._spaceIsEnded(post);
+    const host = this.state.profCache[post.reporter] || {};
+    const hostName = host.username ? utils.safe(host.username) : this.trunc(post.reporter);
+    const hostPic = utils.safe(utils.safeUrl(host.picUrl) || 'image1.jpeg');
+    const hostRow = `
+      <div class="space-card-host">
+        <img src="${hostPic}" class="space-host-pic" alt="" loading="lazy" data-fallback-src="image1.jpeg">
+        <span>${hostName}</span><span class="space-host-chip">Host</span>
+      </div>`;
+    if (ended) {
+      return `
+        <div class="space-card space-card-ended">
+          <div class="space-card-badge ended">🎙 Space · Ended</div>
+          <div class="space-card-title">${utils.safe(sp.title)}</div>
+          ${hostRow}
+        </div>`;
+    }
     const live = !sp.startsMs || sp.startsMs <= Date.now();
+    if (live) this._scheduleSpaceProbe();
     return `
-      <div class="space-card">
-        <div class="space-card-badge">${live ? '🔴 LIVE' : '🎙 Scheduled'}<span class="space-exp">experimental</span></div>
+      <div class="space-card" data-space-host="${utils.safe(post.reporter || '')}">
+        <div class="space-card-badge">${live
+          ? '<span class="live-dot" aria-hidden="true"></span> LIVE'
+          : '🎙 Scheduled'}<span class="space-exp">experimental</span></div>
         <div class="space-card-title">${utils.safe(sp.title)}</div>
-        <div class="space-card-sub">${live ? 'Audio Space — tap to join with your mic' : 'Starts ' + utils.safe(this.relTime(new Date(sp.startsMs).toISOString()))}</div>
-        <button class="btn-pri space-join-btn" data-action="join-space" style="flex:0 0 auto;width:auto;padding:8px 22px">Join</button>
+        ${hostRow}
+        <div class="space-card-sub">${live
+          ? `<span data-space-count="${utils.safe(sp.roomId)}">Checking who's here…</span>`
+          : 'Starts ' + utils.safe(this.relTime(new Date(sp.startsMs).toISOString()))}</div>
+        <button class="btn-pri space-join-btn" data-action="join-space" style="flex:0 0 auto;width:auto;padding:8px 22px">${live ? 'Listen live' : 'Join'}</button>
       </div>`;
   }
 
@@ -9981,7 +10153,9 @@ class SayIt {
   async joinSpace(post) {
     const sp = this._reviveSpace(post).space;
     if (!sp) return;
+    if (this._spaceIsEnded(post)) { utils.toast('This Space has ended'); return; }
     if (this._spaceRoom) this.leaveSpace();
+    const isHost = !!this.state.signerAddr && post.reporter === this.state.signerAddr;
     const body = `
       <div class="space-room">
         <div class="space-room-title">🎙 ${utils.safe(sp.title)}<span class="space-exp">experimental</span></div>
@@ -9991,7 +10165,8 @@ class SayIt {
           STUN/tracker infrastructure during connection setup. Best with ≤8 speakers.</div>
         <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px">
           <button class="settings-btn" id="space-mute">🎙 Mute</button>
-          <button class="settings-btn danger" id="space-leave">Leave</button>
+          <button class="settings-btn" id="space-leave">Leave</button>
+          ${isHost ? '<button class="settings-btn danger" id="space-end">End Space</button>' : ''}
         </div>
       </div>`;
     this._showGenericModal('Space', body);
@@ -10007,6 +10182,7 @@ class SayIt {
         },
       });
       this._spaceRoom = room;
+      this._spaceRoomPost = post;
       room.start();
       const muteBtn = this.g('space-mute');
       if (muteBtn) muteBtn.onclick = () => {
@@ -10015,15 +10191,34 @@ class SayIt {
       };
       const leaveBtn = this.g('space-leave');
       if (leaveBtn) leaveBtn.onclick = () => { this.leaveSpace(); this._closeGenericModal(); };
+      const endBtn = this.g('space-end');
+      if (endBtn) endBtn.onclick = () => this.endSpace(post);
     } catch (err) {
       const el = status();
       if (el) el.textContent = '✗ Microphone unavailable: ' + (err?.message || err);
     }
   }
 
+  /* Host-only: publish the on-chain end marker (to the same channel as the
+     announcement so every scanner sees it), then tear the room down. The
+     marker is one tiny tx; if the host declines it, the room still closes
+     locally and the empty-room probe ends the card for everyone within
+     minutes. */
+  async endSpace(post) {
+    const ok = await this.publish(`${SPACE_END_PREFIX}${post.txHash}`, null, post.channel || post.to);
+    if (ok) {
+      (this._spaceEnds ||= new Map()).set(post.txHash, post.reporter);
+      utils.toast('Space ended');
+    }
+    this.leaveSpace();
+    this._closeGenericModal();
+    this.renderFeed();
+  }
+
   leaveSpace() {
     this._spaceRoom?.destroy();
     this._spaceRoom = null;
+    this._spaceRoomPost = null;
   }
 
   /* ── Tipping ─────────────────────────────────────────────────────────
@@ -11154,10 +11349,55 @@ class SayIt {
      Called from fetchPosts() after new posts land and from feed re-renders.
      Cheap: all data comes from in-memory state.posts and state.profCache. */
   _refreshSidebarPanels() {
+    try { this.renderLiveSpaces(); } catch (err) { console.warn('Live render:', err); }
     try { this.renderTrending(); } catch (err) { console.warn('Trending render:', err); }
     try { this.renderLatestPolls(); } catch (err) { console.warn('Polls render:', err); }
     try { this.renderTodaysNews(); } catch (err) { console.warn('News render:', err); }
     try { this.renderWhoToFollow(); } catch (err) { console.warn('W2F render:', err); }
+  }
+
+  /* Live on Say It — live Spaces from the loaded feed, first content card
+     in the right column (X puts its live module straight under search).
+     Hidden when nothing is live. */
+  renderLiveSpaces() {
+    const card = this.g('sb-live-card');
+    const list = this.g('sb-live-list');
+    if (!card || !list) return;
+    const seen = new Set();
+    const live = [];
+    for (const p of this.state.posts) {
+      this._reviveSpace(p);
+      if (!p.space || seen.has(p.space.roomId)) continue;
+      seen.add(p.space.roomId);
+      if (this._spaceIsEnded(p)) continue;
+      if (p.space.startsMs > Date.now()) continue; /* scheduled, not live yet */
+      live.push(p);
+      if (live.length >= 2) break; /* posts are newest-first already */
+    }
+    if (!live.length) { card.style.display = 'none'; return; }
+    card.style.display = '';
+    list.innerHTML = live.map(p => {
+      const host = this.state.profCache[p.reporter] || {};
+      const hostName = host.username ? utils.safe(host.username) : this.trunc(p.reporter);
+      const hostPic = utils.safe(utils.safeUrl(host.picUrl) || 'image1.jpeg');
+      return `
+        <div class="sb-live-row">
+          <img src="${hostPic}" class="sb-live-pic" alt="" loading="lazy" data-fallback-src="image1.jpeg">
+          <div class="sb-live-info">
+            <div class="sb-live-title"><span class="live-dot" aria-hidden="true"></span>${utils.safe(p.space.title)}</div>
+            <div class="sb-live-meta">${hostName} · <span data-space-count="${utils.safe(p.space.roomId)}">live now</span></div>
+          </div>
+          <button class="sb-live-btn" data-sb-join="${utils.safe(p.txHash)}">Listen live</button>
+        </div>`;
+    }).join('');
+    list.querySelectorAll('[data-sb-join]').forEach(el => {
+      el.onclick = () => {
+        const post = this._postMap.get(el.dataset.sbJoin)
+          || this.state.posts.find(x => x.txHash === el.dataset.sbJoin);
+        if (post) this.joinSpace(post);
+      };
+    });
+    this._scheduleSpaceProbe();
   }
 
   /* Latest Polls sidebar card — surfaces active polls from the loaded
