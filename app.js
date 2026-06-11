@@ -6,7 +6,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260611-145';
+const SW_CACHE_VER = '20260611-146';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -317,16 +317,22 @@ const utils = {
           /* Canonical URL (drops tracking params); handle is [A-Za-z0-9_] only. */
           const href = `https://x.com/${tw.handle}/status/${tw.id}`;
           const safeHandle = utils.safe(tw.handle);
-          embedHtml += `<a class="x-embed-card" href="${utils.safe(href)}"
-              target="_blank" rel="noopener noreferrer">
+          const safeId = utils.safe(tw.id);
+          /* Click-to-load X embed facade: nothing contacts X until the user
+             taps. On tap (with embeds allowed) we swap in X's own iframe
+             embed — it renders the full post incl. video, and X's runtime
+             runs INSIDE that sandboxed third-party iframe, so our page CSP
+             stays strict (only frame-src lists platform.twitter.com) and no
+             X script touches our origin. In strict privacy mode the tap
+             opens X in a new tab instead. */
+          embedHtml += `<div class="x-embed-card x-embed-facade" data-x-id="${safeId}" data-x-href="${utils.safe(href)}" role="button" tabindex="0">
             <span class="x-embed-hdr">
               <svg class="x-embed-logo" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
               <span class="x-embed-title">Post on X</span>
-              <span class="x-embed-arrow" aria-hidden="true">↗</span>
             </span>
             <span class="x-embed-handle">@${safeHandle}</span>
-            <span class="x-embed-cta">View this post on X</span>
-          </a>`;
+            <span class="x-embed-cta">▶ Tap to load this post (text, images &amp; video)</span>
+          </div>`;
           mediaCount++;
         }
       }
@@ -1855,7 +1861,7 @@ class SayIt {
       /* Media elements inside actionable cards (e.g. a YouTube facade in a
          quote card) handle their own clicks — let them through instead of
          firing the card's action. */
-      if (e.target.closest('.post-yt-facade, .post-embed-playing, video.post-vid-thumb, .vid-unmute-btn')) return;
+      if (e.target.closest('.post-yt-facade, .post-embed-playing, video.post-vid-thumb, .vid-unmute-btn, .x-embed-facade')) return;
       const el = e.target.closest('[data-act]');
       if (!el) return;
       /* A link inside an actionable element is a link first (timestamps,
@@ -2208,6 +2214,12 @@ class SayIt {
     if (facade) {
       e.stopPropagation();
       this._playFacade(facade);
+      return;
+    }
+    const xFacade = e.target.closest('.x-embed-facade');
+    if (xFacade) {
+      e.stopPropagation();
+      this._loadXEmbed(xFacade);
       return;
     }
     /* Poll vote buttons are handled before the generic post routing. */
@@ -4570,8 +4582,8 @@ class SayIt {
           archives) lives on this device only. Your IP address is visible, as with any website, to the
           infrastructure that serves content: the static host (GitHub Pages), the block-explorer API endpoint
           you configure, and the hosts of any media you choose to view. Embedded video previews and muted autoplay are ON by default for the best
-          feed experience — loading or playing an embed connects you to YouTube/Vimeo and is subject to
-          their cookies. Turn both off right here (or enable Data saver) for a zero-third-party feed.
+          feed experience — loading or playing an embed connects you to YouTube/Vimeo (and shared X/Twitter
+          posts, which load X's own embed only when you tap them) and is subject to those services' cookies. Turn both off right here (or enable Data saver) for a zero-third-party feed.
         </div>
         <div class="settings-row">
           <div class="settings-row-label"><strong>Load embed thumbnails</strong><span>Fetch YouTube/Vimeo preview images (connects to their servers as you scroll). Off = neutral cards; nothing contacts them until you tap.</span></div>
@@ -9846,6 +9858,26 @@ class SayIt {
        limit; bigger rooms need a relay tier later.
      - STUN via Cloudflare (IP visible to them during connection setup —
        called out in the room UI). */
+  /* Swap an X facade for X's own iframe embed (full post + video). Privacy
+     mode (embeds off) opens X in a new tab instead — same gate as YouTube. */
+  _loadXEmbed(el) {
+    const id = el.dataset.xId, href = el.dataset.xHref;
+    if (!/^[0-9]{5,25}$/.test(id || '')) { if (href) window.open(href, '_blank', 'noopener,noreferrer'); return; }
+    if (!this._embedThumbsAllowed()) { if (href) window.open(href, '_blank', 'noopener,noreferrer'); return; }
+    const theme = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+    const frame = document.createElement('iframe');
+    frame.src = `https://platform.twitter.com/embed/Tweet.html?id=${encodeURIComponent(id)}&theme=${theme}&dnt=true`;
+    frame.className = 'x-embed-frame';
+    frame.setAttribute('scrolling', 'no');
+    frame.setAttribute('frameborder', '0');
+    frame.setAttribute('title', 'Post on X');
+    frame.setAttribute('allow', 'encrypted-media; picture-in-picture; fullscreen');
+    el.classList.remove('x-embed-facade');
+    el.classList.add('x-embed-loaded');
+    el.innerHTML = '';
+    el.appendChild(frame);
+  }
+
   _spaceCardHTML(post) {
     const sp = post.space;
     const live = !sp.startsMs || sp.startsMs <= Date.now();
