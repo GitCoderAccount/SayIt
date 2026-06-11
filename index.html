@@ -2165,6 +2165,29 @@ body.mode-settings #mobile-fab { display:none; }
   transition:width 0.6s ease;
 }
 
+/* Live Spaces */
+.space-card {
+  margin-top:10px; padding:14px 16px; border-radius:14px;
+  background:linear-gradient(120deg, rgba(124,77,255,0.25), rgba(255,60,172,0.18));
+  border:1px solid var(--primary-dim);
+  display:flex; flex-direction:column; gap:6px; align-items:flex-start;
+}
+.space-card-badge { font-size:12px; font-weight:800; color:#ff6e6e; display:flex; gap:8px; align-items:center; }
+.space-exp {
+  font-size:10px; font-weight:700; color:var(--muted); border:1px solid var(--border);
+  border-radius:4px; padding:1px 5px; text-transform:uppercase; letter-spacing:0.5px;
+}
+.space-card-title { font-size:17px; font-weight:800; color:var(--text); }
+.space-card-sub { font-size:13px; color:var(--muted); }
+.space-room-title { font-size:17px; font-weight:800; color:var(--text); display:flex; gap:8px; align-items:center; }
+.space-room-status { font-size:13px; color:var(--primary-lt); margin-top:6px; }
+.space-peers { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; min-height:30px; }
+.space-peer-pill {
+  background:var(--bg-mid); border:1px solid var(--border); border-radius:9999px;
+  padding:5px 14px; font-size:13px; color:var(--text); font-weight:600;
+}
+.space-room-note { font-size:12px; color:var(--muted); margin-top:12px; line-height:1.5; }
+
 /* Verify-it-yourself page */
 .verify-page { padding:8px 20px 40px; max-width:600px; }
 .verify-page h3 { font-size:17px; color:var(--text); margin:22px 0 8px; }
@@ -2812,6 +2835,10 @@ html.force-reduce-motion *, html.force-reduce-motion *::before, html.force-reduc
           <button class="more-item" id="more-verify">
             <span class="more-icon">🛡️</span>
             <span class="more-label">Verify it yourself</span>
+          </button>
+          <button class="more-item" id="more-space">
+            <span class="more-icon">🎙</span>
+            <span class="more-label">Start a Space<span class="soon-tag">beta</span></span>
           </button>
           <button class="more-item more-soon" disabled>
             <span class="more-icon">🎬</span>
