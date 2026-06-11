@@ -6,7 +6,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260611-143';
+const SW_CACHE_VER = '20260611-144';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -1286,6 +1286,8 @@ class SayIt {
     if (mbBtn) mbBtn.onclick = () => { this.hideMoreMenu(); this.goBookmarks(); };
     const maBtn = g('more-analytics');
     if (maBtn) maBtn.onclick = () => { this.hideMoreMenu(); this.goAnalytics(); };
+    const mvBtn = g('more-verify');
+    if (mvBtn) mvBtn.onclick = () => { this.hideMoreMenu(); this.goVerify(); };
 
     document.querySelectorAll('[data-mn]').forEach(b => {
       b.onclick = (ev) => {
@@ -1749,6 +1751,10 @@ class SayIt {
           break;
         case 'switch-chain':
           this._switchToPulse();
+          break;
+        case 'go-verify':
+          e.preventDefault();
+          this.goVerify();
           break;
       }
     }, true);
@@ -3740,6 +3746,64 @@ class SayIt {
     };
     reader.onerror = () => utils.toast('Could not read file');
     reader.readAsText(file);
+  }
+
+  /* ── Verify it yourself: the trust page. Everything claimed about
+     privacy and decentralization, with concrete steps any user can take
+     to check it — view source, watch the network tab, read the CSP,
+     rebuild from the repo. Static content; no data calls. ── */
+  goVerify() {
+    this._updateTitle('Verify it yourself');
+    this._setRoute('/verify');
+    this.setNav(null, null);
+    this.state.mode = 'verify';
+    this.g('compose-area').style.display   = 'none';
+    this.g('channel-banner').style.display = 'none';
+    this.g('feed-tabs').style.display      = 'none';
+    this.g('loading-more').style.display   = 'none';
+    this._pendingPageHeader = this._makePageHeader({ title: 'Verify it yourself', noBack: true });
+    const headerHTML = this._applyPageHeader();
+    this.g('feed').innerHTML = headerHTML + `
+      <div class="verify-page">
+        <p class="vp-lead">Don't trust this page — check it. Every claim below comes with a way
+        to verify it yourself, because that's the whole point of building on a public chain.</p>
+
+        <h3>🧾 The code is public</h3>
+        <p>This entire app is a few readable files of plain HTML/CSS/JavaScript — no build step, no
+        minified blobs. Read it on
+        <a href="https://github.com/GitCoderAccount/SayIt" target="_blank" rel="noopener noreferrer">GitHub</a>,
+        or right here: View Source shows <code>index.html</code>, <code>app.js</code>, <code>boot.js</code>
+        and <code>sw.js</code> — exactly what runs. Serve those files anywhere (any static host, IPFS,
+        your laptop) and you have an identical, independent copy of this interface.</p>
+
+        <h3>🍪 No cookies, no trackers</h3>
+        <p>Open DevTools → Application → Cookies: this origin sets none. There is no analytics service,
+        no telemetry, no fingerprinting script — the in-app Analytics page is computed from your own
+        local cache. A strict <strong>Content-Security-Policy</strong> (view it in the page source)
+        means no inline script can execute and code only loads from this origin and the pinned
+        ethers.js build.</p>
+
+        <h3>📡 Watch the network</h3>
+        <p>Open DevTools → Network and browse. You'll see requests to exactly three kinds of places:
+        the static host serving these files, the block-explorer API <em>you</em> configure in Settings,
+        and the hosts of media you choose to view (embeds only load after you tap them, unless you've
+        enabled autoplay — Settings → Privacy). Nothing reports back to anyone.</p>
+
+        <h3>⛓ Your data is the chain</h3>
+        <p>Every post, reply, like, follow, poll, and tip is a plain PulseChain transaction with a
+        human-readable payload — the protocol table is in the README. Verify any post: open it and
+        click the timestamp to see the raw transaction on an independent explorer. Any developer can
+        rebuild this entire social graph from public data; this interface holds nothing back.</p>
+
+        <h3>🔑 Your keys, your voice</h3>
+        <p>There are no accounts and no server-side identity. Your wallet signs your posts directly;
+        this interface never sees your keys and cannot censor, edit, or delete anything once it's
+        on-chain — and neither can anyone else.</p>
+
+        <p class="vp-foot">Found something that doesn't match these claims?
+        <a href="https://github.com/GitCoderAccount/SayIt/issues" target="_blank" rel="noopener noreferrer">Open an issue</a> —
+        public scrutiny is the security model.</p>
+      </div>`;
   }
 
   /* ── Analytics: client-side network stats computed from the local post
@@ -9345,6 +9409,7 @@ class SayIt {
         case 'settings':       this.goSettings(); break;
         case 'lists':          this.goLists?.(); break;
         case 'analytics':      this.goAnalytics?.(); break;
+        case 'verify':         this.goVerify?.(); break;
         case 'communities':    this.goCommunities?.(); break;
         case 'profile':        /^0x[a-f0-9]{40}$/i.test(arg)
                                  ? this.goProfilePage(arg.toLowerCase(), arg.toLowerCase() === this.state.signerAddr)
@@ -10191,7 +10256,7 @@ class SayIt {
   _selfManagedModes = new Set([
     'notifications', 'profile', 'thread', 'channels',
     'explore', 'bookmarks', 'settings', 'lists', 'communities', 'followlist',
-    'analytics'
+    'analytics', 'verify'
   ]);  /* lists/communities render their own browse UI into #feed */
   /* Modes where pollNew's "Show N posts" banner makes no sense.
      Superset of _selfManagedModes — includes wave/self/custom where

@@ -2165,6 +2165,15 @@ body.mode-settings #mobile-fab { display:none; }
   transition:width 0.6s ease;
 }
 
+/* Verify-it-yourself page */
+.verify-page { padding:8px 20px 40px; max-width:600px; }
+.verify-page h3 { font-size:17px; color:var(--text); margin:22px 0 8px; }
+.verify-page p { font-size:15px; line-height:1.65; color:var(--text); }
+.verify-page code { background:var(--bg-mid); border:1px solid var(--border); border-radius:6px; padding:1px 6px; font-size:13px; }
+.verify-page a { color:var(--primary-lt); }
+.vp-lead { font-size:16px; color:var(--muted); padding:12px 0 4px; }
+.vp-foot { margin-top:24px; color:var(--muted); font-size:14px; }
+
 /* Analytics range selector */
 .ana-range { display:flex; gap:8px; padding:12px 0 0; }
 .ana-range-btn {
@@ -2768,6 +2777,7 @@ html.force-reduce-motion *, html.force-reduce-motion *::before, html.force-reduc
           target="_blank" rel="noopener noreferrer">GitHub</a>
         <a href="#" id="footer-disclaimer"
           data-act="show-disclaimer">Disclaimer</a>
+        <a href="#/verify" data-act="go-verify">Verify</a>
         <a href="https://x.com/SayItDeFi"
           target="_blank" rel="noopener noreferrer">
           <svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align:middle;margin-right:2px"><path fill="currentColor" d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.253 5.622 5.912-5.622zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
@@ -2798,6 +2808,10 @@ html.force-reduce-motion *, html.force-reduce-motion *::before, html.force-reduc
           <button class="more-item" id="more-analytics">
             <span class="more-icon">📊</span>
             <span class="more-label">Analytics</span>
+          </button>
+          <button class="more-item" id="more-verify">
+            <span class="more-icon">🛡️</span>
+            <span class="more-label">Verify it yourself</span>
           </button>
           <button class="more-item more-soon" disabled>
             <span class="more-icon">🎬</span>
