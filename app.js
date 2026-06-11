@@ -6,7 +6,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260611-150';
+const SW_CACHE_VER = '20260611-151';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -939,7 +939,7 @@ class SpaceRTC {
   ];
   static ICE = { iceServers: [{ urls: 'stun:stun.cloudflare.com:3478' }] };
 
-  constructor(roomId, micStream, { role, host, onStatus, onPeers, onCtl, onPeerGone, onListeners } = {}) {
+  constructor(roomId, micStream, { role, host, ice, onStatus, onPeers, onCtl, onPeerGone, onListeners, onNoRelay } = {}) {
     /* info_hash must be exactly 20 bytes; roomId is 16 bytes hex → pad.
        Speakers mesh on the main hash; listeners meet the host on a second
        hash (LIST pad) where the host fans out one mixed stream each. */
@@ -955,6 +955,8 @@ class SpaceRTC {
     this.onCtl = onCtl || (() => {});         /* (label, msg) — control message from a peer */
     this.onPeerGone = onPeerGone || (() => {});
     this.onListeners = onListeners || (() => {}); /* host: live listener count */
+    this.onNoRelay = onNoRelay || (() => {}); /* relay-only mode but TURN gave no candidates */
+    this.ice = ice || SpaceRTC.ICE;
     this.identity = null;                     /* {addr,name,ts,sig} sent on ctl open */
     this.sockets = [];
     this.pcs = new Map();       /* speaker mesh: remote peer_id → RTCPeerConnection */
@@ -1126,7 +1128,7 @@ class SpaceRTC {
   }
 
   async _newPC(remoteLabel, { offerer, recvonly, sendStream } = {}) {
-    const pc = new RTCPeerConnection(SpaceRTC.ICE);
+    const pc = new RTCPeerConnection(this.ice);
     /* The label is LIVE: a PC we created for an offer ('offer:<id>') is
        re-labeled to the remote's real peer_id when answered. Handlers read
        pc._label at fire time so audio elements and drops stay keyed
@@ -1240,6 +1242,13 @@ class SpaceRTC {
       const offer = await pc.createOffer({ offerToReceiveAudio: true });
       await pc.setLocalDescription(offer);
       await this._gathered(pc);
+      /* Relay-only mode sanity check: if the TURN server produced zero
+         relay candidates our SDP is empty of routes — nobody could ever
+         reach us. Surface it once instead of failing silently. */
+      if (!this._relayChecked && this.ice.iceTransportPolicy === 'relay') {
+        this._relayChecked = true;
+        if (!/ typ relay/.test(pc.localDescription.sdp)) this.onNoRelay();
+      }
       this.offers.set(id, pc);
       offers.push({ offer_id: SpaceRTC.bin(id), offer: { type: 'offer', sdp: pc.localDescription.sdp } });
     }
@@ -4882,6 +4891,27 @@ class SayIt {
             <span class="settings-switch-slider"></span>
           </label>
         </div>
+        <div class="settings-row">
+          <div class="settings-row-label"><strong>Mask my IP in Live Spaces</strong><span>Route Space audio through a TURN relay so other participants see the relay's
+            address instead of yours (audio stays end-to-end encrypted — the relay can't listen). Needs a relay server below; without masking,
+            speakers see each other's IPs, and listeners are only ever visible to the host. Signaling trackers see your IP either way, like any site you visit.</span></div>
+          <label class="settings-switch">
+            <input type="checkbox" id="set-space-mask" ${s.spaceMaskIp ? 'checked' : ''}>
+            <span class="settings-switch-slider"></span>
+          </label>
+        </div>
+        <div class="settings-row" id="space-turn-rows" style="flex-direction:column;align-items:stretch;gap:8px;${s.spaceMaskIp ? '' : 'display:none'}">
+          <div class="settings-row-label"><strong>TURN relay server</strong><span>e.g. turn:relay.example.com:443?transport=tcp — any standard TURN service
+            or a self-hosted coturn works. There is currently no reliable free public TURN, so this is bring-your-own.</span></div>
+          <input type="text" id="set-turn-url" placeholder="turn:host:port" value="${utils.safe(s.spaceTurnUrl || '')}"
+            style="width:100%;background:var(--bg-mid);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px">
+          <div style="display:flex;gap:8px">
+            <input type="text" id="set-turn-user" placeholder="username" value="${utils.safe(s.spaceTurnUser || '')}"
+              style="flex:1;background:var(--bg-mid);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px">
+            <input type="text" id="set-turn-cred" placeholder="credential" value="${utils.safe(s.spaceTurnCred || '')}"
+              style="flex:1;background:var(--bg-mid);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px">
+          </div>
+        </div>
       </div>
 
       <!-- Media -->
@@ -5200,6 +5230,20 @@ class SayIt {
       this._saveSettings(s);
       const feed = this.g('feed');
       if (feed) this._wireVideoObserver(feed, true);
+    });
+    g('set-space-mask')?.addEventListener('change', () => {
+      const s = this._getSettings();
+      s.spaceMaskIp = g('set-space-mask').checked;
+      this._saveSettings(s);
+      const rows = g('space-turn-rows');
+      if (rows) rows.style.display = s.spaceMaskIp ? '' : 'none';
+    });
+    ['set-turn-url', 'set-turn-user', 'set-turn-cred'].forEach((id, i) => {
+      g(id)?.addEventListener('change', () => {
+        const s = this._getSettings();
+        s[['spaceTurnUrl', 'spaceTurnUser', 'spaceTurnCred'][i]] = g(id).value.trim();
+        this._saveSettings(s);
+      });
     });
     g('set-autoplay')?.addEventListener('change', () => {
       const s = this._getSettings();
@@ -10330,10 +10374,25 @@ class SayIt {
     };
   }
 
+  /* ICE config for Spaces. Masking ON + TURN configured → relay-only: the
+     SDP we hand to peers contains only the relay's candidates, so they
+     never learn our address (audio is DTLS-SRTP end-to-end — the relay
+     forwards ciphertext). Returns null (direct), 'unconfigured', or a
+     config. */
+  _spaceIce() {
+    const s = this._getSettings();
+    if (!s.spaceMaskIp) return null;
+    if (!s.spaceTurnUrl || !/^turns?:/.test(s.spaceTurnUrl)) return 'unconfigured';
+    const entry = { urls: s.spaceTurnUrl };
+    if (s.spaceTurnUser) entry.username = s.spaceTurnUser;
+    if (s.spaceTurnCred) entry.credential = s.spaceTurnCred;
+    return { iceServers: [entry], iceTransportPolicy: 'relay' };
+  }
+
   /* Join a Space. X model: the host (Space author) joins as a speaker;
      everyone else starts as a LISTENER — no mic permission, receive-only —
      and can request the mic (host approves → rejoin as speaker). */
-  async joinSpace(post, role) {
+  async joinSpace(post, role, forceDirect) {
     const sp = this._reviveSpace(post).space;
     if (!sp) return;
     if (this._spaceIsEnded(post)) { utils.toast('This Space has ended'); return; }
@@ -10341,14 +10400,21 @@ class SayIt {
     const isHost = !!this.state.signerAddr && post.reporter === this.state.signerAddr;
     role = role || (isHost ? 'speaker' : 'listener');
     const asSpeaker = role === 'speaker';
+    const ice = forceDirect ? null : this._spaceIce();
+    const masked = !!ice && ice !== 'unconfigured';
+    const note = masked
+      ? '🛡 IP masking is ON: participants see your relay’s address, not yours. Audio stays end-to-end encrypted — the relay can’t listen in. The signaling trackers still see your IP, like any website you visit.'
+      : asSpeaker
+        ? 'Speakers connect peer-to-peer, so other speakers’ devices can see your IP address (never shown in the app, but visible to a technical user). Listeners only ever connect to the host. To hide your IP behind a relay, enable masking in Settings → Privacy.'
+        : 'Listening is low-exposure: only the host’s device and the signaling trackers can see your connection — other listeners never do. To hide your IP from the host too, enable masking in Settings → Privacy.';
     const body = `
       <div class="space-room">
         <div class="space-room-title">🎙 ${utils.safe(sp.title)}<span class="space-exp">experimental</span></div>
         <div class="space-room-status" id="space-status">${asSpeaker ? 'Requesting microphone…' : 'Tuning in…'}</div>
         <div class="space-peers" id="space-peers"></div>
-        <div class="space-room-note">Peer-to-peer audio: your IP is visible to other participants and to the
-          STUN/tracker infrastructure during connection setup. Best with ≤8 speakers.</div>
+        <div class="space-room-note">${note}</div>
         <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px;flex-wrap:wrap">
+          <button class="settings-btn" id="space-direct" style="display:none">Join without masking</button>
           ${asSpeaker ? '<button class="settings-btn" id="space-mute">🎙 Mute</button>'
             : `<button class="settings-btn" id="space-req">🎙 Request to speak</button>
                <button class="settings-btn" id="space-asspeaker" style="display:none">🎙 Join with mic</button>`}
@@ -10358,15 +10424,33 @@ class SayIt {
       </div>`;
     this._showGenericModal('Space', body);
     const status = () => this.g('space-status');
+    const offerDirect = msg => {
+      const el = status();
+      if (el) el.textContent = msg;
+      const btn = this.g('space-direct');
+      if (btn) {
+        btn.style.display = '';
+        btn.onclick = () => { this.leaveSpace(); this.joinSpace(post, role, true); };
+      }
+    };
+    /* Masking on but no relay configured: never silently fall back to a
+       direct connection the user explicitly opted out of. */
+    if (ice === 'unconfigured') {
+      offerDirect('🛡 IP masking is enabled but no TURN relay is configured — add one in Settings → Privacy, or join without masking.');
+      const leaveBtn0 = this.g('space-leave');
+      if (leaveBtn0) leaveBtn0.onclick = () => { this._closeGenericModal(); };
+      return;
+    }
     try {
       const mic = asSpeaker ? await navigator.mediaDevices.getUserMedia({ audio: true }) : null;
       const room = new SpaceRTC(sp.roomId, mic, {
-        role, host: isHost,
+        role, host: isHost, ice: masked ? ice : undefined,
         onStatus: t => { const el = status(); if (el) el.textContent = t; },
         onPeers: () => this._renderSpaceRoster(),
         onCtl: (label, msg) => this._onSpaceCtl(label, msg),
         onPeerGone: label => this._onSpacePeerGone(label),
         onListeners: () => this._renderSpaceRoster(),
+        onNoRelay: () => offerDirect('✗ The TURN relay returned no routes — with masking on, nobody can reach you. Check the relay in Settings → Privacy, or join without masking.'),
       });
       this._spaceRoom = room;
       this._spaceRoomPost = post;
