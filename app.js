@@ -6,7 +6,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260611-141';
+const SW_CACHE_VER = '20260611-142';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -5909,6 +5909,7 @@ class SayIt {
       location ? `<span class="prof-meta-item">📍 ${location}</span>` : '',
       websiteHrefSafe ? `<span class="prof-meta-item">🔗 <a href="${websiteHrefSafe}" target="_blank" rel="noopener noreferrer">${websiteDisplay}</a></span>` : '',
       joined   ? `<span class="prof-meta-item">📅 Joined ${utils.safe(joined)}</span>` : '',
+      `<span class="prof-meta-item" id="prof-tips" style="display:none" title="PLS tips received on posts"></span>`,
     ].filter(Boolean).join('');
 
     return `
@@ -6457,6 +6458,9 @@ class SayIt {
          the highest-timestamp action (not last-write) is the only correct
          way to resolve the final state regardless of scan/page order. */
       const lastAction = new Map(); /* from → { action, order } */
+      /* Tips piggyback on this same received-tx scan — zero extra calls. */
+      let tipCount = 0, tipWei = 0n;
+      const tipSeen = new Set();
       const fcLimit = this._getMaxScanPages();
       for (let page = 1; (fcLimit === Infinity || page <= fcLimit); page++) {
         let raw = [];
@@ -6482,6 +6486,10 @@ class SayIt {
             } else if (text.startsWith(UNFOLLOW_PREFIX)) {
               const target = text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase();
               if (target === addr || to === addr) action = 'unfollow';
+            } else if (text.startsWith(TIP_PREFIX) && !tipSeen.has(tx.hash)) {
+              tipSeen.add(tx.hash);
+              tipCount++;
+              try { tipWei += BigInt(tx.value || 0); } catch { /* odd value field */ }
             }
             if (action) {
               const prev = lastAction.get(from);
@@ -6496,6 +6504,12 @@ class SayIt {
         const live = [...follows.values()].filter(v => v === 'follow').length;
         const elNow = document.getElementById('prof-follower-count');
         if (elNow) elNow.innerHTML = `<strong>${live}</strong> Followers`;
+        /* Live-update the tips badge as pages land. */
+        const tipsEl = document.getElementById('prof-tips');
+        if (tipsEl && tipCount > 0) {
+          tipsEl.style.display = '';
+          tipsEl.textContent = `💎 ${tipCount} tip${tipCount === 1 ? '' : 's'} · ${utils.fmtPLS(tipWei.toString())} PLS`;
+        }
 
         if (raw.length < 50) break; /* last page — reached the end */
       }
