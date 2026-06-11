@@ -6,7 +6,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260611-139';
+const SW_CACHE_VER = '20260611-140';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -1954,7 +1954,7 @@ class SayIt {
      request leaves the browser toward YouTube/Vimeo until the user
      explicitly clicks a facade — thumbnails are replaced by a neutral
      local card. Opt-in via Settings → Privacy. */
-  _embedThumbsAllowed() { return this._getSettings().loadEmbedThumbs === true; }
+  _embedThumbsAllowed() { return this._getSettings().loadEmbedThumbs !== false; }
 
   _playFacade(el, muted = false) {
     const yt = el.dataset.ytId, vm = el.dataset.vimeoId;
@@ -2448,11 +2448,14 @@ class SayIt {
 
         <p><strong>Privacy.</strong> This interface sets no cookies and runs
         no analytics or tracking services. Everything it stores (caches,
-        settings, archives) stays in your browser. Embedded video previews
-        are off by default — nothing contacts YouTube/Vimeo until you tap a
-        video. Your IP is visible only to the infrastructure that serves
-        you: the static host, the explorer API you configure, and hosts of
-        media you choose to view.</p>
+        settings, archives) stays in your browser. For the best experience,
+        videos and YouTube/Vimeo previews <strong>autoplay muted by
+        default</strong> — loading an embed connects you to that provider
+        and is subject to their cookies. Prefer zero third-party contact?
+        Turn it off any time in <strong>Settings → Privacy</strong> (or
+        enable Data saver). Your IP is otherwise visible only to the
+        infrastructure that serves you: the static host, the explorer API
+        you configure, and hosts of media you choose to view.</p>
 
         <p><strong>Original, independent software.</strong> This application
         was built from scratch as free, open-source software. It is not
@@ -4263,20 +4266,21 @@ class SayIt {
           entirely inside your browser from your own local cache. Everything stored (posts cache, settings,
           archives) lives on this device only. Your IP address is visible, as with any website, to the
           infrastructure that serves content: the static host (GitHub Pages), the block-explorer API endpoint
-          you configure, and the hosts of any media you choose to view. Playing an embedded video connects you
-          to YouTube/Vimeo and is subject to their cookies — which is why embed previews are off by default.
+          you configure, and the hosts of any media you choose to view. Embedded video previews and muted autoplay are ON by default for the best
+          feed experience — loading or playing an embed connects you to YouTube/Vimeo and is subject to
+          their cookies. Turn both off right here (or enable Data saver) for a zero-third-party feed.
         </div>
         <div class="settings-row">
           <div class="settings-row-label"><strong>Load embed thumbnails</strong><span>Fetch YouTube/Vimeo preview images (connects to their servers as you scroll). Off = neutral cards; nothing contacts them until you tap.</span></div>
           <label class="settings-switch">
-            <input type="checkbox" id="set-embed-thumbs" ${s.loadEmbedThumbs === true ? 'checked' : ''}>
+            <input type="checkbox" id="set-embed-thumbs" ${s.loadEmbedThumbs === false ? '' : 'checked'}>
             <span class="settings-switch-slider"></span>
           </label>
         </div>
         <div class="settings-row">
           <div class="settings-row-label"><strong>Autoplay video embeds</strong><span>Start embeds muted when ¾ visible (requires thumbnails; loads the player without a tap)</span></div>
           <label class="settings-switch">
-            <input type="checkbox" id="set-autoplay-embeds" ${s.autoplayEmbeds === true ? 'checked' : ''}>
+            <input type="checkbox" id="set-autoplay-embeds" ${s.autoplayEmbeds === false ? '' : 'checked'}>
             <span class="settings-switch-slider"></span>
           </label>
         </div>
@@ -7899,7 +7903,7 @@ class SayIt {
           const s2 = this._getSettings();
           /* Auto-embedding loads Google/Vimeo iframes without a click —
              OPT-IN only, and never while strict embed privacy is on. */
-          if (s2.dataSaver || s2.autoplayEmbeds !== true || s2.loadEmbedThumbs !== true) return;
+          if (s2.dataSaver || s2.autoplayEmbeds === false || s2.loadEmbedThumbs === false) return;
           if (entry.intersectionRatio >= 0.75) this._playFacade(el, true);
         });
       }, { threshold: [0.25, 0.75] });
@@ -8165,9 +8169,6 @@ class SayIt {
               <span class="act-icon">${this.icon(isLiked ? 'ic-heart-full' : 'ic-heart-empty')}</span>
               <span class="act-count">${lcLabel}</span>
             </button>
-            <button class="act-btn act-tip" data-action="tip" title="Tip PLS" aria-label="Tip the author">
-              <span class="act-icon">💎</span>
-            </button>
             ${engagementHTML}
             </div><!-- /.post-actions-left -->
             <div class="post-actions-right">
@@ -8214,6 +8215,8 @@ class SayIt {
         <a class="post-avatar-link" href="#/profile/${utils.safe(post.reporter)}"
           aria-label="View profile" tabindex="-1"><img src="${utils.safe(picUrl)}" class="post-avatar" alt=""
           loading="lazy" data-fallback-src="image1.jpeg"></a>
+        <button class="post-menu-btn post-tip-btn" data-action="tip" title="Tip PLS"
+          aria-label="Tip the author">💎</button>
         <button class="post-menu-btn" data-action="menu" title="More options"
           aria-label="More options" aria-haspopup="menu" aria-expanded="false">${this.icon('ic-menu')}</button>
         <div class="post-col">
@@ -9538,6 +9541,8 @@ class SayIt {
           <span class="hero-handle" role="button" tabindex="0" data-addr="${utils.safe(post.reporter)}"
             title="Click to copy address">@${this.trunc(post.reporter)}</span>
         </div>
+        <button class="post-menu-btn post-tip-btn" data-action="tip" title="Tip PLS"
+          aria-label="Tip the author">💎</button>
         <button class="post-menu-btn" data-action="menu" title="More options"
           aria-label="More options" aria-haspopup="menu" aria-expanded="false">${this.icon('ic-menu')}</button>
       </div>

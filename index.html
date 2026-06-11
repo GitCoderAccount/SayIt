@@ -666,10 +666,14 @@ nav { flex:1; padding:4px 0; }
 .act-count { font-size:13px; }
 .act-reply:hover           { color:var(--primary-lt); }
 .act-reply:hover .act-icon { background:var(--primary-dim); }
-.act-tip:hover .act-icon { background:rgba(255,215,0,0.12); }
-.act-tip:hover           { color:#ffd700; }
 .tip-presets { display:flex; gap:8px; flex-wrap:wrap; }
-.act-tip .act-icon { font-size:15px; }
+/* Tip button rides next to the ⋯ menu (top-right of each post).
+   Doubled class beats .post-menu-btn's later right:12px. */
+.post-menu-btn.post-tip-btn { right:48px; font-size:14px; }
+.post-menu-btn.post-tip-btn:hover { background:rgba(255,215,0,0.12); color:#ffd700; }
+/* In the thread hero both buttons are static flex items. */
+.thread-orig-item .hero-hdr .post-tip-btn { position:static; opacity:0.6; margin-left:auto; }
+.thread-orig-item .hero-hdr .post-tip-btn + .post-menu-btn { margin-left:4px; }
 .act-repost:hover           { color:var(--green); }
 .act-repost:hover .act-icon { background:rgba(0,186,124,0.1); }
 .act-like:hover             { color:#f91880; }
