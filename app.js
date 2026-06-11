@@ -6,7 +6,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260611-146';
+const SW_CACHE_VER = '20260611-147';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -962,22 +962,42 @@ class SpaceRTC {
 
   start() {
     this.onStatus('Connecting to signaling…');
-    let opened = 0;
-    SpaceRTC.TRACKERS.forEach(url => {
-      let ws;
-      try { ws = new WebSocket(url); } catch { return; }
-      this.sockets.push(ws);
-      ws.onopen = () => { opened++; this.onStatus('Looking for participants…'); this._announce(ws); };
-      ws.onmessage = e => this._onMessage(ws, e);
-      ws.onerror = () => { /* tracker down — others may still work */ };
-    });
+    this._open = new Set();
+    SpaceRTC.TRACKERS.forEach(url => this._dial(url, 0));
     /* re-announce periodically so late joiners find us */
     this._interval = setInterval(() => {
       this.sockets.forEach(ws => { if (ws.readyState === 1) this._announce(ws); });
     }, 50000);
     setTimeout(() => {
-      if (!this.destroyed && opened === 0) this.onStatus('✗ No signaling tracker reachable — try again later');
+      if (!this.destroyed && this._open.size === 0) this.onStatus('✗ No signaling tracker reachable — try again later');
     }, 8000);
+  }
+
+  /* One tracker connection, self-healing. A down tracker logs a console
+     line per attempt (browser-level, can't be suppressed), so back off
+     exponentially and give up after a few tries while another tracker is
+     carrying the room — but never stop retrying if we'd otherwise have
+     no signaling at all. */
+  _dial(url, attempt) {
+    if (this.destroyed) return;
+    let ws;
+    try { ws = new WebSocket(url); } catch { return; }
+    this.sockets.push(ws);
+    ws.onopen = () => {
+      this._open.add(url);
+      this.onStatus(`Looking for participants… (signaling ${this._open.size}/${SpaceRTC.TRACKERS.length})`);
+      this._announce(ws);
+    };
+    ws.onmessage = e => this._onMessage(ws, e);
+    ws.onerror = () => { /* close fires next; reconnect handled there */ };
+    ws.onclose = () => {
+      this._open.delete(url);
+      this.sockets = this.sockets.filter(s => s !== ws);
+      if (this.destroyed) return;
+      if (attempt < 4 || this._open.size === 0) {
+        setTimeout(() => this._dial(url, attempt + 1), Math.min(30000, 2000 * 2 ** attempt));
+      }
+    };
   }
 
   async _newPC(remoteLabel) {
@@ -1096,6 +1116,7 @@ class SpaceRTC {
   destroy() {
     this.destroyed = true;
     clearInterval(this._interval);
+    this._open?.clear();
     this.sockets.forEach(ws => { try { ws.close(); } catch { /* closing */ } });
     [...this.pcs.keys()].forEach(k => this._dropPeer(k));
     this.offers.forEach(pc => { try { pc.close(); } catch { /* closing */ } });
@@ -2168,7 +2189,8 @@ class SayIt {
     const frame = document.createElement('iframe');
     frame.src = src;
     frame.className = 'post-yt-frame';
-    frame.allowFullscreen = true;
+    /* fullscreen rides the allow list; setting allowFullscreen too makes
+       Chrome warn that allow takes precedence. */
     frame.setAttribute('allow', 'autoplay;accelerometer;clipboard-write;encrypted-media;gyroscope;picture-in-picture;fullscreen');
     frame.setAttribute('title', yt ? 'YouTube video' : 'Vimeo video');
     el.innerHTML = '';
@@ -7443,30 +7465,25 @@ class SayIt {
     if (text.startsWith(TIP_PREFIX)) return null; /* tips surface via notifications, never as posts */
     /* SPACE announcements are feed posts with a live-room card. */
     if (text.startsWith(SPACE_PREFIX)) {
-      try {
-        const rest = text.slice(SPACE_PREFIX.length);
-        const nl = rest.indexOf('\n\n');
-        const meta = JSON.parse(nl >= 0 ? rest.slice(0, nl) : rest);
-        const title = (nl >= 0 ? rest.slice(nl + 2) : '').trim() || 'Live Space';
-        if (typeof meta?.r === 'string' && /^[a-f0-9]{16,40}$/.test(meta.r)) {
-          return {
-            content: text, display: title, parentTx: null, repostOf: null,
-            poll: null, postType: 'space',
-            space: { roomId: meta.r, startsMs: Number(meta.s) || 0, title },
-            reactionTarget: null, direction: null,
-            reporter: tx.from?.toLowerCase(),
-            to: tx.to?.toLowerCase() ?? null,
-            channel: tx.to?.toLowerCase(),
-            timestamp: tx.timeStamp
-              ? new Date(Number(tx.timeStamp) * 1000).toISOString()
-              : new Date().toISOString(),
-            txHash: hash,
-            blockNumber: tx.blockNumber ? Number(tx.blockNumber) : null,
-            mode: opts.mode || 'main',
-            ...opts.extra,
-          };
-        }
-      } catch { /* malformed SPACE json — fall through to plain post */ }
+      const space = this._parseSpacePayload(text);
+      if (space) {
+        return {
+          content: text, display: space.title, parentTx: null, repostOf: null,
+          poll: null, postType: 'space', space,
+          reactionTarget: null, direction: null,
+          reporter: tx.from?.toLowerCase(),
+          to: tx.to?.toLowerCase() ?? null,
+          channel: tx.to?.toLowerCase(),
+          timestamp: tx.timeStamp
+            ? new Date(Number(tx.timeStamp) * 1000).toISOString()
+            : new Date().toISOString(),
+          txHash: hash,
+          blockNumber: tx.blockNumber ? Number(tx.blockNumber) : null,
+          mode: opts.mode || 'main',
+          ...opts.extra,
+        };
+      }
+      /* malformed SPACE json — fall through to plain post */
     }
     /* Community notes + ratings are not feed posts — gathered via _scanChannelNotes. */
     if (text.startsWith(NOTE_PREFIX) || text.startsWith(NOTERATE_PREFIX)) return null;
@@ -8383,6 +8400,7 @@ class SayIt {
      are stripped from the text preview and shown as a small thumbnail
      (images) or a ▶ Video chip instead of raw link text — X-style. */
   _quoteCardInner(orig) {
+    this._reviveSpace(orig);
     const c    = this.state.profCache[orig.reporter] || {};
     const name = c.username ? utils.safe(c.username) : this.trunc(orig.reporter);
     const pic  = utils.safe(utils.safeUrl(c.picUrl) || 'image1.jpeg');
@@ -8443,6 +8461,7 @@ class SayIt {
         <span style="color:var(--muted);font-size:13px;margin-left:4px">· ${this.relTime(orig.timestamp)}</span>
       </div>
       ${body ? `<div class="repost-card-body">${body}</div>` : ''}
+      ${orig.space ? this._spaceStripHTML(orig.space) : ''}
       ${mediaHtml}`;
   }
 
@@ -8539,6 +8558,7 @@ class SayIt {
   }
 
   postHTML(post, inModal, replyMap, likeMap, repostMap, engagerMap = null) {
+    this._reviveSpace(post);
     const expanded = this.state.expanded.has(post.txHash);
     /* Profile + verified badge (own profile vs. cached other-user profile) */
     const { picUrl, displayName, verifiedBadge, hasProfile } = this._postProfileFields(post);
@@ -9878,6 +9898,46 @@ class SayIt {
     el.appendChild(frame);
   }
 
+  /* Decode a SPACE: payload → { roomId, startsMs, title } or null.
+     Single source of truth — used by the chain parser and by _reviveSpace. */
+  _parseSpacePayload(text) {
+    if (typeof text !== 'string' || !text.startsWith(SPACE_PREFIX)) return null;
+    try {
+      const rest = text.slice(SPACE_PREFIX.length);
+      const nl = rest.indexOf('\n\n');
+      const meta = JSON.parse(nl >= 0 ? rest.slice(0, nl) : rest);
+      const title = (nl >= 0 ? rest.slice(nl + 2) : '').trim() || 'Live Space';
+      if (typeof meta?.r === 'string' && /^[a-f0-9]{16,40}$/.test(meta.r)) {
+        return { roomId: meta.r, startsMs: Number(meta.s) || 0, title };
+      }
+    } catch { /* malformed SPACE json */ }
+    return null;
+  }
+
+  /* Posts cached before the Space feature shipped carry the raw SPACE:
+     payload but no .space field, so they rendered as plain text in some
+     feeds while freshly-parsed ones got the live card. Re-derive at every
+     render entry point; no-op for everything else. */
+  _reviveSpace(post) {
+    if (!post || post.space || typeof post.content !== 'string'
+      || !post.content.startsWith(SPACE_PREFIX)) return post;
+    const space = this._parseSpacePayload(post.content);
+    if (space) {
+      post.space = space;
+      post.postType = 'space';
+      post.display = space.title;
+    }
+    return post;
+  }
+
+  /* Compact LIVE strip for quote cards — no Join button there because the
+     feed delegate resolves actions against the OUTER post; tapping the
+     quote opens the space post's own thread, which has the full card. */
+  _spaceStripHTML(sp) {
+    const live = !sp.startsMs || sp.startsMs <= Date.now();
+    return `<div class="space-strip">${live ? '🔴 LIVE' : '🎙 Scheduled'} · Audio Space</div>`;
+  }
+
   _spaceCardHTML(post) {
     const sp = post.space;
     const live = !sp.startsMs || sp.startsMs <= Date.now();
@@ -9919,7 +9979,8 @@ class SayIt {
   }
 
   async joinSpace(post) {
-    const sp = post.space;
+    const sp = this._reviveSpace(post).space;
+    if (!sp) return;
     if (this._spaceRoom) this.leaveSpace();
     const body = `
       <div class="space-room">
@@ -10053,6 +10114,7 @@ class SayIt {
      timestamp line, then the standard action bar. Action buttons carry the
      same data-action attributes, so the feed delegation handles them. */
   _threadHeroHTML(post, replyMap) {
+    this._reviveSpace(post);
     const { picUrl, displayName, verifiedBadge } = this._postProfileFields(post);
     const { text: bodyHtml, images: imgHtml, embeds: embedHtml } = utils.linkify(post.display, post.display);
     const repostCard = this._postRepostCard(post);
@@ -10077,6 +10139,7 @@ class SayIt {
       </div>
       <div class="hero-body">${bodyHtml}</div>
       ${post.poll ? this._pollHTML(post) : ''}
+      ${post.space ? this._spaceCardHTML(post) : ''}
       ${repostCard}
       ${embedHtml || ''}
       ${imgHtml ? `<div class="post-images">${imgHtml}</div>` : ''}
