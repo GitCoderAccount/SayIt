@@ -3140,6 +3140,10 @@ html.force-reduce-motion *, html.force-reduce-motion *::before, html.force-reduc
 <!-- Profile popup card — appears on click of post-name/post-avatar -->
 <div class="profile-popup" id="profile-popup" role="dialog" aria-label="Profile preview"></div>
 
+<!-- Classic scripts share the global lexical scope: core.js (constants,
+     utils, SpaceRTC) and cache.js (IndexedDB Cache) load before app.js. -->
+<script src="core.js"></script>
+<script src="cache.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
