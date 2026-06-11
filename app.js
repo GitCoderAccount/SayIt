@@ -6,7 +6,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260611-148';
+const SW_CACHE_VER = '20260611-149';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -939,7 +939,7 @@ class SpaceRTC {
   ];
   static ICE = { iceServers: [{ urls: 'stun:stun.cloudflare.com:3478' }] };
 
-  constructor(roomId, micStream, { onStatus, onPeers } = {}) {
+  constructor(roomId, micStream, { onStatus, onPeers, onCtl, onPeerGone } = {}) {
     /* info_hash must be exactly 20 bytes; roomId is 16 bytes hex → pad. */
     this.hash = SpaceRTC.roomHash(roomId);
     this.peerId = [...crypto.getRandomValues(new Uint8Array(20))]
@@ -947,6 +947,9 @@ class SpaceRTC {
     this.mic = micStream;
     this.onStatus = onStatus || (() => {});
     this.onPeers = onPeers || (() => {});
+    this.onCtl = onCtl || (() => {});         /* (label, msg) — control message from a peer */
+    this.onPeerGone = onPeerGone || (() => {});
+    this.identity = null;                     /* {addr,name,ts,sig} sent on ctl open */
     this.sockets = [];
     this.pcs = new Map();      /* remote peer_id → RTCPeerConnection */
     this.audioEls = new Map(); /* remote peer_id → <audio> */
@@ -1081,24 +1084,34 @@ class SpaceRTC {
     };
   }
 
-  async _newPC(remoteLabel) {
+  async _newPC(remoteLabel, isOfferer) {
     const pc = new RTCPeerConnection(SpaceRTC.ICE);
+    /* The label is LIVE: a PC we created for an offer ('offer:<id>') is
+       re-labeled to the remote's real peer_id when answered. Handlers read
+       pc._label at fire time so audio elements and drops stay keyed
+       consistently (fixed: drops used to miss the re-keyed audio el). */
+    pc._label = remoteLabel;
     this.mic.getTracks().forEach(t => pc.addTrack(t, this.mic));
+    /* Per-peer 'ctl' data channel: identity claims + host controls. The
+       offerer creates it; the answerer receives it via ondatachannel. */
+    if (isOfferer) this._wireCtl(pc, pc.createDataChannel('ctl'));
+    pc.ondatachannel = ev => { if (ev.channel.label === 'ctl') this._wireCtl(pc, ev.channel); };
     pc.ontrack = ev => {
-      let el = this.audioEls.get(remoteLabel);
+      const label = pc._label;
+      let el = this.audioEls.get(label);
       if (!el) {
         el = document.createElement('audio');
         el.autoplay = true;
         el.style.display = 'none';
         document.body.appendChild(el);
-        this.audioEls.set(remoteLabel, el);
+        this.audioEls.set(label, el);
       }
       el.srcObject = ev.streams[0] || new MediaStream([ev.track]);
       this._peersChanged();
     };
     pc.onconnectionstatechange = () => {
       if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) {
-        this._dropPeer(remoteLabel);
+        this._dropPeer(pc._label);
       } else if (pc.connectionState === 'connected') {
         this.onStatus('Live — connected');
         this._peersChanged();
@@ -1106,6 +1119,26 @@ class SpaceRTC {
     };
     return pc;
   }
+
+  _wireCtl(pc, ch) {
+    pc._ctl = ch;
+    ch.onopen = () => { if (this.identity) this._ctlSend(ch, { t: 'hi', ...this.identity }); };
+    ch.onmessage = e => {
+      let msg;
+      try { msg = JSON.parse(e.data); } catch { return; }
+      if (msg && typeof msg.t === 'string') this.onCtl(pc._label, msg);
+    };
+  }
+
+  _ctlSend(ch, msg) {
+    if (ch?.readyState === 'open') {
+      try { ch.send(JSON.stringify(msg)); } catch { /* racing close */ }
+    }
+  }
+
+  broadcast(msg) { this.pcs.forEach(pc => this._ctlSend(pc._ctl, msg)); }
+
+  sendTo(label, msg) { this._ctlSend(this.pcs.get(label)?._ctl, msg); }
 
   _gathered(pc) {
     return new Promise(res => {
@@ -1122,7 +1155,7 @@ class SpaceRTC {
     const offers = [];
     for (let i = 0; i < 4; i++) {
       const id = [...crypto.getRandomValues(new Uint8Array(20))].map(b => b.toString(16).padStart(2, '0')).join('');
-      const pc = await this._newPC('offer:' + id);
+      const pc = await this._newPC('offer:' + id, true);
       const offer = await pc.createOffer({ offerToReceiveAudio: true });
       await pc.setLocalDescription(offer);
       await this._gathered(pc);
@@ -1148,6 +1181,7 @@ class SpaceRTC {
       if (pc && !pc.currentRemoteDescription) {
         const remote = hex(msg.peer_id) || ('peer:' + id);
         this.offers.delete(id);
+        pc._label = remote; /* re-key before media/ctl start flowing */
         this.pcs.set(remote, pc);
         try { await pc.setRemoteDescription(msg.answer); } catch { this._dropPeer(remote); }
       }
@@ -1176,10 +1210,11 @@ class SpaceRTC {
   _dropPeer(label) {
     const pc = this.pcs.get(label);
     if (pc) { try { pc.close(); } catch { /* already closed */ } }
-    this.pcs.delete(label);
+    const had = this.pcs.delete(label);
     const el = this.audioEls.get(label);
     if (el) { el.remove(); this.audioEls.delete(label); }
     this._peersChanged();
+    if (had) this.onPeerGone(label);
   }
 
   _peersChanged() {
@@ -10175,15 +10210,21 @@ class SayIt {
       const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
       const room = new SpaceRTC(sp.roomId, mic, {
         onStatus: t => { const el = status(); if (el) el.textContent = t; },
-        onPeers: n => {
-          const el = this.g('space-peers');
-          if (el) el.innerHTML = `<span class="space-peer-pill">You</span>` +
-            Array.from({ length: n }, (_, i) => `<span class="space-peer-pill">Peer ${i + 1}</span>`).join('');
-        },
+        onPeers: () => this._renderSpaceRoster(),
+        onCtl: (label, msg) => this._onSpaceCtl(label, msg),
+        onPeerGone: label => this._onSpacePeerGone(label),
       });
       this._spaceRoom = room;
       this._spaceRoomPost = post;
+      this._spacePeers = new Map();   /* label → {addr, name, verified} */
+      this._spaceCohosts = new Set(); /* lowercase addresses granted by the host */
+      this._spaceHostLabel = isHost ? 'me' : null;
+      /* Identity: one free wallet signature proves who you are to the room
+         (that's what makes the Host chip unforgeable). Declining the
+         signature just joins you as a guest. */
+      room.identity = await this._spaceIdentity(sp.roomId, room.peerId);
       room.start();
+      this._renderSpaceRoster();
       const muteBtn = this.g('space-mute');
       if (muteBtn) muteBtn.onclick = () => {
         const on = room.toggleMute();
@@ -10199,12 +10240,150 @@ class SayIt {
     }
   }
 
-  /* Host-only: publish the on-chain end marker (to the same channel as the
+  /* Sign a per-room identity claim. The message binds room + OUR peerId +
+     a timestamp, so a copied signature only ever vouches for that peer in
+     that room within a 15-minute window — best-effort anti-replay. */
+  async _spaceIdentity(roomId, peerId) {
+    if (!this.signer || !this.state.signerAddr) return null;
+    try {
+      const ts = Date.now();
+      const sig = await this.signer.signMessage(`Say It DeFi Space\nroom:${roomId}\npeer:${peerId}\nts:${ts}`);
+      const name = this.state.profCache[this.state.signerAddr]?.username || null;
+      return { addr: this.state.signerAddr, name, ts, sig };
+    } catch { return null; } /* declined — join as guest */
+  }
+
+  /* Is this peer the (verified) host, or a co-host the host appointed? */
+  _labelIsSpaceAdmin(label) {
+    if (label === this._spaceHostLabel) return true;
+    const info = this._spacePeers?.get(label);
+    return !!(info?.verified && info.addr && this._spaceCohosts?.has(info.addr));
+  }
+
+  _onSpaceCtl(label, msg) {
+    const room = this._spaceRoom, post = this._spaceRoomPost;
+    if (!room || !post) return;
+    if (msg.t === 'hi') {
+      const info = { addr: null, verified: false,
+        name: typeof msg.name === 'string' ? msg.name.slice(0, 40) : null };
+      /* Verify the wallet-signed claim; any failure demotes to guest. */
+      if (typeof msg.addr === 'string' && /^0x[a-f0-9]{40}$/i.test(msg.addr)
+        && typeof msg.sig === 'string' && Math.abs(Date.now() - Number(msg.ts)) < 15 * 60 * 1000) {
+        try {
+          const m = `Say It DeFi Space\nroom:${post.space.roomId}\npeer:${label}\nts:${msg.ts}`;
+          if (ethers.verifyMessage(m, msg.sig).toLowerCase() === msg.addr.toLowerCase()) {
+            info.addr = msg.addr.toLowerCase();
+            info.verified = true;
+            this.fetchOtherProfile(info.addr); /* roster avatar + name */
+          }
+        } catch { /* bad signature — guest */ }
+      }
+      this._spacePeers.set(label, info);
+      if (info.verified && info.addr === post.reporter) {
+        this._spaceHostLabel = label;
+        clearTimeout(this._spaceHostGone); /* host (re)arrived */
+      }
+      this._renderSpaceRoster();
+    } else if (msg.t === 'end') {
+      if (!this._labelIsSpaceAdmin(label)) return;
+      utils.toast('The host ended this Space');
+      (this._spaceEnds ||= new Map()).set(post.txHash, post.reporter);
+      this.leaveSpace();
+      this._closeGenericModal();
+      this.renderFeed();
+    } else if (msg.t === 'mute') {
+      /* Host/co-host asked US to mute. Soft enforcement: mute locally,
+         keep the unmute button (X lets speakers unmute themselves too). */
+      if (!this._labelIsSpaceAdmin(label) || msg.peer !== room.peerId) return;
+      const t = room.mic.getAudioTracks()[0];
+      if (t && t.enabled) {
+        t.enabled = false;
+        const b = this.g('space-mute');
+        if (b) b.textContent = '🔇 Unmute';
+        utils.toast('The host muted your mic — you can unmute');
+      }
+    } else if (msg.t === 'cohost') {
+      /* Only the verified host can appoint co-hosts. */
+      if (label !== this._spaceHostLabel) return;
+      if (typeof msg.addr === 'string' && /^0x[a-f0-9]{40}$/i.test(msg.addr)) {
+        this._spaceCohosts.add(msg.addr.toLowerCase());
+        if (msg.addr.toLowerCase() === this.state.signerAddr) utils.toast('The host made you a co-host 🎉');
+        this._renderSpaceRoster();
+      }
+    }
+  }
+
+  _onSpacePeerGone(label) {
+    this._spacePeers?.delete(label);
+    this._renderSpaceRoster();
+    /* Host left: give them 60s to reconnect, then the Space is over for
+       everyone (X behavior — the room dies with the host). */
+    if (label === this._spaceHostLabel && this._spaceRoom) {
+      this._spaceHostLabel = null;
+      clearTimeout(this._spaceHostGone);
+      this._spaceHostGone = setTimeout(() => {
+        if (!this._spaceRoom || this._spaceHostLabel) return;
+        const post = this._spaceRoomPost;
+        utils.toast('The host left — Space ended');
+        if (post) (this._spaceEnds ||= new Map()).set(post.txHash, post.reporter);
+        this.leaveSpace();
+        this._closeGenericModal();
+        this.renderFeed();
+      }, 60000);
+    }
+  }
+
+  /* Roster: me + every connected peer, with avatar, name, role chip, and —
+     for the host/co-hosts — per-peer mute + co-host controls. */
+  _renderSpaceRoster() {
+    const el = this.g('space-peers');
+    const room = this._spaceRoom, post = this._spaceRoomPost;
+    if (!el || !room || !post) return;
+    const me = this.state.signerAddr;
+    const iAmHost = !!me && me === post.reporter;
+    const iAmAdmin = iAmHost || (!!me && this._spaceCohosts.has(me));
+    const chip = (label, addr, name, verified, isMe) => {
+      const prof = addr ? this.state.profCache[addr] : null;
+      const pic = utils.safe(utils.safeUrl(prof?.picUrl) || 'image1.jpeg');
+      const shown = isMe ? 'You' : (name || prof?.username || (addr ? this.trunc(addr) : 'Guest'));
+      const role = addr === post.reporter && (verified || isMe) ? 'Host'
+        : (addr && this._spaceCohosts.has(addr)) ? 'Co-host' : '';
+      const btns = (iAmAdmin && !isMe)
+        ? `<button class="space-chip-btn" data-space-mute="${utils.safe(label)}" title="Mute their mic">🔇</button>`
+          + (iAmHost && verified && addr && addr !== post.reporter && !this._spaceCohosts.has(addr)
+            ? `<button class="space-chip-btn" data-space-cohost="${utils.safe(addr)}" title="Make co-host">⭐</button>` : '')
+        : '';
+      return `<span class="space-peer-pill${role === 'Host' ? ' is-host' : ''}">
+        <img src="${pic}" class="space-pill-pic" alt="" data-fallback-src="image1.jpeg">
+        ${utils.safe(String(shown).slice(0, 24))}${role ? ` <span class="space-host-chip">${role}</span>` : ''}${btns}</span>`;
+    };
+    let html = chip('me', me, null, true, true);
+    for (const [label, pc] of room.pcs) {
+      if (pc.connectionState !== 'connected') continue;
+      const info = this._spacePeers.get(label);
+      html += chip(label, info?.addr || null, info?.name || null, !!info?.verified, false);
+    }
+    el.innerHTML = html;
+    el.querySelectorAll('[data-space-mute]').forEach(b => {
+      b.onclick = () => { room.sendTo(b.dataset.spaceMute, { t: 'mute', peer: b.dataset.spaceMute }); utils.toast('Mute request sent'); };
+    });
+    el.querySelectorAll('[data-space-cohost]').forEach(b => {
+      b.onclick = () => {
+        this._spaceCohosts.add(b.dataset.spaceCohost);
+        room.broadcast({ t: 'cohost', addr: b.dataset.spaceCohost });
+        this._renderSpaceRoster();
+      };
+    });
+  }
+
+  /* Host-only: tell the room it's over (instant, via ctl channels), then
+     publish the on-chain end marker (to the same channel as the
      announcement so every scanner sees it), then tear the room down. The
-     marker is one tiny tx; if the host declines it, the room still closes
-     locally and the empty-room probe ends the card for everyone within
-     minutes. */
+     marker is one tiny tx; if the host declines it, the room still closed
+     for everyone present, and the empty-room probe flips the card for
+     everyone else within minutes. */
   async endSpace(post) {
+    this._spaceRoom?.broadcast({ t: 'end' });
     const ok = await this.publish(`${SPACE_END_PREFIX}${post.txHash}`, null, post.channel || post.to);
     if (ok) {
       (this._spaceEnds ||= new Map()).set(post.txHash, post.reporter);
@@ -10216,9 +10395,13 @@ class SayIt {
   }
 
   leaveSpace() {
+    clearTimeout(this._spaceHostGone);
     this._spaceRoom?.destroy();
     this._spaceRoom = null;
     this._spaceRoomPost = null;
+    this._spacePeers = null;
+    this._spaceCohosts = null;
+    this._spaceHostLabel = null;
   }
 
   /* ── Tipping ─────────────────────────────────────────────────────────

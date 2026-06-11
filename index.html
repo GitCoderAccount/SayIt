@@ -2215,7 +2215,15 @@ body.mode-settings #mobile-fab { display:none; }
 .space-peer-pill {
   background:var(--bg-mid); border:1px solid var(--border); border-radius:9999px;
   padding:5px 14px; font-size:13px; color:var(--text); font-weight:600;
+  display:inline-flex; align-items:center; gap:7px;
 }
+.space-peer-pill.is-host { border-color:var(--primary-dim); }
+.space-pill-pic { width:18px; height:18px; border-radius:50%; object-fit:cover; }
+.space-chip-btn {
+  background:none; border:none; cursor:pointer; font-size:13px; padding:0 2px;
+  opacity:0.7; line-height:1;
+}
+.space-chip-btn:hover { opacity:1; }
 .space-room-note { font-size:12px; color:var(--muted); margin-top:12px; line-height:1.5; }
 .space-strip {
   margin-top:8px; padding:8px 12px; border-radius:10px; font-size:12px; font-weight:800; color:#ff6e6e;
