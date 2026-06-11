@@ -2176,6 +2176,29 @@ body.mode-settings #mobile-fab { display:none; }
   content:''; position:absolute; left:35px; top:60px; bottom:-2px;
   width:2px; background:var(--border);
 }
+/* …and the focal post continues that line up from its own avatar, so the
+   chain never visually cuts at the item boundary. */
+.thread-orig-item { position:relative; }
+.thread-orig-item.has-ancestors::before {
+  content:''; position:absolute; left:35px; top:0; height:14px;
+  width:2px; background:var(--border);
+}
+
+/* X-style conversation module: a feed reply carries its parent above it.
+   The parent block draws the connector from its avatar down through the
+   block gap to the reply's avatar. */
+.feed-parent-item { position:relative; cursor:pointer; padding-bottom:6px; }
+.feed-parent-item::after {
+  content:''; position:absolute; left:35px; top:58px; bottom:-14px;
+  width:2px; background:var(--border);
+}
+.feed-parent-item.feed-parent-missing {
+  display:flex; align-items:center; gap:8px; padding:10px 0 14px 4px;
+}
+.feed-parent-item.feed-parent-missing::after { display:none; }
+/* Parent's own tip/menu buttons sit lower so they don't collide with the
+   host post's absolute top-right buttons. */
+.feed-parent-item .post-menu-btn { display:none; }
 
 /* X-style focal post on the thread page */
 .thread-orig-item .hero-hdr { display:flex; align-items:center; gap:10px; }

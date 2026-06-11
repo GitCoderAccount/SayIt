@@ -6,7 +6,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260611-140';
+const SW_CACHE_VER = '20260611-141';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -2043,9 +2043,9 @@ class SayIt {
       return;
     }
     const action = e.target.closest('[data-action]')?.dataset.action;
-    const item   = e.target.closest('.post-item');
+    const item   = e.target.closest('.feed-parent-item, .post-item');
     if (!item) return;
-    const post = this._postMap.get(item.dataset.txhash);
+    const post = this._postMap.get(item.dataset.txhash) || this._parentCache?.get(item.dataset.txhash);
     if (!post) return;
 
     if (action === 'expand') {
@@ -8207,10 +8207,27 @@ class SayIt {
     /* Repost / quote card + badges */
     const repostCard = this._postRepostCard(post);
     const { dirBadge, toLabel, replyBadge } = this._postBadges(post);
+    /* X-style conversation module: a reply shown in a FEED carries its
+       parent post above it, joined by a thread line — the "Replying to"
+       badge is redundant then. Thread pages render their own chain
+       (inModal=true there), so this only applies to feed surfaces. */
+    let parentModule = '';
+    const showParent = !inModal && !!post.parentTx;
+    if (showParent) {
+      const parent = this._postMap.get(post.parentTx) || this._parentCache?.get(post.parentTx);
+      if (parent) {
+        parentModule = `<div class="feed-parent-item" data-txhash="${utils.safe(parent.txHash)}">${this.postHTML(parent, true, replyMap, likeMap, repostMap, engagerMap)}</div>`;
+      } else {
+        parentModule = `<div class="feed-parent-item feed-parent-missing" data-fp="${utils.safe(post.parentTx)}" data-txhash="${utils.safe(post.parentTx)}">
+          <span class="spinner sp-sm" aria-hidden="true"></span><span style="color:var(--muted);font-size:13px">Loading post…</span>
+        </div>`;
+        this._hydrateFeedParent(post.parentTx);
+      }
+    }
     const fullDate = new Date(post.timestamp).toLocaleString();
     const relT     = this.relTime(post.timestamp);
 
-    return `
+    return `${parentModule}
       <div class="post-hdr">
         <a class="post-avatar-link" href="#/profile/${utils.safe(post.reporter)}"
           aria-label="View profile" tabindex="-1"><img src="${utils.safe(picUrl)}" class="post-avatar" alt=""
@@ -8233,7 +8250,7 @@ class SayIt {
              >${utils.safe(relT)}</a>
             ${dirBadge}
           </div>
-          ${toLabel}${replyBadge}
+          ${toLabel}${showParent ? '' : replyBadge}
           ${post.repostOf ? `<div class="repost-label">
             <svg width="14" height="14" style="vertical-align:middle;margin-right:4px" aria-hidden="true"><use href="#ic-repost"/></svg>
             <span class="post-name">${displayName}</span> reposted</div>` : ''}
@@ -9436,6 +9453,42 @@ class SayIt {
     this._renderThreadPage(post);
   }
 
+  /* Resolve a feed-reply's parent post and patch its conversation-module
+     placeholder(s) in place. Same direct-hash strategy as quote cards. */
+  async _hydrateFeedParent(hash) {
+    this._fetchingParents = this._fetchingParents || new Set();
+    if (this._fetchingParents.has(hash)) return;
+    this._fetchingParents.add(hash);
+    try {
+      const parent = this._postMap.get(hash) || this._parentCache?.get(hash)
+        || await this._fetchTxByHash(hash);
+      if (parent) {
+        /* renderFeed clears _postMap on every render — module parents live
+           in their own bounded cache so they survive re-renders instead of
+           re-fetching forever. */
+        this._parentCache = this._parentCache || new Map();
+        this._parentCache.set(hash, parent);
+        if (this._parentCache.size > 300) {
+          this._parentCache.delete(this._parentCache.keys().next().value);
+        }
+      }
+      const nodes = document.querySelectorAll(`[data-fp="${hash}"]`);
+      if (!nodes.length) return;
+      nodes.forEach(ph => {
+        if (!parent) {
+          ph.innerHTML = '<span style="color:var(--muted);font-size:13px">Original post unavailable</span>';
+          return;
+        }
+        ph.classList.remove('feed-parent-missing');
+        ph.removeAttribute('data-fp');
+        ph.innerHTML = this.postHTML(parent, true, null, null);
+      });
+      if (parent?.reporter) this.fetchOtherProfile(parent.reporter);
+    } finally {
+      this._fetchingParents.delete(hash);
+    }
+  }
+
   /* ── Tipping ─────────────────────────────────────────────────────────
      A tip is a plain PLS transfer TO the post author whose input is
      TIP:0x<posthash>, so any client can attribute it to the post. The
@@ -9608,7 +9661,7 @@ class SayIt {
     this.g('feed').innerHTML = threadHeader + `
       <div class="thread-page">
         ${ancestorsHTML}
-        <div class="post-item thread-orig-item" data-txhash="${utils.safe(post.txHash)}"
+        <div class="post-item thread-orig-item${ancestors.length ? ' has-ancestors' : ''}" data-txhash="${utils.safe(post.txHash)}"
           style="cursor:default">
           ${origHTML}
         </div>
