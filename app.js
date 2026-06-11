@@ -6,7 +6,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260611-151';
+const SW_CACHE_VER = '20260611-152';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -4874,8 +4874,8 @@ class SayIt {
           archives) lives on this device only. Your IP address is visible, as with any website, to the
           infrastructure that serves content: the static host (GitHub Pages), the block-explorer API endpoint
           you configure, and the hosts of any media you choose to view. Embedded video previews and muted autoplay are ON by default for the best
-          feed experience — loading or playing an embed connects you to YouTube/Vimeo (and shared X/Twitter
-          posts, which load X's own embed only when you tap them) and is subject to those services' cookies. Turn both off right here (or enable Data saver) for a zero-third-party feed.
+          feed experience — loading or playing an embed connects you to YouTube/Vimeo, and shared X/Twitter
+          posts load X's own embed (full post, images &amp; video) as they scroll into view, subject to those services' cookies. Turn both off right here (or enable Data saver) and everything becomes click-to-load — zero third-party contact until you tap.
         </div>
         <div class="settings-row">
           <div class="settings-row-label"><strong>Load embed thumbnails</strong><span>Fetch YouTube/Vimeo preview images (connects to their servers as you scroll). Off = neutral cards; nothing contacts them until you tap.</span></div>
@@ -8544,7 +8544,7 @@ class SayIt {
        stop a cross-origin iframe, and it also stops click-started (sound)
        embeds once scrolled away. Strict one-playing rule across everything
        via _stopOtherMedia. */
-    const media = container.querySelectorAll('.post-vid-thumb, .post-yt-facade, .post-embed-playing');
+    const media = container.querySelectorAll('.post-vid-thumb, .post-yt-facade, .post-embed-playing, .x-embed-facade, .x-embed-loaded');
     if (!media.length && !reset) return;
     const st = this._getSettings();
     const autoplay = st.autoplayMedia !== false && !st.dataSaver;
@@ -8577,6 +8577,21 @@ class SayIt {
           if (el.classList.contains('post-embed-playing')) {
             if (!el.isConnected) { this._embObserver.unobserve(el); return; }
             if (entry.intersectionRatio < 0.25) this._revertEmbed(el);
+            return;
+          }
+          /* X embeds ride the same hysteresis: load X's iframe at ¾
+             visible (default ON, same gate as YT/Vimeo), unload back to
+             the facade when mostly gone — bounds memory and is the only
+             way to stop a cross-origin player. */
+          if (el.classList.contains('x-embed-loaded')) {
+            if (!el.isConnected) { this._embObserver.unobserve(el); return; }
+            if (entry.intersectionRatio < 0.25) this._revertXEmbed(el);
+            return;
+          }
+          if (el.classList.contains('x-embed-facade')) {
+            const s3 = this._getSettings();
+            if (s3.dataSaver || s3.autoplayEmbeds === false || s3.loadEmbedThumbs === false) return;
+            if (entry.intersectionRatio >= 0.75) this._loadXEmbed(el);
             return;
           }
           if (!el.classList.contains('post-yt-facade')) return;
@@ -10200,10 +10215,19 @@ class SayIt {
     frame.setAttribute('frameborder', '0');
     frame.setAttribute('title', 'Post on X');
     frame.setAttribute('allow', 'encrypted-media; picture-in-picture; fullscreen');
+    el._facadeHTML = el.innerHTML; /* so scrolling away can restore the facade */
     el.classList.remove('x-embed-facade');
     el.classList.add('x-embed-loaded');
     el.innerHTML = '';
     el.appendChild(frame);
+  }
+
+  /* Restore a loaded X embed back to its facade (scrolled away). */
+  _revertXEmbed(el) {
+    if (!el.classList.contains('x-embed-loaded') || el._facadeHTML == null) return;
+    el.innerHTML = el._facadeHTML;
+    el.classList.remove('x-embed-loaded');
+    el.classList.add('x-embed-facade');
   }
 
   /* Decode a SPACE: payload → { roomId, startsMs, title } or null.
