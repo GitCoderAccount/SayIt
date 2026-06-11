@@ -38,7 +38,9 @@ Say It DeFi is built for people who want to speak freely without being watched. 
 - **Your data stays on your device.** Caches, settings, and archives live in your browser and can be wiped from Settings anytime.
 - **You can verify all of this yourself** — open the in-app **"Verify it yourself"** page (More → 🛡️), watch your browser's Network tab, or read the source. Public scrutiny is the security model.
 
-As with any website, your IP is technically visible to whoever serves you bytes: the static host, the block-explorer API **you** configure in Settings, and the hosts of media **you** choose to view. For the best feed experience, videos and embedded previews (YouTube/Vimeo, and shared X posts) **autoplay/load by default** — which connects you to those providers. Prefer zero third-party contact? Flip it off in **Settings → Privacy** (or enable **Data saver**), and embeds become click-to-load with neutral placeholders.
+As with any website, your IP is technically visible to whoever serves you bytes: the static host, the block-explorer API **you** configure in Settings, and the hosts of media **you** choose to view. For the best feed experience, videos and embedded previews (YouTube/Vimeo, and shared **X/Twitter** posts) **autoplay/load by default** — which connects you to those providers. X embeds follow the same opt-out story as YouTube: they auto-load (full post, images, video via X's own iframe) as they scroll into view and unload when scrolled away. Prefer zero third-party contact? Flip it off in **Settings → Privacy** (or enable **Data saver**), and embeds become click-to-load with neutral placeholders; **strict** mode opens X externally instead of embedding.
+
+**Live Spaces and your network address.** Spaces are real-time audio, so they involve direct connections that the privacy notes above don't cover. In one honest sentence each: **speakers** join a peer-to-peer audio mesh, so each speaker's device sees the others' IP addresses; **listeners** connect only to the host, so only the host and the discovery trackers ever see your connection; and the optional **IP-masking** mode (Settings → Privacy) routes everything through a TURN relay you supply, so other participants see the relay's address rather than yours — though the trackers, like any host you connect to, still see your real IP, and your audio is end-to-end encrypted (DTLS-SRTP) either way.
 
 ---
 
@@ -48,7 +50,7 @@ As with any website, your IP is technically visible to whoever serves you bytes:
 - **Write anything** — no character limit. Long posts collapse behind a "Show more" expander.
 - **Threaded replies** rendered X-style: a reply in your feed carries the **original post above it**, joined by a thread line, and conversations show the full ancestor chain.
 - **Reposts and quote-posts** with the original embedded inline (including its media).
-- **Rich media** — images, GIFs, and video by URL (IPFS/Arweave auto-resolved). Videos **autoplay muted, one at a time**, and pause when scrolled off-screen. YouTube, Vimeo, and **X/Twitter posts** render as click-to-load embeds — a shared X post shows its full text, images, and **playable video** in place.
+- **Rich media** — images, GIFs, and video by URL (IPFS/Arweave auto-resolved). Videos **autoplay muted, one at a time**, and pause when scrolled off-screen. YouTube, Vimeo, and **X/Twitter posts** render inline — by default an X post **auto-loads as it scrolls into view** (full text, images, and **playable video** via X's own iframe) and unloads when scrolled away; switch it to click-to-load or strict (open-externally) in Settings → Privacy.
 - **Emoji picker**, draft autosave, and an **offline queue** that retries failed posts when you reconnect.
 
 ### Engagement
@@ -62,8 +64,18 @@ As with any website, your IP is technically visible to whoever serves you bytes:
 - **Search** people (by name **or** address), hashtags, and full post text — paste a **0x address** to jump to a profile/channel, or a **transaction hash** to open that post; Enter jumps straight there.
 - **Profile hovercards**, **Today's News**, **Latest Polls**, and **Who to follow** panels.
 
-### Live Spaces (experimental)
-- **Serverless audio rooms.** Announce a Space on-chain; the audio is a direct peer-to-peer WebRTC mesh between participants — no server, no accounts. Best with a small group (~8 speakers) in this first phase. (More → 🎙 Start a Space.)
+### Creator dashboard
+- A personal **Creator dashboard** (More → 🎬 Creator dashboard, the 📊 **Dashboard** button on your own profile, or `#/dashboard`) summarizes your reach: **tips received** (count, total PLS, and a per-day chart over 7/14/30 days), **likes received**, **top posts** (tips-first), **top supporters**, **followers gained**, and **Spaces hosted** — all computed **entirely locally** from your own cache, nothing sent anywhere.
+
+### Live Spaces (experimental — now a flagship)
+**Serverless, on-chain-announced audio rooms** — still experimental, but no longer a toy. There is no server and no account: a Space is announced as an on-chain post, and the audio rides direct peer-to-peer WebRTC. Spaces are **live-only and ephemeral** — nothing is recorded or played back, which is a privacy property, not a missing feature: when a Space ends, its audio is simply gone.
+
+- **Space cards everywhere.** A Space renders as an X-style card in every feed, thread, and quote (with stale-cache revive so it stays consistent): a pulsing **LIVE** dot, the host's avatar and a **Host** chip, a live **participant count** that refreshes while the card is on screen, and a **Listen live** button. Ended Spaces show a muted "Ended" state.
+- **Speakers and listeners.** Speakers form a small (≤8) audio mesh. Anyone else can **Listen live** with no microphone (receive-only): the host fans out a single WebAudio-mixed stream of all speakers to up to **40 listeners**, who only ever connect to the host. A listener can **request to speak** (wallet-signed); the host **Approves** to promote them into the speaker mesh.
+- **The player.** Tapping a card opens a **preview** (title, host, live count, Start listening). Joining mounts a persistent **bottom-right dock** — like X's player — that survives navigation: a collapsed pill that expands into a panel with a **live chat** nest at the top (messages are on-chain replies to the Space's announcement post), a **participants grid** with **speaking rings** (live audio-level detection, relayed from host to listeners), and controls (mute / request-to-speak / leave / End).
+- **Host controls and trust.** Room identity is **wallet-signed** (a signature over room + peer + timestamp, verified with `verifyMessage`), so the **Host** chip can't be forged. Hosts can **mute** participants and **grant co-host**. A host can **End** a Space for everyone instantly; if the host disconnects there's a 60-second grace period before auto-end.
+- **Auto-ending.** Empty rooms end themselves (a passive tracker probe sees zero people for 10+ minutes), and every Space has a 24-hour hard cap.
+- **IP-masking option (Settings → Privacy).** Optionally route your connection through a **TURN relay you supply**, so other participants see the relay's address instead of yours; audio stays end-to-end encrypted (DTLS-SRTP) regardless. It's **off by default** (no reliable free public TURN exists), and if you turn it on without configuring a relay, joining is **blocked** with an explicit "Join without masking" choice — never a silent fallback. The room UI carries role-aware privacy notes. (More → 🎙 Start a Space.)
 
 ### Channels, lists & organization
 - A **channel** is any address you post *to* — the main timeline, any wallet, or any **token contract** (which auto-shows the token's logo/name/socials, and lets the deployer/owner publish a verified profile).
@@ -77,7 +89,7 @@ As with any website, your IP is technically visible to whoever serves you bytes:
 ### Experience
 - **Progressive Web App**, installable, offline-aware.
 - **Three themes** — Dark, Dim, and Light — applied before first paint.
-- **X-style two-pane Settings**, a virtualized feed, real links (⌘/middle-click open new tabs), keyboard shortcuts (press <kbd>?</kbd>), and **local-first deep sync** that archives the feed's full history into your browser for instant search, threads, and analytics — exportable as a portable snapshot.
+- **X-style two-pane Settings**, a virtualized feed, real links (⌘/middle-click open new tabs), keyboard shortcuts (press <kbd>?</kbd>), and **local-first deep sync** that archives the feed's full history into your browser for instant search, threads, and analytics — exportable as a portable snapshot. A **deep-sync scope selector** (full history, or the last 300 / 100 pages, with an optional likes-archive toggle) controls how much to pull, and a **storage manager** shows what's cached (including the archived-likes count) with per-store clears for the likes archive and search index.
 
 ---
 
@@ -122,6 +134,7 @@ Everything is a transaction sent **to a channel/recipient address** with a UTF-8
 | `NOTE:0x<posthash>\n\n<text>` | A community note on a post |
 | `NOTERATE:0x<notehash>:h\|n` | Rate a note helpful / not (last rating wins) |
 | `SPACE:{json}\n\n<title>` | A live audio Space announcement |
+| `SPACE_END:0x<spacehash>` | End a Space — honored only from the Space's author |
 
 Likes, follows, votes, tips, etc. are derived by scanning and applying these in chain order, so any client computes the same state.
 
@@ -145,12 +158,12 @@ Most settings are adjustable in-app under **Settings** (two-pane, X-style): bloc
 
 ## Tech notes
 
-- **Three-file front-end** — `index.html` (HTML + CSS), `app.js` (all application JavaScript), and `sw.js` (service worker for PWA caching), plus a tiny `boot.js` pre-paint theme script. No framework, no bundler, no build pipeline. The only runtime dependency is **ethers.js v6**, pinned with an SRI integrity hash.
+- **Modular, build-free front-end** — six static files, no framework and no bundler: `index.html` (HTML + CSS), three classic scripts that share one global scope and load in order — `core.js` (constants, utils, the `SpaceRTC` engine) → `cache.js` (the IndexedDB cache layer) → `app.js` (the SayIt app and bootstrap) — plus `boot.js` (a tiny pre-paint theme script) and `sw.js` (the PWA service worker). For lint and tests, `.ci/extract-inline-script.js` **bundles core + cache + app** into a single `.ci/app.extracted.js`. The only runtime dependency is **ethers.js v6**, pinned with an SRI integrity hash.
 - **Trust but verify** — the explorer API is treated as an input, not an oracle: every transaction it returns is shape-validated at ingestion before anything touches a render path. A strict CSP, sink-level escaping, and delegated (never inline) event handlers form a layered defense.
 - **Local cache** in IndexedDB (posts, profiles, channels, search index, likes archive, offline queue) keeps the timeline fast; deep sync can archive full history locally.
 - **Resilient** — chain reads retry with backoff and fail over to a backup endpoint; external lookups degrade gracefully.
 - **Tested** — every push runs syntax checks, ESLint, protocol unit tests, and a headless-Chromium boot smoke test; a nightly job smokes the live site, and `.ci/regression.py` is a 16-check behavioral gate for releases.
-- **Deploys** are a push to the static host. After editing `index.html`/`app.js`, bump `SW_CACHE_VER` (CI enforces this).
+- **Deploys** are a push to the static host. Bump `SW_CACHE_VER` (in `app.js`) whenever any app asset changes — `index.html`, `app.js`, `core.js`, `cache.js`, or `boot.js` — so the service worker invalidates its cache (CI enforces this).
 
 ---
 
