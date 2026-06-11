@@ -6,7 +6,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260611-153';
+const SW_CACHE_VER = '20260611-154';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -576,7 +576,7 @@ class Cache {
   /* Row counts per store — powers the Settings storage overview. */
   async storeCounts() {
     await this._ready;
-    const names = ['posts', 'profiles', 'channels', 'search_index', 'pending_posts'];
+    const names = ['posts', 'profiles', 'channels', 'search_index', 'pending_posts', 'likes'];
     const out = {};
     await Promise.all(names.map(n => new Promise(res => {
       try {
@@ -917,6 +917,20 @@ class Cache {
     return new Promise((res, rej) => {
       const tx = this._db.transaction('posts','readwrite');
       tx.objectStore('posts').clear();
+      tx.oncomplete = res;
+      tx.onerror    = () => rej(tx.error);
+    });
+  }
+
+  /* Generic store wipe for the storage manager (likes archive, search
+     index). Only whitelisted names — never user-callable with arbitrary
+     store names. */
+  async clearStore(name) {
+    if (!['likes', 'search_index'].includes(name)) return;
+    await this._ready;
+    return new Promise((res, rej) => {
+      const tx = this._db.transaction(name, 'readwrite');
+      tx.objectStore(name).clear();
       tx.oncomplete = res;
       tx.onerror    = () => rej(tx.error);
     });
@@ -4128,8 +4142,12 @@ class SayIt {
     const st = this._deepSyncState();
     if (st.done) { st.done = false; st.lastPage = 0; st.saved = 0; } /* re-sync from scratch */
     try {
+      const scope = this._getSettings();
+      const maxPages = Number(scope.deepSyncMaxPages) || 0; /* 0 = full history */
+      const wantLikes = scope.deepSyncLikes !== false;
       while (this._deepSyncing) {
         const page = st.lastPage + 1;
+        if (maxPages && page > maxPages) { st.done = true; this._deepSyncing = false; this._setDeepSyncState(st); break; }
         let raw;
         try { raw = await this.apiFetch(MAIN_CHANNEL, page); }
         catch (err) {
@@ -4145,6 +4163,7 @@ class SayIt {
           if (parsed) { posts.push({ ...parsed, channel: MAIN_CHANNEL, mode: 'main' }); continue; }
           /* Reactions: archive LIKEs for engagement analytics (replies and
              reposts are posts — already archived above). */
+          if (!wantLikes) continue;
           try {
             const text = ethers.toUtf8String(tx.input).trim();
             if (text.startsWith(LIKE_PREFIX)) {
@@ -5155,10 +5174,23 @@ class SayIt {
         <div class="settings-row">
           <div class="settings-row-label">
             <strong>Deep sync</strong>
-            <span>Archive the main feed's full history into this browser — search, analytics and threads work from your own complete local copy. Resumes where it left off; new posts still arrive live.</span>
+            <span>Archive the main feed's history into this browser — search, analytics and threads work from your own complete local copy. Resumes where it left off; new posts still arrive live.</span>
             <span id="deep-sync-status" style="display:block;margin-top:4px;color:var(--primary-lt)"></span>
           </div>
           <button class="settings-btn" id="set-deep-sync">Start</button>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label"><strong>Deep sync scope</strong><span>How far back to archive, and whether to include the likes archive (powers engagement analytics; takes a bit more space)</span></div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <select class="settings-btn" id="set-ds-depth" style="padding:9px 12px">
+              ${[[0, 'Full history'], [300, '300 pages'], [100, '100 pages']].map(([v, l]) =>
+                `<option value="${v}" ${(s.deepSyncMaxPages || 0) == v ? 'selected' : ''}>${l}</option>`).join('')}
+            </select>
+            <label class="settings-switch" title="Archive likes">
+              <input type="checkbox" id="set-ds-likes" ${s.deepSyncLikes === false ? '' : 'checked'}>
+              <span class="settings-switch-slider"></span>
+            </label>
+          </div>
         </div>
         <div class="settings-row">
           <div class="settings-row-label">
@@ -5191,6 +5223,20 @@ class SayIt {
             <span>Removes posts saved while offline that failed to publish</span>
           </div>
           <button class="settings-btn danger" id="set-clear-pending">Clear pending</button>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Clear likes archive</strong>
+            <span>Removes archived likes (engagement numbers in Analytics/Dashboard rebuild on the next deep sync)</span>
+          </div>
+          <button class="settings-btn danger" id="set-clear-likes">Clear likes</button>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Clear search index</strong>
+            <span>Removes the local full-text index (rebuilt automatically as posts load)</span>
+          </div>
+          <button class="settings-btn danger" id="set-clear-search">Clear index</button>
         </div>
         <div class="settings-row">
           <div class="settings-row-label">
@@ -5511,7 +5557,7 @@ class SayIt {
         if (fill && quota) fill.style.width = Math.min(100, (used / quota) * 100).toFixed(2) + '%';
         const c  = await this.cache.storeCounts();
         const sc = g('storage-counts');
-        if (sc) sc.textContent = `${(c.posts || 0).toLocaleString()} posts · ${(c.profiles || 0).toLocaleString()} profiles · ${(c.channels || 0).toLocaleString()} channels · ${(c.search_index || 0).toLocaleString()} search rows · ${(c.pending_posts || 0).toLocaleString()} queued`;
+        if (sc) sc.textContent = `${(c.posts || 0).toLocaleString()} posts · ${(c.likes || 0).toLocaleString()} archived likes · ${(c.profiles || 0).toLocaleString()} profiles · ${(c.channels || 0).toLocaleString()} channels · ${(c.search_index || 0).toLocaleString()} search rows · ${(c.pending_posts || 0).toLocaleString()} queued`;
       } catch { /* overview is informational only */ }
     })();
     g('set-export-posts')?.addEventListener('click', () => this._exportPostsSnapshot());
@@ -5527,6 +5573,24 @@ class SayIt {
       this.state.channelHistory = [];
       utils.safeLS.remove(CHANNELS_KEY);
       utils.toast('Channel history cleared ✓');
+    });
+    g('set-ds-depth')?.addEventListener('change', () => {
+      const s = this._getSettings();
+      s.deepSyncMaxPages = Number(g('set-ds-depth').value) || 0;
+      this._saveSettings(s);
+    });
+    g('set-ds-likes')?.addEventListener('change', () => {
+      const s = this._getSettings();
+      s.deepSyncLikes = g('set-ds-likes').checked;
+      this._saveSettings(s);
+    });
+    g('set-clear-likes')?.addEventListener('click', async () => {
+      try { await this.cache.clearStore('likes'); utils.toast('Likes archive cleared ✓'); }
+      catch { utils.toast('Could not clear likes'); }
+    });
+    g('set-clear-search')?.addEventListener('click', async () => {
+      try { await this.cache.clearStore('search_index'); utils.toast('Search index cleared ✓'); }
+      catch { utils.toast('Could not clear index'); }
     });
     g('set-clear-pending')?.addEventListener('click', async () => {
       /* Remove all pending posts from IDB and any visual indicators */
