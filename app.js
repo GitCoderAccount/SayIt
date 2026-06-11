@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260611-155';
+const SW_CACHE_VER = '20260611-156';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -1400,7 +1400,7 @@ class SayIt {
     if (!text) return;
     this.g('compose-text').value = text;
     const ok = await this.publishPost();
-    if (ok === true) {
+    if (ok) {
       this.closeModal('compose-modal');
       this.g('modal-compose-text').value = '';
       this._syncPostBtn();
@@ -8386,7 +8386,7 @@ class SayIt {
         this.renderFeed();
       }
       utils.toast(`Published ✓  ${this.trunc(hash)}`);
-      return true;
+      return hash; /* truthy; callers that need the tx hash (Spaces) use it */
     } catch (err) {
       const msg = err.reason || err.message || 'Unknown error';
       /* Detect user rejection (MetaMask "user rejected transaction" or
@@ -9105,7 +9105,7 @@ class SayIt {
      after a 10-minute grace period (host gone without paying for an end
      marker — the "still going with no people in it" case). */
   _spaceIsEnded(post) {
-    const sp = post.space;
+    const sp = post?.space;
     if (!sp) return false;
     if (this._spaceEnds?.get(post.txHash) === post.reporter) return true;
     const started = sp.startsMs || new Date(post.timestamp).getTime();
@@ -9209,12 +9209,28 @@ class SayIt {
     if (btn) btn.onclick = async () => {
       const title = (this.g('space-title')?.value || '').trim() || 'Live Space';
       const roomId = [...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(16).padStart(2, '0')).join('');
+      const startsMs = Date.now();
+      const content = `${SPACE_PREFIX}${JSON.stringify({ r: roomId, s: startsMs })}\n\n${title}`;
       btn.disabled = true; btn.textContent = 'Publishing…';
-      const ok = await this.publish(`${SPACE_PREFIX}${JSON.stringify({ r: roomId, s: Date.now() })}\n\n${title}`);
+      const hash = await this.publish(content);
       btn.disabled = false; btn.textContent = 'Go live 🎙';
-      if (ok) {
+      if (hash) {
         this._closeGenericModal();
-        this.joinSpace({ space: { roomId, title, startsMs: Date.now() } });
+        /* Join with the REAL post (publish returns the tx hash). The old
+           synthetic post had no txHash/reporter/channel, so End Space
+           published 'SPACE_END:undefined' — the marker tx mined but
+           matched nothing and the card stayed live. */
+        const post = {
+          content, display: title, parentTx: null, repostOf: null, direction: null,
+          poll: null, postType: 'space', space: { roomId, startsMs, title },
+          reactionTarget: null, reporter: this.state.signerAddr,
+          to: this.state.channel, channel: this.state.channel,
+          timestamp: new Date().toISOString(),
+          txHash: typeof hash === 'string' ? hash : null,
+          blockNumber: null, mode: this.state.mode,
+        };
+        if (post.txHash) this._postMap.set(post.txHash, post);
+        this.joinSpace(post);
       }
     };
   }
@@ -9582,10 +9598,16 @@ class SayIt {
      everyone else within minutes. */
   async endSpace(post) {
     this._spaceRoom?.broadcast({ t: 'end' });
-    const ok = await this.publish(`${SPACE_END_PREFIX}${post.txHash}`, null, post.channel || post.to);
-    if (ok) {
-      (this._spaceEnds ||= new Map()).set(post.txHash, post.reporter);
-      utils.toast('Space ended');
+    /* Never publish a marker against a bogus hash (the create-flow bug
+       sent literal 'SPACE_END:undefined' to the chain). */
+    if (/^0x[a-f0-9]{64}$/.test(post?.txHash || '')) {
+      const ok = await this.publish(`${SPACE_END_PREFIX}${post.txHash}`, null, post.channel || post.to);
+      if (ok) {
+        (this._spaceEnds ||= new Map()).set(post.txHash, post.reporter || this.state.signerAddr);
+        utils.toast('Space ended');
+      }
+    } else {
+      utils.toast('Space closed for participants (announcement tx not found for the on-chain marker)');
     }
     this.leaveSpace();
     this._closeGenericModal();
