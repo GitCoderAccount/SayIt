@@ -100,6 +100,11 @@ test('non-feed payloads are excluded: profile, bookmarks (self), notes, token pr
   assert.strictEqual(posts.length, 0);
 });
 
+test('TIP payloads are never feed posts', () => {
+  const { posts } = feedParse([makeTx(`TIP:${HASH64}`)]);
+  assert.strictEqual(posts.length, 0);
+});
+
 test('non-self bookmark/profile control txs are dropped, not shown as raw posts', () => {
   /* Before parser unification these leaked into feeds as raw "BOOKMARK:0x…"
      text posts (they're protocol-violating control txs sent to a channel). */

@@ -6,7 +6,7 @@ const MAIN_CHANNEL   = '0x0000000000000000000000000000000000000369'; /* PulseCha
 /* SW_CACHE_VER: bump this string whenever you deploy a new version.
    The service worker uses it to invalidate cached files.
    Format: date + build number, e.g. '20250526-1' */
-const SW_CACHE_VER = '20260611-138';
+const SW_CACHE_VER = '20260611-139';
 const PULSE_CHAIN_ID = 369;
 const REPLY_PREFIX   = 'REPLY_TO:';
 const PROFILE_PREFIX = 'PROFILE_DATA:';
@@ -48,6 +48,7 @@ const COMMUNITIES_KEY = 'sayitCommunities'; /* JSON array of {address,name,desc,
    LC_SYNC restores them on any device. One tx per publish (not per edit) —
    keeps gas reasonable while making the data portable + publicly visible. */
 const LC_SYNC_PREFIX  = 'LC_SYNC:';
+const TIP_PREFIX      = 'TIP:';     /* TIP:0x<posthash> — tx VALUE carries the tip, sent to the post author */
 const CHANNELS_KEY    = 'sayitChannelsScan';
 
 const ERC721_ABI = [
@@ -149,6 +150,13 @@ const utils = {
   vimeoId(url) {
     const m = String(url).match(/vimeo\.com\/(?:video\/)?(\d+)/i);
     return m ? m[1] : null;
+  },
+  /* Format a wei string as PLS for display (not financial math). */
+  fmtPLS(wei) {
+    const n = Number(wei || 0) / 1e18;
+    if (!isFinite(n) || n <= 0) return '0';
+    if (n >= 1000) return Math.round(n).toLocaleString();
+    return n.toLocaleString(undefined, { maximumSignificantDigits: 4 });
   },
   safe(str) {
     /* Escapes for BOTH text and attribute contexts. The old textContent→
@@ -2056,6 +2064,9 @@ class SayIt {
     } else if (action === 'reply') {
       e.stopPropagation();
       this.openReplyModal(post);
+    } else if (action === 'tip') {
+      e.stopPropagation();
+      this.openTipModal(post);
     } else if (action === 'like') {
       e.stopPropagation();
       this.toggleLike(post, item);
@@ -2622,6 +2633,11 @@ class SayIt {
               type = 'repost';
               const m = text.match(/^REPOST:(0x[a-f0-9]{64})/i);
               target  = m[1].toLowerCase();
+            } else if (text.startsWith(TIP_PREFIX)) {
+              const t = text.slice(TIP_PREFIX.length).trim().toLowerCase();
+              if (!/^0x[a-f0-9]{64}$/.test(t)) return; /* malformed tip — drop */
+              type = 'tip'; target = t;
+              preview = `${utils.fmtPLS(tx.value)} PLS`;
             } else {
               type = 'message'; preview = text.slice(0, 100);
             }
@@ -2721,7 +2737,7 @@ class SayIt {
     const labels = {
       like:'liked your post', follow:'followed you', reply:'replied to you',
       repost:'reposted your post', message:'sent you a message',
-      vote:'voted on your poll', pollend:'',
+      vote:'voted on your poll', pollend:'', tip:'tipped your post 💎',
     };
     /* Tabs partition All cleanly: Likes = plain likes; Mentions = everything
        else (replies, reposts, messages, poll votes/ends, follows). No type is
@@ -2765,7 +2781,7 @@ class SayIt {
         /* Engagement on a known post (vote/like/reply/repost) opens that post's
            thread in-app; types with no post target (message/follow) fall back
            to the tx on the explorer. */
-        const opensThread = n.target && ['vote', 'like', 'reply', 'repost'].includes(n.type);
+        const opensThread = n.target && ['vote', 'like', 'reply', 'repost', 'tip'].includes(n.type);
         const clickAttr = opensThread
           ? `data-act="notif-open" data-act-arg="${utils.safe(n.target)}"`
           : `data-act="notif-open" data-act-arg="${utils.safe(n.txHash)}" data-act-arg2="tx"`;
@@ -7091,6 +7107,7 @@ class SayIt {
     if (text.startsWith(PROFILE_PREFIX)) return null;
     if (text.startsWith(VOTE_PREFIX)) { this._captureVote(text, tx); return null; }
     if (text.startsWith(TOKEN_PROFILE_PREFIX)) return null; /* token-profile metadata, not a feed post */
+    if (text.startsWith(TIP_PREFIX)) return null; /* tips surface via notifications, never as posts */
     /* Community notes + ratings are not feed posts — gathered via _scanChannelNotes. */
     if (text.startsWith(NOTE_PREFIX) || text.startsWith(NOTERATE_PREFIX)) return null;
     if (text.startsWith(LIKE_PREFIX) || text.startsWith(UNLIKE_PREFIX)
@@ -8147,6 +8164,9 @@ class SayIt {
             <button class="act-btn act-like ${isLiked ? 'liked' : ''}" data-action="like" title="${isLiked ? 'Unlike' : 'Like'}" aria-label="${isLiked ? 'Unlike this post' : 'Like this post'}" aria-pressed="${isLiked ? 'true' : 'false'}">
               <span class="act-icon">${this.icon(isLiked ? 'ic-heart-full' : 'ic-heart-empty')}</span>
               <span class="act-count">${lcLabel}</span>
+            </button>
+            <button class="act-btn act-tip" data-action="tip" title="Tip PLS" aria-label="Tip the author">
+              <span class="act-icon">💎</span>
             </button>
             ${engagementHTML}
             </div><!-- /.post-actions-left -->
@@ -9411,6 +9431,71 @@ class SayIt {
     if (this.state.mode !== 'thread' || this.state.threadPost?.txHash !== post.txHash) return;
     this.state.threadAncestors = ancestors;
     this._renderThreadPage(post);
+  }
+
+  /* ── Tipping ─────────────────────────────────────────────────────────
+     A tip is a plain PLS transfer TO the post author whose input is
+     TIP:0x<posthash>, so any client can attribute it to the post. The
+     value travels in the tx itself — no contract, no middleman. */
+  openTipModal(post) {
+    if (!this.signer) { utils.toast('Connect wallet to tip'); return; }
+    if (post.reporter === this.state.signerAddr) { utils.toast("That's your own post"); return; }
+    const author = this.state.profCache[post.reporter];
+    const name = author?.username ? utils.safe(author.username) : this.trunc(post.reporter);
+    const body = `
+      <div style="font-size:14px;color:var(--muted);margin-bottom:14px">
+        Send PLS directly to <strong style="color:var(--text)">${name}</strong>
+        (${utils.safe(this.trunc(post.reporter))}) for this post. The tip is a
+        normal on-chain transfer — no fees besides gas, no middleman.
+      </div>
+      <div class="tip-presets">
+        ${[1000, 10000, 100000].map(v =>
+          `<button class="settings-btn tip-preset" data-tip-preset="${v}">${v.toLocaleString()} PLS</button>`).join('')}
+      </div>
+      <div style="display:flex;gap:10px;margin-top:12px">
+        <input type="number" id="tip-amount" min="0" step="any" placeholder="Custom amount (PLS)"
+          style="flex:1;background:var(--bg-mid);border:1px solid var(--border);border-radius:10px;padding:10px 12px;color:var(--text)">
+        <button class="btn-pri" id="tip-send" style="flex:0 0 auto;padding:10px 22px">Send tip</button>
+      </div>
+      <div id="tip-status" style="margin-top:10px;font-size:13px;color:var(--muted)"></div>`;
+    this._showGenericModal('Tip 💎', body);
+    document.querySelectorAll('.tip-preset').forEach(b => {
+      b.onclick = () => { const inp = this.g('tip-amount'); if (inp) inp.value = b.dataset.tipPreset; };
+    });
+    const send = this.g('tip-send');
+    if (send) send.onclick = () => this._sendTip(post);
+  }
+
+  async _sendTip(post) {
+    const inp = this.g('tip-amount');
+    const status = this.g('tip-status');
+    const amountStr = (inp?.value || '').trim();
+    const amount = Number(amountStr);
+    if (!amountStr || !isFinite(amount) || amount <= 0) {
+      if (status) status.textContent = '✗ Enter an amount';
+      return;
+    }
+    if (!this._reactionBusy('tip:' + post.txHash)) return;
+    const btn = this.g('tip-send');
+    if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+    try {
+      if (!(await this._ensureOnPulseForTx())) return;
+      const value = ethers.parseEther(amountStr);
+      const data  = ethers.hexlify(ethers.toUtf8Bytes(TIP_PREFIX + post.txHash));
+      const txReq = { to: post.reporter, value, data };
+      const gas = await this._estimateGasSafe(txReq, (data.length - 2) / 2);
+      const tx = await this.signer.sendTransaction({ ...txReq, gasLimit: gas });
+      if (status) status.textContent = 'Submitting to chain…';
+      await tx.wait();
+      this._closeGenericModal();
+      utils.toast(`Tip sent — ${amount.toLocaleString()} PLS 💎`);
+    } catch (err) {
+      const msg = err?.message || String(err);
+      const rejected = err?.code === 4001 || err?.code === 'ACTION_REJECTED' || /user (denied|rejected)/i.test(msg);
+      if (status) status.textContent = rejected ? 'Cancelled' : '✗ ' + msg.slice(0, 80);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Send tip'; }
+    }
   }
 
   _threadBack() {
