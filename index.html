@@ -1289,6 +1289,11 @@ nav { flex:1; padding:4px 0; }
 #mobile-fab:hover { background:var(--primary-lt); transform:scale(1.05); }
 /* No composing from Settings — and the FAB overlapped its action buttons. */
 body.mode-settings #mobile-fab { display:none; }
+/* Explore has its own search bar + trending list in the page body — hide the
+   right-column duplicates there (Premium / Today's News / Who-to-follow / Live
+   stay visible). */
+body.mode-explore #sb-trending,
+body.mode-explore .sb-search { display:none; }
 #mobile-connect {
   display:none; position:fixed; bottom:calc(84px + env(safe-area-inset-bottom)); right:16px; z-index:91;
   padding:13px 22px; border:none; border-radius:9999px;
@@ -2153,6 +2158,9 @@ body.mode-settings #mobile-fab { display:none; }
 .settings-pane { flex:1; min-width:0; padding:0 16px 32px; }
 .settings-pane-back { display:none; }
 @media (max-width:768px) {
+  /* Clip the active nav item's inset accent (box-shadow:inset -2px right edge)
+     and any off-canvas pane edge so no sliver bleeds past the viewport. */
+  .settings-layout { overflow-x:hidden; }
   .settings-nav { flex:1 1 auto; width:100%; border-right:none; position:static; min-height:0; }
   .settings-pane { display:none; }
   .settings-layout.pane-open .settings-nav { display:none; }

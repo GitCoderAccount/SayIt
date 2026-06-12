@@ -1737,7 +1737,6 @@ class SayIt {
   }
 
   async goNotifications() {
-    if (!this.signer) { utils.toast('Connect wallet to view Notifications'); return; }
     this._updateTitle('Notifications');
     this._setRoute('/notifications');
     this.setNav('nav-notifs','notifs');
@@ -1752,6 +1751,14 @@ class SayIt {
     this.g('new-banner').classList.remove('visible');
     this.g('loading-more').style.display   = 'none';
     this.state.mode = 'notifications';
+    /* No wallet → render the standard page chrome with a connect prompt
+       (previously this returned silently, leaving the prior page on screen). */
+    if (!this.signer) {
+      this.g('feed').innerHTML = this._applyPageHeader() +
+        `<div class="prof-empty"><h3>Connect your wallet</h3>
+        <p style="color:var(--muted)">Notifications show likes, replies, reposts, follows and tips for your account.</p></div>`;
+      return;
+    }
     /* NOTE: don't stamp LAST_CHECK_KEY here — _scanPollNotifications reads it to
        window vote/poll-end notifications, so writing "now" before the scan made
        that window empty every time. We stamp it AFTER the scan (below). */
@@ -2091,6 +2098,9 @@ class SayIt {
     this._updateTitle('Explore');
     this._setRoute('/explore' + (this.state.exploreTab !== 'trending' ? '/' + this.state.exploreTab : ''));
     this.setNav('nav-explore','explore');
+    /* Explore renders its own trending list + search bar, so hide the sidebar
+       duplicates (mirrors mode-settings; setNav clears it on every nav). */
+    document.body.classList.add('mode-explore');
     this.state.mode = 'explore';
     this.g('feed-tabs').classList.remove('tabs-sticky');
     this.g('feed-tabs').style.display      = 'none';
@@ -4295,6 +4305,7 @@ class SayIt {
     /* Per-view body marker — views that need view-scoped CSS (e.g. hiding
        the compose FAB on Settings) re-add their class after calling setNav. */
     document.body.classList.remove('mode-settings');
+    document.body.classList.remove('mode-explore');
     this._profileScanCache = {}; /* clear stale profile scan data on navigation */
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.mn-btn').forEach(b => b.classList.remove('active'));
@@ -5471,7 +5482,7 @@ class SayIt {
             data-act="share-profile" data-act-arg="${utils.safe(address)}">
             <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.48-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>
           </button>
-          <a class="prof-edit-btn" title="Open channel / message" aria-label="Open this address's channel" style="padding:6px 10px;display:inline-flex;align-items:center"
+          <a class="prof-edit-btn" title="View their channel" aria-label="View their channel" style="padding:6px 10px;display:inline-flex;align-items:center"
             href="#/channel/${utils.safe(address)}"
             data-act="open-channel" data-act-arg="${utils.safe(address)}">
             <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M1.998 5.5c0-1.381 1.119-2.5 2.5-2.5h15c1.381 0 2.5 1.119 2.5 2.5v13c0 1.381-1.119 2.5-2.5 2.5h-15c-1.381 0-2.5-1.119-2.5-2.5v-13zm2.5-.5a.5.5 0 00-.5.5v2.764l8 3.638 8-3.638V5.5a.5.5 0 00-.5-.5h-15zM19.998 10.236l-8 3.636-8-3.636V18.5a.5.5 0 00.5.5h15a.5.5 0 00.5-.5v-8.264z"/></svg>
@@ -7768,9 +7779,21 @@ class SayIt {
         ? `<span class="to-label">To: ${this.trunc(post.to)}</span>`
         : '',
       replyBadge: post.parentTx
-        ? `<span class="reply-badge">↳ Replying to ${this.trunc(post.parentTx)}</span>`
+        ? `<span class="reply-badge">↳ Replying to ${this._replyBadgeLabel(post.parentTx)}</span>`
         : '',
     };
+  }
+
+  /* Reply badge text: prefer the parent author's @username (cache-only, no
+     fetch), then the parent author's truncated address if known-but-unnamed,
+     finally the truncated parent-tx hash if the parent isn't cached at all. */
+  _replyBadgeLabel(parentTx) {
+    const parent = this._postMap.get(parentTx) || this._parentCache?.get(parentTx);
+    if (parent && parent.reporter) {
+      const name = this.state.profCache[parent.reporter]?.username;
+      return '@' + utils.safe(name || this.trunc(parent.reporter));
+    }
+    return this.trunc(parentTx);
   }
 
   /* Standard action bar (reply / repost / like / views / bookmark / share).
@@ -7851,6 +7874,11 @@ class SayIt {
        (inModal=true there), so this only applies to feed surfaces. */
     let parentModule = '';
     const showParent = !inModal && !!post.parentTx;
+    /* Thread rows (inModal) for direct replies under the focal post would
+       otherwise show "↳ Replying to <focal>" — redundant on the thread page
+       (X shows nothing there). Suppress just that case. */
+    const suppressReplyBadge = inModal && this.state.mode === 'thread'
+      && post.parentTx === this._threadFocalHash;
     if (showParent) {
       const parent = this._postMap.get(post.parentTx) || this._parentCache?.get(post.parentTx);
       if (parent) {
@@ -7888,7 +7916,7 @@ class SayIt {
              >${utils.safe(relT)}</a>
             ${dirBadge}
           </div>
-          ${toLabel}${showParent ? '' : replyBadge}
+          ${toLabel}${(showParent || suppressReplyBadge) ? '' : replyBadge}
           ${post.repostOf ? `<div class="repost-label">
             <svg width="14" height="14" style="vertical-align:middle;margin-right:4px" aria-hidden="true"><use href="#ic-repost"/></svg>
             <span class="post-name">${displayName}</span> reposted</div>` : ''}
@@ -10264,6 +10292,9 @@ class SayIt {
   }
 
   _renderThreadPage(post) {
+    /* Consulted by postHTML to suppress the redundant "Replying to <focal>"
+       badge on direct replies (only read in thread mode). */
+    this._threadFocalHash = post.txHash;
     const replyMap = new Map();
     this.state.posts.forEach(p => {
       if (p.parentTx) replyMap.set(p.parentTx, (replyMap.get(p.parentTx) || 0) + 1);
