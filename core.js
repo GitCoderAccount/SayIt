@@ -48,6 +48,8 @@ const TIP_PREFIX      = 'TIP:';     /* TIP:0x<posthash> — tx VALUE carries the
 const SPACE_PREFIX    = 'SPACE:';   /* SPACE:{"r":roomId,"s":startsMs}\n\n<title> — live audio room announcement */
 const SPACE_END_PREFIX = 'SPACE_END:'; /* SPACE_END:0x<spacehash> — the host ends a Space (honored only from the Space's author) */
 const CHANNELS_KEY    = 'sayitChannelsScan';
+const SPACE_ENDS_KEY  = 'sayitSpaceEnds';   /* JSON { "<spaceTxHash>": "<senderAddr>" } — persisted SPACE_END markers (capped ~200) */
+const ACTIVE_SPACE_KEY = 'sayitActiveSpace'; /* JSON {txHash,roomId,title,startsMs,channel,ts} — host's own live Space, for the rejoin banner */
 
 const ERC721_ABI = [
   'function tokenURI(uint256 tokenId) view returns (string)',
