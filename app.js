@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260612-159';
+const SW_CACHE_VER = '20260612-160';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -9593,6 +9593,7 @@ class SayIt {
       <div class="space-dock-head">
         <span class="live-dot" aria-hidden="true"></span>
         <span class="space-dock-head-title">${title}</span>
+        <button class="space-dock-toggle" id="space-dock-repost" aria-label="Repost or quote this Space" title="Repost / Quote">↻</button>
         <button class="space-dock-toggle" id="space-dock-share" aria-label="Share this Space" title="Share this Space">↗</button>
         <button class="space-dock-toggle" id="space-dock-toggle" aria-label="Collapse">⌄</button>
       </div>
@@ -9735,6 +9736,15 @@ class SayIt {
     };
     const share = this.g('space-dock-share');
     if (share) share.onclick = e => { e.stopPropagation(); this.sharePost(this._spaceRoomPost || post); };
+    /* X's "post options": the standard repost/quote chooser for the Space's
+       announcement post — a quote renders the Space as a card via the new
+       in-body link-quote path too. */
+    const rp = this.g('space-dock-repost');
+    if (rp) rp.onclick = e => {
+      e.stopPropagation();
+      if (!this.signer) { utils.toast('Connect wallet to repost'); return; }
+      this.openRepostChoice(this._spaceRoomPost || post, rp);
+    };
   }
 
   /* Render the chat: replies to the announcement post (oldest→newest),
