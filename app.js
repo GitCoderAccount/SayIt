@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260611-157';
+const SW_CACHE_VER = '20260612-158';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -111,6 +111,39 @@ class SayIt {
        Full re-renders still happen for structural changes (new posts, filters). */
     this._debouncedRender = utils.debounce(() => this._patchProfilesInFeed(), 120);
     this._draftSave       = utils.debounce(() => this._saveDraft(), 500);
+    /* Persisted SPACE_END markers: { spaceTxHash → senderAddr }. Loaded into a
+       Map so ended Spaces stay ended across reloads (otherwise an ended card
+       flickers back to "live" until a chain scan happens to re-parse the end
+       tx). Lowercased on the way in. */
+    this._spaceEnds = (() => {
+      const m = new Map();
+      try {
+        const obj = JSON.parse(utils.safeLS.get(SPACE_ENDS_KEY, '{}')) || {};
+        for (const [h, s] of Object.entries(obj)) {
+          if (typeof h === 'string' && typeof s === 'string') m.set(h.toLowerCase(), s.toLowerCase());
+        }
+      } catch { /* corrupt — start empty */ }
+      return m;
+    })();
+  }
+
+  /* Single funnel for recording a SPACE_END: update the in-memory Map AND
+     persist to localStorage (capped at the most recent ~200), then refresh the
+     right-column live module so an ended room drops out of the sidebar without
+     waiting for a full feed re-render. */
+  _recordSpaceEnd(hash, sender) {
+    if (!hash || !sender) return;
+    hash = hash.toLowerCase(); sender = sender.toLowerCase();
+    (this._spaceEnds ||= new Map()).set(hash, sender);
+    /* Persist, capped to the most recent ~200 entries (Map preserves insertion
+       order; trim from the front). */
+    try {
+      const entries = [...this._spaceEnds.entries()];
+      const capped = entries.slice(-200);
+      if (capped.length !== entries.length) this._spaceEnds = new Map(capped);
+      utils.safeLS.set(SPACE_ENDS_KEY, JSON.stringify(Object.fromEntries(capped)));
+    } catch { /* storage full / unavailable — Map still holds it for this session */ }
+    try { this.renderLiveSpaces(); } catch { /* sidebar not mounted yet */ }
   }
 
   async init(opts = {}) {
@@ -126,6 +159,12 @@ class SayIt {
       const ds = this._deepSyncState();
       if (ds.lastPage > 0 && !ds.done && navigator.onLine && !this._deepSyncing) this.toggleDeepSync();
     }, 8000);
+    /* Host rejoin banner: a reload killed the room but their Space may
+       still be live. Re-check a few times — the wallet usually auto-
+       reconnects a moment after boot. */
+    [5000, 15000, 30000].forEach(ms => setTimeout(() => {
+      try { this._checkActiveSpace(); } catch { /* banner is best-effort */ }
+    }, ms));
     /* Migrate muted list from localStorage to IDB if needed */
     try {
       const idbMuted = await this.cache.getMuted();
@@ -448,8 +487,12 @@ class SayIt {
         if (link && (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button === 1)) return;
         e.preventDefault();
         e.stopPropagation();
-        const item = e.target.closest('.post-item');
-        const post = item ? this._postMap.get(item.dataset.txhash) : null;
+        /* Resolve via the nearest [data-txhash] — not .post-item — so a
+           conversation-module parent (.feed-parent-item, nested inside the
+           outer reply's .post-item) resolves to the PARENT author, not the
+           reply author. */
+        const item = e.target.closest('[data-txhash]');
+        const post = item ? (this._postMap.get(item.dataset.txhash) || this._parentCache?.get(item.dataset.txhash)) : null;
         if (post?.reporter) {
           /* Click navigates straight to the profile (like X). The hovercard
              still appears on hover via the separate mouseover handler. */
@@ -489,8 +532,10 @@ class SayIt {
       let trigger = e.target.closest('.post-name, .post-avatar');
       let addr = null;
       if (trigger) {
-        const item = e.target.closest('.post-item');
-        const post = item ? this._postMap.get(item.dataset.txhash) : null;
+        /* [data-txhash] (not .post-item) so a conversation-module parent
+           resolves to the parent author, not the outer reply. */
+        const item = e.target.closest('[data-txhash]');
+        const post = item ? (this._postMap.get(item.dataset.txhash) || this._parentCache?.get(item.dataset.txhash)) : null;
         addr = post?.reporter?.toLowerCase() || null;
       }
       /* Fallback for non-post rows (followers/following lists, etc.) that carry
@@ -1146,7 +1191,10 @@ class SayIt {
     const noteRate = e.target.closest('[data-note-rate]');
     if (noteRate) {
       e.stopPropagation();
-      const host = e.target.closest('.post-item');
+      /* A note-slot can sit inside a conversation-module parent; resolve the
+         owning post via the nearest .feed-parent-item/.post-item so a rating
+         targets the parent's note, not the outer reply's. */
+      const host = e.target.closest('.feed-parent-item, .post-item');
       this.rateNote(noteRate.dataset.noteRate, noteRate.dataset.noteVal, host?.dataset.txhash);
       return;
     }
@@ -9098,8 +9146,8 @@ class SayIt {
      announcement during a scan). */
   _captureSpaceEnd(text, tx) {
     const m = text.match(/^SPACE_END:(0x[a-f0-9]{64})/i);
-    if (!m) return;
-    (this._spaceEnds ||= new Map()).set(m[1].toLowerCase(), tx.from?.toLowerCase());
+    if (!m || !tx.from) return;
+    this._recordSpaceEnd(m[1], tx.from);
   }
 
   /* A Space is over when: the host published SPACE_END for it; OR it's
@@ -9109,7 +9157,7 @@ class SayIt {
   _spaceIsEnded(post) {
     const sp = post?.space;
     if (!sp) return false;
-    if (this._spaceEnds?.get(post.txHash) === post.reporter) return true;
+    if (post.txHash && this._spaceEnds?.get(post.txHash.toLowerCase()) === post.reporter?.toLowerCase()) return true;
     const started = sp.startsMs || new Date(post.timestamp).getTime();
     const age = Date.now() - started;
     if (age > 24 * 3600 * 1000) return true;
@@ -9214,7 +9262,11 @@ class SayIt {
       const startsMs = Date.now();
       const content = `${SPACE_PREFIX}${JSON.stringify({ r: roomId, s: startsMs })}\n\n${title}`;
       btn.disabled = true; btn.textContent = 'Publishing…';
-      const hash = await this.publish(content);
+      /* A Space announcement is a GLOBAL broadcast (X-parity): always send it
+         to MAIN_CHANNEL, NOT this.state.channel — otherwise a host viewing
+         their own profile/channel publishes the Space there and nobody else
+         (right column / main feed) ever sees it. */
+      const hash = await this.publish(content, null, MAIN_CHANNEL);
       btn.disabled = false; btn.textContent = 'Go live 🎙';
       if (hash) {
         this._closeGenericModal();
@@ -9226,12 +9278,13 @@ class SayIt {
           content, display: title, parentTx: null, repostOf: null, direction: null,
           poll: null, postType: 'space', space: { roomId, startsMs, title },
           reactionTarget: null, reporter: this.state.signerAddr,
-          to: this.state.channel, channel: this.state.channel,
+          to: MAIN_CHANNEL, channel: MAIN_CHANNEL,
           timestamp: new Date().toISOString(),
           txHash: typeof hash === 'string' ? hash : null,
           blockNumber: null, mode: this.state.mode,
         };
         if (post.txHash) this._postMap.set(post.txHash, post);
+        utils.toast('🎙 You’re live — announced on the main feed');
         this.joinSpace(post);
       }
     };
@@ -9312,6 +9365,16 @@ class SayIt {
       this._spaceRoom = room;
       this._spaceRoomPost = post;
       this._spaceRole = role;
+      /* Host: remember the live Space so a reload can offer Rejoin/End. */
+      if (isHost && /^0x[a-f0-9]{64}$/.test(post.txHash || '')) {
+        try {
+          utils.safeLS.set(ACTIVE_SPACE_KEY, JSON.stringify({
+            txHash: post.txHash, roomId: sp.roomId, title: sp.title,
+            startsMs: sp.startsMs || Date.now(),
+            channel: post.channel || post.to || MAIN_CHANNEL, ts: Date.now(),
+          }));
+        } catch { /* storage full — banner just won't appear */ }
+      }
       this._spacePeers = new Map();   /* label → {addr, name, verified} */
       this._spaceCohosts = new Set(); /* lowercase addresses granted by the host */
       this._spaceSpeakReqs = new Map(); /* host: label → {addr, name} */
@@ -9724,7 +9787,8 @@ class SayIt {
     } else if (msg.t === 'end') {
       if (!this._labelIsSpaceAdmin(label)) return;
       utils.toast('The host ended this Space');
-      (this._spaceEnds ||= new Map()).set(post.txHash, post.reporter);
+      this._recordSpaceEnd(post.txHash, post.reporter);
+      this._clearActiveSpaceIf(post.txHash);
       this.leaveSpace();
       this.renderFeed();
     } else if (msg.t === 'mute') {
@@ -9805,7 +9869,7 @@ class SayIt {
         if (!this._spaceRoom || this._spaceHostLabel) return;
         const post = this._spaceRoomPost;
         utils.toast('The host left — Space ended');
-        if (post) (this._spaceEnds ||= new Map()).set(post.txHash, post.reporter);
+        if (post) { this._recordSpaceEnd(post.txHash, post.reporter); this._clearActiveSpaceIf(post.txHash); }
         this.leaveSpace();
         this.renderFeed();
       }, 60000);
@@ -9931,14 +9995,61 @@ class SayIt {
     if (/^0x[a-f0-9]{64}$/.test(post?.txHash || '')) {
       const ok = await this.publish(`${SPACE_END_PREFIX}${post.txHash}`, null, post.channel || post.to);
       if (ok) {
-        (this._spaceEnds ||= new Map()).set(post.txHash, post.reporter || this.state.signerAddr);
+        this._recordSpaceEnd(post.txHash, post.reporter || this.state.signerAddr);
         utils.toast('Space ended');
       }
     } else {
       utils.toast('Space closed for participants (announcement tx not found for the on-chain marker)');
     }
+    this._clearActiveSpaceIf(post?.txHash);
     this.leaveSpace();
     this.renderFeed();
+  }
+
+  /* ── Host rejoin banner ───────────────────────────────────────────────
+     The dock is ephemeral: a reload kills the room while the Space stays
+     live on-chain. Persist the host's own Space and offer Rejoin / End on
+     the next boot. */
+  _clearActiveSpaceIf(hash) {
+    try {
+      const cur = JSON.parse(utils.safeLS.get(ACTIVE_SPACE_KEY, 'null'));
+      if (!hash || cur?.txHash === hash) utils.safeLS.remove(ACTIVE_SPACE_KEY);
+    } catch { utils.safeLS.remove(ACTIVE_SPACE_KEY); }
+  }
+
+  _checkActiveSpace() {
+    let st = null;
+    try { st = JSON.parse(utils.safeLS.get(ACTIVE_SPACE_KEY, 'null')); } catch { return; }
+    if (!st?.txHash || !st.roomId) return;
+    if (Date.now() - (st.ts || 0) > 24 * 3600 * 1000) { utils.safeLS.remove(ACTIVE_SPACE_KEY); return; }
+    const me = this.state.signerAddr;
+    if (!me || this._spaceRoom || this.g('space-rejoin-banner')) return;
+    const post = this._postMap.get(st.txHash) || {
+      content: 'SPACE:', display: st.title, parentTx: null, repostOf: null, direction: null,
+      poll: null, postType: 'space',
+      space: { roomId: st.roomId, startsMs: st.startsMs || st.ts, title: st.title },
+      reactionTarget: null, reporter: me, to: st.channel || MAIN_CHANNEL,
+      channel: st.channel || MAIN_CHANNEL,
+      timestamp: new Date(st.startsMs || st.ts).toISOString(),
+      txHash: st.txHash, blockNumber: null, mode: 'main',
+    };
+    if (post.reporter !== me) return; /* stale entry from another account */
+    if (this._spaceIsEnded(post)) { utils.safeLS.remove(ACTIVE_SPACE_KEY); return; }
+    const el = document.createElement('div');
+    el.id = 'space-rejoin-banner';
+    el.style.cssText = 'position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:900;'
+      + 'display:flex;gap:10px;align-items:center;padding:10px 16px;border-radius:9999px;'
+      + 'background:linear-gradient(120deg,#7c4dff,#ff3cac);color:#fff;font-size:13px;font-weight:700;'
+      + 'box-shadow:0 6px 24px rgba(0,0,0,0.45);max-width:92vw';
+    el.innerHTML = `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🎙 Your Space “${utils.safe(String(st.title || 'Live Space').slice(0, 40))}” may still be live</span>
+      <button id="space-rejoin-go" style="flex:0 0 auto;border:none;border-radius:9999px;padding:6px 14px;background:#fff;color:#7c4dff;font-weight:800;cursor:pointer">Rejoin</button>
+      <button id="space-rejoin-end" style="flex:0 0 auto;border:1px solid rgba(255,255,255,0.7);border-radius:9999px;padding:6px 12px;background:none;color:#fff;font-weight:700;cursor:pointer">End it</button>
+      <button id="space-rejoin-x" aria-label="Dismiss" style="flex:0 0 auto;border:none;background:none;color:#fff;font-size:15px;cursor:pointer;padding:0 2px">✕</button>`;
+    document.body.appendChild(el);
+    const kill = () => el.remove();
+    this.g('space-rejoin-go').onclick = () => { kill(); this._postMap.set(post.txHash, post); this.joinSpace(post); };
+    this.g('space-rejoin-end').onclick = () => { kill(); this._postMap.set(post.txHash, post); this.endSpace(post); };
+    this.g('space-rejoin-x').onclick = () => { kill(); utils.safeLS.remove(ACTIVE_SPACE_KEY); };
   }
 
   leaveSpace() {
@@ -10607,7 +10718,7 @@ class SayIt {
   _selfManagedModes = new Set([
     'notifications', 'profile', 'thread', 'channels',
     'explore', 'bookmarks', 'settings', 'lists', 'communities', 'followlist',
-    'analytics', 'verify'
+    'analytics', 'verify', 'dashboard'
   ]);  /* lists/communities render their own browse UI into #feed */
   /* Modes where pollNew's "Show N posts" banner makes no sense.
      Superset of _selfManagedModes — includes wave/self/custom where
