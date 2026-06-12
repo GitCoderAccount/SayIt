@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260612-162';
+const SW_CACHE_VER = '20260612-163';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -2767,6 +2767,22 @@ class SayIt {
     reader.readAsText(file);
   }
 
+  /* Wire a segmented pill group (Appearance pane): for each .seg-btn in the
+     group, a click sets that pill active (aria-checked across the group) and
+     invokes onPick(value). CSP-safe — addEventListener, no inline handlers.
+     Mirrors the accent-swatch wiring. id is the group host's element id. */
+  _wireSegGroup(id, onPick) {
+    const group = this.g(id);
+    if (!group) return;
+    group.querySelectorAll('.seg-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        group.querySelectorAll('.seg-btn').forEach(b =>
+          b.setAttribute('aria-checked', b === btn ? 'true' : 'false'));
+        onPick(btn.dataset.segVal);
+      });
+    });
+  }
+
   /* Apply the chosen theme by toggling data-theme on <html> (the [data-theme]
      CSS-var overrides do the rest). Default 'dark' = no attribute. */
   _applyTheme(theme) {
@@ -3638,18 +3654,19 @@ class SayIt {
         <div class="settings-section-title">Appearance</div>
         <div class="settings-row">
           <div class="settings-row-label"><strong>Theme</strong><span>Pure black (Dark) or a softer slate (Dim)</span></div>
-          <select class="settings-btn" id="set-theme" style="padding:9px 12px">
-            <option value="dark" ${(s.theme || 'dark') === 'dark' ? 'selected' : ''}>Dark</option>
-            <option value="dim"  ${s.theme === 'dim' ? 'selected' : ''}>Dim</option>
-            <option value="light" ${s.theme === 'light' ? 'selected' : ''}>Light</option>
-          </select>
+          <div class="seg-group" id="set-theme" role="radiogroup" aria-label="Theme">
+            ${[['dark','Dark'],['dim','Dim'],['light','Light']].map(([v,label]) =>
+              `<button type="button" class="seg-btn" data-seg-val="${v}"
+                role="radio" aria-checked="${(s.theme || 'dark') === v ? 'true' : 'false'}">${label}</button>`).join('')}
+          </div>
         </div>
         <div class="settings-row">
           <div class="settings-row-label"><strong>Display size</strong><span>Scale the whole interface up or down</span></div>
-          <select class="settings-btn" id="set-zoom" style="padding:9px 12px">
+          <div class="seg-group" id="set-zoom" role="radiogroup" aria-label="Display size">
             ${[['0.9','Small'],['1','Default'],['1.1','Large'],['1.25','Larger']].map(([v,label]) =>
-              `<option value="${v}" ${String(s.displayZoom || '1') === v ? 'selected' : ''}>${label}</option>`).join('')}
-          </select>
+              `<button type="button" class="seg-btn" data-seg-val="${v}"
+                role="radio" aria-checked="${String(s.displayZoom || '1') === v ? 'true' : 'false'}">${label}</button>`).join('')}
+          </div>
         </div>
         <div class="settings-row">
           <div class="settings-row-label"><strong>Reduce motion</strong><span>Minimize animations &amp; transitions</span></div>
@@ -4061,12 +4078,16 @@ class SayIt {
       utils.toast('Settings reset — reloading…');
       setTimeout(() => location.reload(), 1000);
     });
-    /* Theme — apply immediately on change. */
-    g('set-theme')?.addEventListener('change', () => {
+    /* Segmented pill groups (Theme, Display size) — X-style option pills in
+       place of native <select>s. CSP-safe: per-button click listeners mirror
+       the accent-swatch wiring above. The callback persists + applies exactly
+       what the old change handlers did; _wireSegGroup keeps aria-checked in
+       sync across the group so one pill is always the active radio. */
+    this._wireSegGroup('set-theme', val => {
       const s = this._getSettings();
-      s.theme = g('set-theme').value;
+      s.theme = val;
       this._saveSettings(s);
-      this._applyTheme(s.theme);
+      this._applyTheme(val);
     });
     /* Accent color — persist + apply immediately, update the selected ring. */
     g('set-accent')?.querySelectorAll('.accent-swatch').forEach(btn => {
@@ -4085,11 +4106,11 @@ class SayIt {
       });
     });
     /* Display size (zoom) — apply immediately. '1' clears the override. */
-    g('set-zoom')?.addEventListener('change', () => {
+    this._wireSegGroup('set-zoom', val => {
       const s = this._getSettings();
-      s.displayZoom = g('set-zoom').value;
+      s.displayZoom = val;
       this._saveSettings(s);
-      document.documentElement.style.zoom = (String(s.displayZoom) !== '1') ? s.displayZoom : '';
+      document.documentElement.style.zoom = (String(val) !== '1') ? val : '';
     });
     /* Reduce motion — toggle the forced-motion class immediately. */
     g('set-reduce-motion')?.addEventListener('change', () => {
@@ -11668,7 +11689,11 @@ class SayIt {
       return `
         <div class="news-row" role="button" tabindex="0" data-act="open-thread" data-act-arg="${utils.safe(p.txHash)}">
           <div class="news-body">
-            <div class="news-label">📊 Poll · Final results</div>
+            <div class="news-label"><svg width="14" height="14" viewBox="0 0 18 18" fill="none"
+              stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true" style="vertical-align:-2px;margin-right:4px">
+              <path d="M2 16h14"/><path d="M5 16V9"/><path d="M9 16V4"/><path d="M13 16v-5"/>
+            </svg>Poll · Final results</div>
             <div class="news-headline">${utils.safe(p.poll.question)}</div>
             <div class="news-meta">
               ${winner ? `<span>Winner: ${utils.safe(winner)} (${winPct}%)</span>` : '<span>No votes</span>'}
@@ -11733,6 +11758,17 @@ class SayIt {
        "#PulseChain" placeholder. Top 5 for the compact sidebar card. */
     const top = this._computeTrends(5, 200);
 
+    /* Inline line-chart icon (own asset) replacing the 📈 emoji, which renders
+       as a broken-glyph box on systems without a color-emoji font (e.g. some
+       Linux Chromium setups). aria-hidden — purely decorative; stroke follows
+       --muted so it tints with the theme. */
+    const chartIcon =
+      `<svg class="trend-icon" width="18" height="18" viewBox="0 0 18 18" fill="none"
+         stroke="var(--muted)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"
+         aria-hidden="true" style="align-self:center;flex-shrink:0">
+        <path d="M2 15h14"/><path d="M3 12l4-5 3 3 5-7"/>
+      </svg>`;
+
     const trendHTML = top.map(([term, count]) =>
       `<div class="sb-card-row" role="button" tabindex="0" data-act="search-trend" data-act-arg="${utils.safe(term)}" style="cursor:pointer">
         <div style="flex:1">
@@ -11740,7 +11776,7 @@ class SayIt {
           <span class="trend-name">${utils.safe(term)}</span>
           <span class="trend-count">${count} post${count > 1 ? 's' : ''}</span>
         </div>
-        <span style="font-size:20px;align-self:center">📈</span>
+        ${chartIcon}
       </div>`).join('');
 
     /* Fallback when nothing trends yet — keeps the card from looking empty. */
@@ -11751,7 +11787,7 @@ class SayIt {
             <span class="trend-name">#PulseChain</span>
             <span class="trend-count">Join the conversation</span>
           </div>
-          <span style="font-size:20px;align-self:center">⚡</span>
+          ${chartIcon}
         </div>`
       : '';
 

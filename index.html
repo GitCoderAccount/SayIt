@@ -108,6 +108,18 @@ a { color:inherit; text-decoration:none; }
 /* ── Layout ─────────────────────────────────────────────────────────────── */
 #app { display:flex; min-height:100vh; max-width:1265px; margin:0 auto; align-items:flex-start; }
 
+/* WIDE tier (X parity): at ≥1440px the viewport clears the collapse query
+   (max-width:1300px) so the labeled nav base styles are already active. The
+   only fix needed here is widening #app so the three columns sit at full X
+   proportions — labeled nav (275) + feed (600) + right column (380) + the
+   right column's 30px gutter + 2px of center borders ≈ 1287. Round to 1290
+   so margin:auto centers the full layout instead of capping it at 1265 and
+   pooling the freed width into the page margins. Narrower tiers (1300/1100/
+   mobile) are untouched: this only raises the ceiling above 1440. */
+@media (min-width:1440px) {
+  #app { max-width:1290px; }
+}
+
 /* ── Left sidebar ───────────────────────────────────────────────────────── */
 #sidebar-left {
   width:275px; flex-shrink:0;
@@ -1995,6 +2007,21 @@ body.mode-explore .sb-search { display:none; }
 .accent-swatch:hover { transform:scale(1.08); }
 .accent-swatch.selected { box-shadow:0 0 0 2px var(--bg-dark), 0 0 0 4px var(--text); }
 .accent-swatch:focus-visible { outline:none; box-shadow:0 0 0 2px var(--bg-dark), 0 0 0 4px var(--text); }
+/* Segmented pill group — X-style option pills replacing native <select>s in
+   the Appearance pane. One button per option; active is filled with the
+   accent, inactive is bordered. role="radiogroup" + aria-checked on the host. */
+.seg-group { display:inline-flex; flex-wrap:wrap; gap:6px; }
+.seg-btn {
+  padding:7px 14px; border-radius:9999px;
+  background:transparent; border:1px solid var(--border);
+  color:var(--text); font-size:14px; font-weight:600;
+  cursor:pointer; transition:background 0.15s, border-color 0.15s, color 0.15s;
+}
+.seg-btn:hover { border-color:var(--primary); }
+.seg-btn[aria-checked="true"] {
+  background:var(--primary); border-color:var(--primary); color:#fff;
+}
+.seg-btn:focus-visible { outline:none; box-shadow:0 0 0 2px var(--bg-dark), 0 0 0 3px var(--primary); }
 .settings-input {
   width:100%; padding:10px 12px;
   background:var(--bg-dark); border:1px solid var(--border);
