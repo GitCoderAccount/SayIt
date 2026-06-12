@@ -1980,6 +1980,16 @@ body.mode-settings #mobile-fab { display:none; }
 .settings-switch input:checked + .settings-switch-slider { background:var(--primary); border-color:var(--primary); }
 .settings-switch input:checked + .settings-switch-slider::before { transform:translateX(20px); background:#fff; }
 .settings-switch input:focus-visible + .settings-switch-slider { outline:2px solid var(--primary-lt); outline-offset:2px; }
+/* Accent-color swatches (Settings → Appearance). Round buttons; the chosen
+   one gets a ring drawn with box-shadow so it doesn't shift layout. */
+.accent-swatches { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+.accent-swatch {
+  width:28px; height:28px; border-radius:50%; border:none; cursor:pointer;
+  padding:0; flex:0 0 auto; transition:box-shadow 0.15s, transform 0.1s;
+}
+.accent-swatch:hover { transform:scale(1.08); }
+.accent-swatch.selected { box-shadow:0 0 0 2px var(--bg-dark), 0 0 0 4px var(--text); }
+.accent-swatch:focus-visible { outline:none; box-shadow:0 0 0 2px var(--bg-dark), 0 0 0 4px var(--text); }
 .settings-input {
   width:100%; padding:10px 12px;
   background:var(--bg-dark); border:1px solid var(--border);
@@ -2170,20 +2180,45 @@ body.mode-settings #mobile-fab { display:none; }
   margin-top:10px; padding:14px 16px; border-radius:14px;
   background:linear-gradient(120deg, rgba(124,77,255,0.25), rgba(255,60,172,0.18));
   border:1px solid var(--primary-dim);
-  display:flex; flex-direction:column; gap:6px; align-items:flex-start;
+  display:flex; flex-direction:column; gap:8px; align-items:stretch;
 }
-.space-card-badge { font-size:12px; font-weight:800; color:#ff6e6e; display:flex; gap:8px; align-items:center; }
+/* Row 1: pulsing dot + LIVE/Scheduled + experimental chip — one baseline,
+   never wraps. */
+.space-card-badge {
+  font-size:12px; font-weight:800; color:#ff6e6e;
+  display:flex; gap:6px; align-items:center; flex-wrap:nowrap; min-width:0;
+}
+.space-card-live { white-space:nowrap; }
 .space-exp {
+  flex:0 0 auto; margin-left:auto;
   font-size:10px; font-weight:700; color:var(--muted); border:1px solid var(--border);
-  border-radius:4px; padding:1px 5px; text-transform:uppercase; letter-spacing:0.5px;
+  border-radius:4px; padding:1px 5px; text-transform:uppercase; letter-spacing:0.5px; white-space:nowrap;
 }
-.space-card-title { font-size:17px; font-weight:800; color:var(--text); }
+/* Row 2: title, bold, up to 2 lines then ellipsis. */
+.space-card-title {
+  font-size:17px; font-weight:800; color:var(--text); line-height:1.3;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+  overflow:hidden; word-break:break-word;
+}
 .space-card-sub { font-size:13px; color:var(--muted); }
-.space-card-host { display:flex; align-items:center; gap:7px; font-size:13px; font-weight:700; color:var(--text); }
-.space-host-pic { width:22px; height:22px; border-radius:50%; object-fit:cover; }
+/* Row 3: avatar · host · Host chip · count, single line, centered, ellipsizes. */
+.space-card-host {
+  display:flex; align-items:center; gap:6px; min-width:0;
+  font-size:13px; font-weight:700; color:var(--text); white-space:nowrap;
+}
+.space-card-hostname { overflow:hidden; text-overflow:ellipsis; min-width:0; flex:0 1 auto; }
+.space-card-dot { color:var(--muted); flex:0 0 auto; }
+.space-card-count { color:var(--muted); font-weight:600; overflow:hidden; text-overflow:ellipsis; min-width:0; flex:0 1 auto; }
+.space-host-pic { width:22px; height:22px; border-radius:50%; object-fit:cover; flex:0 0 auto; }
 .space-host-chip {
+  flex:0 0 auto;
   font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:0.4px;
   background:rgba(124,77,255,0.35); color:var(--text); border-radius:4px; padding:1px 6px;
+}
+/* Row 4: full-width pill button — permanently inside the card at any width. */
+.space-join-btn {
+  flex:0 0 auto; width:100%; display:block; margin-top:2px;
+  border-radius:9999px; padding:9px 16px; font-size:14px; font-weight:800;
 }
 .space-card-ended { background:var(--bg-mid); border-color:var(--border); opacity:0.8; }
 .space-card-badge.ended { color:var(--muted); }
@@ -2215,22 +2250,12 @@ body.mode-settings #mobile-fab { display:none; }
   background:linear-gradient(120deg, #7c4dff, #ff3cac);
 }
 .sb-live-btn:hover { filter:brightness(1.1); }
-.space-room-title { font-size:17px; font-weight:800; color:var(--text); display:flex; gap:8px; align-items:center; }
-.space-room-status { font-size:13px; color:var(--primary-lt); margin-top:6px; }
 .space-peers { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; min-height:30px; }
-.space-peer-pill {
-  background:var(--bg-mid); border:1px solid var(--border); border-radius:9999px;
-  padding:5px 14px; font-size:13px; color:var(--text); font-weight:600;
-  display:inline-flex; align-items:center; gap:7px;
-}
-.space-peer-pill.is-host { border-color:var(--primary-dim); }
-.space-pill-pic { width:18px; height:18px; border-radius:50%; object-fit:cover; }
 .space-chip-btn {
   background:none; border:none; cursor:pointer; font-size:13px; padding:0 2px;
   opacity:0.7; line-height:1;
 }
 .space-chip-btn:hover { opacity:1; }
-.space-room-note { font-size:12px; color:var(--muted); margin-top:12px; line-height:1.5; }
 
 /* ── Live Space dock (X-style bottom-right player) ────────────────────────
    z-index 499 = one below the generic modal overlay (.modal-bg = 500), so
@@ -2293,16 +2318,14 @@ body.mode-settings #mobile-fab { display:none; }
 .space-dock-msg-time { font-size:11px; color:var(--muted); font-weight:600; margin-left:6px; }
 .space-dock-msg-text { font-size:13px; color:var(--text); word-break:break-word; white-space:pre-wrap; }
 .space-dock-msgs-empty { font-size:12px; color:var(--muted); text-align:center; padding:14px 0; }
-.space-dock-composer { display:flex; gap:8px; padding:8px 12px; border-top:1px solid var(--border); flex:0 0 auto; }
-#space-msg-input {
-  flex:1; min-width:0; background:var(--bg-card); border:1px solid var(--border);
-  border-radius:9999px; padding:8px 12px; color:var(--text); font-size:13px;
-}
-#space-msg-send {
-  flex:0 0 auto; border:none; border-radius:9999px; padding:8px 16px; cursor:pointer;
+/* Read-only nest: a single full-width "Reply to this Space" pill (X model —
+   people reply to the Space post, they don't type in the player). */
+.space-dock-replybar { padding:8px 12px; border-top:1px solid var(--border); flex:0 0 auto; }
+.space-dock-replybtn {
+  width:100%; display:block; border:none; border-radius:9999px; padding:9px 16px; cursor:pointer;
   font-size:13px; font-weight:800; color:#fff; background:linear-gradient(120deg,#7c4dff,#ff3cac);
 }
-#space-msg-send:disabled { opacity:0.6; cursor:default; }
+.space-dock-replybtn:hover { filter:brightness(1.1); }
 /* Participants grid. */
 .space-peers {
   display:flex; flex-wrap:wrap; gap:6px; padding:10px 12px;
@@ -2328,7 +2351,7 @@ body.mode-settings #mobile-fab { display:none; }
   display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end;
   padding:10px 12px 12px; border-top:1px solid var(--border); flex:0 0 auto;
 }
-.space-dock-foot .settings-btn { padding:6px 12px; font-size:13px; }
+.space-dock-foot .settings-btn { padding:6px 12px; font-size:13px; max-width:100%; white-space:nowrap; }
 /* Mobile: expanded becomes a bottom sheet; collapsed sits above the bottom nav. */
 @media (max-width:700px) {
   .space-dock.expanded {
