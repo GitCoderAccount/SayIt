@@ -51,6 +51,32 @@ const CHANNELS_KEY    = 'sayitChannelsScan';
 const SPACE_ENDS_KEY  = 'sayitSpaceEnds';   /* JSON { "<spaceTxHash>": "<senderAddr>" } — persisted SPACE_END markers (capped ~200) */
 const ACTIVE_SPACE_KEY = 'sayitActiveSpace'; /* JSON {txHash,roomId,title,startsMs,channel,ts} — host's own live Space, for the rejoin banner */
 
+/* Accent-color presets (Settings → Display). Each maps to the four CSS
+   custom properties that drive the accent — primary, lighter primary, the
+   translucent "dim" fill, the faint hover tint — plus the neon glow shadow.
+   SOURCE OF TRUTH: a copy of this swatch table lives in boot.js (pre-paint,
+   can't import) — keep the two in sync. 'purple' = the stylesheet default;
+   selecting it (or having no setting) leaves the CSS :root values untouched. */
+const ACCENT_COLORS = {
+  purple: { name: 'Purple', rgb: '124,77,255', primary: '#7c4dff', lt: '#b388ff' },
+  blue:   { name: 'Blue',   rgb: '29,155,240', primary: '#1d9bf0', lt: '#6cc5ff' },
+  pink:   { name: 'Pink',   rgb: '249,24,128', primary: '#f91880', lt: '#ff6bab' },
+  green:  { name: 'Green',  rgb: '0,186,124',  primary: '#00ba7c', lt: '#4fe3b0' },
+  orange: { name: 'Orange', rgb: '255,122,0',  primary: '#ff7a00', lt: '#ffab57' },
+};
+/* Build the var→value map for an accent (shared shape with boot.js). */
+function accentVars(key) {
+  const a = ACCENT_COLORS[key];
+  if (!a) return null;
+  return {
+    '--primary':     a.primary,
+    '--primary-lt':  a.lt,
+    '--primary-dim': `rgba(${a.rgb},0.15)`,
+    '--primary-hov': `rgba(${a.rgb},0.08)`,
+    '--neon':        `0 0 8px rgba(${a.rgb},0.5),0 0 20px rgba(${a.rgb},0.15)`,
+  };
+}
+
 const ERC721_ABI = [
   'function tokenURI(uint256 tokenId) view returns (string)',
   'function ownerOf(uint256 tokenId) view returns (address)',
@@ -59,6 +85,11 @@ const ERC721_ABI = [
 /* Linkify patterns — hoisted and compiled once. linkify() runs on every post
    render, so recreating these regexes/Set per call was wasted work. */
 const _LK_RE         = /ipfs:\/\/\S+|ar:\/\/\S+|arweave:\/\/\S+|https?:\/\/[^\s<>"{}|\\^[\]`]+|#([a-zA-Z]\w{0,99})|@(0x[a-fA-F0-9]{40})/g;
+/* In-body links to another SayIt post: full sayitdefi.com URL or a bare
+   in-app #/post/0x<64hex> hash. The first match renders as a quote card and
+   is stripped from the displayed body (X-style). Global so postHTML can
+   replace ALL occurrences from the preview text. */
+const _SAYIT_POST_RE = /(?:https?:\/\/)?(?:www\.)?sayitdefi\.com\/#\/post\/(0x[a-fA-F0-9]{64})|#\/post\/(0x[a-fA-F0-9]{64})/g;
 const _LK_IMG_RE     = /\.(jpg|jpeg|png|gif|webp|svg|avif|tiff|bmp)(\?[^\s]*)?$/i;
 const _LK_VID_RE     = /\.(mp4|webm|ogg|mov|m4v)(\?[^\s]*)?$/i;
 const _LK_IMG_DOMAINS = /\/(ipfs|ipns)\//i;          /* IPFS gateways: .../ipfs/Qm... */

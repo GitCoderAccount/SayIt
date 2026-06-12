@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260612-158';
+const SW_CACHE_VER = '20260612-159';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -2761,6 +2761,18 @@ class SayIt {
     else document.documentElement.removeAttribute('data-theme');
   }
 
+  /* Accent color (Settings → Display). Sets the --primary* CSS vars inline on
+     <html>; 'purple' (the default) clears the inline overrides so the
+     stylesheet :root values take over — keeps reset/no-setting clean. boot.js
+     applies the same vars pre-paint. */
+  _applyAccent(key) {
+    const de = document.documentElement;
+    const vars = accentVars(key);
+    const names = ['--primary', '--primary-lt', '--primary-dim', '--primary-hov', '--neon'];
+    if (!vars || key === 'purple') { names.forEach(n => de.style.removeProperty(n)); return; }
+    for (const [n, v] of Object.entries(vars)) de.style.setProperty(n, v);
+  }
+
   /* ── Local-first deep sync ──────────────────────────────────────────
      Opt-in archive of the main channel's full history into IndexedDB.
      Pages oldest cursor → end at a polite rate while the user keeps
@@ -3632,6 +3644,16 @@ class SayIt {
             <span class="settings-switch-slider"></span>
           </label>
         </div>
+        <div class="settings-row">
+          <div class="settings-row-label"><strong>Accent color</strong><span>Tint buttons, links &amp; highlights</span></div>
+          <div class="accent-swatches" id="set-accent">
+            ${Object.entries(ACCENT_COLORS).map(([key, a]) => `
+              <button type="button" class="accent-swatch${(s.accentColor || 'purple') === key ? ' selected' : ''}"
+                data-accent="${key}" title="${utils.safe(a.name)}" aria-label="${utils.safe(a.name)} accent"
+                aria-pressed="${(s.accentColor || 'purple') === key ? 'true' : 'false'}"
+                style="background:${a.primary}"></button>`).join('')}
+          </div>
+        </div>
       </div>
 
       <!-- API -->
@@ -4031,6 +4053,22 @@ class SayIt {
       s.theme = g('set-theme').value;
       this._saveSettings(s);
       this._applyTheme(s.theme);
+    });
+    /* Accent color — persist + apply immediately, update the selected ring. */
+    g('set-accent')?.querySelectorAll('.accent-swatch').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const key = btn.dataset.accent;
+        if (!ACCENT_COLORS[key]) return;
+        const s = this._getSettings();
+        s.accentColor = key;
+        this._saveSettings(s);
+        this._applyAccent(key);
+        g('set-accent').querySelectorAll('.accent-swatch').forEach(b => {
+          const on = b === btn;
+          b.classList.toggle('selected', on);
+          b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
+      });
     });
     /* Display size (zoom) — apply immediately. '1' clears the override. */
     g('set-zoom')?.addEventListener('change', () => {
@@ -7657,18 +7695,46 @@ class SayIt {
       ${mediaHtml}`;
   }
 
+  /* Detect an in-body link to ANOTHER SayIt post and strip it from the text.
+     Sets post._linkQuote to the first non-self referenced hash (or null) and
+     returns the body text with every occurrence of that link removed. A real
+     repost (post.repostOf) wins; binary posts are skipped. post.content is
+     never touched — callers pass post.display and use the returned string. */
+  _applyLinkQuote(post) {
+    let text = post.display;
+    post._linkQuote = null;
+    if (post.repostOf || typeof text !== 'string' || this._isLikelyBinary(text)) return text;
+    _SAYIT_POST_RE.lastIndex = 0;
+    let m, firstHash = null;
+    const selfHash = (post.txHash || '').toLowerCase();
+    while ((m = _SAYIT_POST_RE.exec(text))) {
+      const h = (m[1] || m[2] || '').toLowerCase();
+      if (h && h !== selfHash) { firstHash = h; break; }
+    }
+    if (firstHash) {
+      post._linkQuote = firstHash;
+      text = text.replace(_SAYIT_POST_RE, (full, a, b) =>
+        ((a || b || '').toLowerCase() === firstHash ? '' : full)).replace(/[ \t]{2,}/g, ' ').trim();
+    }
+    return text;
+  }
+
   _postRepostCard(post) {
-    if (!post.repostOf) return '';
-    const orig = this._postMap.get(post.repostOf);
+    /* A real repost/quote (post.repostOf) wins; otherwise an in-body link to
+       another SayIt post (post._linkQuote, set in postHTML) renders the same
+       quote card. Both share the identical fetch-on-miss hydration path. */
+    const hash = post.repostOf || post._linkQuote;
+    if (!hash) return '';
+    const orig = this._postMap.get(hash);
     if (orig) {
       return `
-        <div class="repost-card" data-open-quote="${utils.safe(post.repostOf)}" data-act="open-quote" data-act-arg="${utils.safe(post.repostOf)}" data-act-arg2="${utils.safe(post.to || this.state.channel || '')}">
+        <div class="repost-card" data-open-quote="${utils.safe(hash)}" data-act="open-quote" data-act-arg="${utils.safe(hash)}" data-act-arg2="${utils.safe(post.to || this.state.channel || '')}">
           ${this._quoteCardInner(orig)}
         </div>`;
     }
     /* Original not in _postMap — render placeholder and trigger fetch */
-    const qid = utils.safe(post.repostOf);
-    this._fetchQuotedPost(post.repostOf, post.to || this.state.channel);
+    const qid = utils.safe(hash);
+    this._fetchQuotedPost(hash, post.to || this.state.channel);
     return `<div class="repost-card repost-card-missing" data-fetch-quote="${qid}" id="qc-${qid.slice(2,8)}">
       <span class="spinner sp-sm" aria-hidden="true"></span>
       <span>Loading quoted post…</span>
@@ -7762,14 +7828,18 @@ class SayIt {
        the mojibake under the warning label reads as a rendering bug. Show
        the label alone; "Show more" still expands to the raw payload. */
     const hideBinary = nonText && !inModal && !expanded;
+    /* In-body link to another SayIt post → render it as a quote card and strip
+       the URL from the displayed text. Strips BEFORE truncation so a long URL
+       can't eat the preview. post.content/display are never mutated. */
+    const displayText = this._applyLinkQuote(post);
     /* Body text + image extraction. Always run linkify on full text so
        media below the preview cap still renders in the feed. */
     const textToRender = hideBinary ? ''
-      : (!inModal && !expanded && post.display.length > previewLimit)
-        ? post.display.slice(0, previewLimit) + '…'
-        : post.display;
-    const { text: bodyHtml, images: imgHtml, embeds: embedHtml } = utils.linkify(textToRender, post.display);
-    const isLong     = !inModal && (nonText || post.display.length > previewLimit);
+      : (!inModal && !expanded && displayText.length > previewLimit)
+        ? displayText.slice(0, previewLimit) + '…'
+        : displayText;
+    const { text: bodyHtml, images: imgHtml, embeds: embedHtml } = utils.linkify(textToRender, displayText);
+    const isLong     = !inModal && (nonText || displayText.length > previewLimit);
     const needsMore  = isLong && !expanded;
     const canCollapse = isLong && expanded;
     /* Repost / quote card + badges */
@@ -9212,32 +9282,35 @@ class SayIt {
     const host = this.state.profCache[post.reporter] || {};
     const hostName = host.username ? utils.safe(host.username) : this.trunc(post.reporter);
     const hostPic = utils.safe(utils.safeUrl(host.picUrl) || 'image1.jpeg');
-    const hostRow = `
+    /* Row 3: avatar · host name · Host chip · " · " · live count, all on ONE
+       line, vertically centered, ellipsizing. The count span keeps its
+       data-space-count hook so the live probe patches it in place. */
+    const hostRow = (countInner) => `
       <div class="space-card-host">
         <img src="${hostPic}" class="space-host-pic" alt="" loading="lazy" data-fallback-src="image1.jpeg">
-        <span>${hostName}</span><span class="space-host-chip">Host</span>
+        <span class="space-card-hostname">${hostName}</span><span class="space-host-chip">Host</span>${countInner ? `<span class="space-card-dot">·</span>${countInner}` : ''}
       </div>`;
     if (ended) {
       return `
         <div class="space-card space-card-ended">
           <div class="space-card-badge ended">🎙 Space · Ended</div>
           <div class="space-card-title">${utils.safe(sp.title)}</div>
-          ${hostRow}
+          ${hostRow('')}
         </div>`;
     }
     const live = !sp.startsMs || sp.startsMs <= Date.now();
     if (live) this._scheduleSpaceProbe();
+    const countInner = live
+      ? `<span class="space-card-count" data-space-count="${utils.safe(sp.roomId)}">Checking who's here…</span>`
+      : `<span class="space-card-count">Starts ${utils.safe(this.relTime(new Date(sp.startsMs).toISOString()))}</span>`;
     return `
       <div class="space-card" data-space-host="${utils.safe(post.reporter || '')}">
         <div class="space-card-badge">${live
-          ? '<span class="live-dot" aria-hidden="true"></span> LIVE'
-          : '🎙 Scheduled'}<span class="space-exp">experimental</span></div>
+          ? '<span class="live-dot" aria-hidden="true"></span><span class="space-card-live">LIVE</span>'
+          : '<span class="space-card-live">🎙 Scheduled</span>'}<span class="space-exp">experimental</span></div>
         <div class="space-card-title">${utils.safe(sp.title)}</div>
-        ${hostRow}
-        <div class="space-card-sub">${live
-          ? `<span data-space-count="${utils.safe(sp.roomId)}">Checking who's here…</span>`
-          : 'Starts ' + utils.safe(this.relTime(new Date(sp.startsMs).toISOString()))}</div>
-        <button class="btn-pri space-join-btn" data-action="join-space" style="flex:0 0 auto;width:auto;padding:8px 22px">${live ? 'Listen live' : 'Join'}</button>
+        ${hostRow(countInner)}
+        <button class="btn-pri space-join-btn" data-action="join-space">${live ? 'Listen live' : 'Join'}</button>
       </div>`;
   }
 
@@ -9423,8 +9496,6 @@ class SayIt {
       if (leaveBtn) leaveBtn.onclick = () => { this.leaveSpace(); };
       const endBtn = this.g('space-end');
       if (endBtn) endBtn.onclick = () => this.endSpace(post);
-      /* Chat composer: an on-chain reply to the announcement post. */
-      this._wireSpaceComposer(post);
     } catch (err) {
       const el = status();
       if (el) el.textContent = '✗ Microphone unavailable: ' + (err?.message || err);
@@ -9499,6 +9570,9 @@ class SayIt {
   _mountSpaceDock(post, role, { isHost, asSpeaker, note }) {
     const dock = this.g('space-dock');
     if (!dock) return;
+    /* Set the post early so the dock's post-only actions (Reply / Share) wire
+       up at mount, before joinSpace assigns the (async) room. */
+    this._spaceRoomPost = post;
     /* Re-mounting: clear any prior polls/timers tied to a previous room. */
     clearInterval(this._spaceMsgTimer);
     const sp = post.space;
@@ -9519,13 +9593,13 @@ class SayIt {
       <div class="space-dock-head">
         <span class="live-dot" aria-hidden="true"></span>
         <span class="space-dock-head-title">${title}</span>
+        <button class="space-dock-toggle" id="space-dock-share" aria-label="Share this Space" title="Share this Space">↗</button>
         <button class="space-dock-toggle" id="space-dock-toggle" aria-label="Collapse">⌄</button>
       </div>
       <div class="space-dock-body">
         <div class="space-dock-msgs" id="space-dock-msgs"></div>
-        <div class="space-dock-composer">
-          <input id="space-msg-input" maxlength="280" placeholder="Say something…" autocomplete="off">
-          <button id="space-msg-send">Send</button>
+        <div class="space-dock-replybar">
+          <button class="space-dock-replybtn" id="space-dock-reply">💬 Reply to this Space</button>
         </div>
         <div class="space-peers" id="space-peers"></div>
         <div class="space-dock-status" id="space-status">${asSpeaker ? 'Requesting microphone…' : 'Tuning in…'}</div>
@@ -9563,6 +9637,9 @@ class SayIt {
        expand handler; without this the same bubbling click would immediately
        re-expand. */
     if (toggle) toggle.onclick = e => { e.stopPropagation(); this._collapseSpaceDock(); };
+    /* Post-only actions (Reply / Share) need just _spaceRoomPost, which is set
+       at mount — wire them every expand, independent of the room. */
+    this._wireSpaceDockActions(this._spaceRoomPost);
     /* Re-wire the room controls (handlers were bound to the previous nodes).
        These guard internally on this._spaceRoom. */
     this._wireSpaceDockControls();
@@ -9645,48 +9722,19 @@ class SayIt {
     if (leaveBtn) leaveBtn.onclick = () => { this.leaveSpace(); };
     const endBtn = this.g('space-end');
     if (endBtn) endBtn.onclick = () => this.endSpace(post);
-    this._wireSpaceComposer(post);
   }
 
-  /* Chat composer: send button publishes an on-chain reply to the Space's
-     announcement post; on success, optimistically append + clear the input. */
-  _wireSpaceComposer(post) {
-    const send = this.g('space-msg-send');
-    const input = this.g('space-msg-input');
-    if (!send || !input) return;
-    const submit = async () => {
-      const text = (input.value || '').trim();
-      if (!text) return;
-      if (!this.signer) { utils.toast('Connect wallet to chat'); return; }
-      send.disabled = true;
-      try {
-        const hash = await this.publish(text, post.txHash, post.channel || post.to);
-        if (hash) {
-          input.value = '';
-          /* Optimistic local append so the sender sees it immediately. */
-          const msg = {
-            content: 'REPLY_TO:' + post.txHash + '\n\n' + text, display: text,
-            parentTx: post.txHash, repostOf: null, direction: null, poll: null,
-            postType: 'post', reactionTarget: null,
-            reporter: this.state.signerAddr, to: post.channel || post.to,
-            channel: post.channel || post.to,
-            timestamp: new Date().toISOString(),
-            txHash: typeof hash === 'string' ? hash : ('0x' + 'opt' + Date.now()),
-            blockNumber: null, mode: post.mode,
-          };
-          if (msg.txHash && /^0x[a-f0-9]{64}$/i.test(msg.txHash) && !this._postMap.has(msg.txHash)) {
-            this._postMap.set(msg.txHash, msg);
-            this.state.posts.push(msg);
-          }
-          (this._spaceLocalMsgs ||= []).push(msg);
-          this._renderSpaceDockMsgs();
-        }
-      } finally {
-        send.disabled = false;
-      }
+  /* X behavior: you don't type in the player — you reply to the Space post.
+     The Reply button opens the on-chain reply composer (REPLY_TO:); Share
+     opens the standard share sheet (copy link / native share). */
+  _wireSpaceDockActions(post) {
+    const reply = this.g('space-dock-reply');
+    if (reply) reply.onclick = () => {
+      if (!this.signer) { utils.toast('Connect wallet to reply'); return; }
+      this.openReplyModal(this._spaceRoomPost || post);
     };
-    send.onclick = submit;
-    input.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); submit(); } };
+    const share = this.g('space-dock-share');
+    if (share) share.onclick = e => { e.stopPropagation(); this.sharePost(this._spaceRoomPost || post); };
   }
 
   /* Render the chat: replies to the announcement post (oldest→newest),
@@ -10169,7 +10217,9 @@ class SayIt {
   _threadHeroHTML(post, replyMap) {
     this._reviveSpace(post);
     const { picUrl, displayName, verifiedBadge } = this._postProfileFields(post);
-    const { text: bodyHtml, images: imgHtml, embeds: embedHtml } = utils.linkify(post.display, post.display);
+    /* Same in-body SayIt-post-link → quote card treatment as the feed. */
+    const heroText = this._applyLinkQuote(post);
+    const { text: bodyHtml, images: imgHtml, embeds: embedHtml } = utils.linkify(heroText, heroText);
     const repostCard = this._postRepostCard(post);
     const d = new Date(post.timestamp);
     const timeLine = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
@@ -11023,6 +11073,12 @@ class SayIt {
     if (this._fetchingQuotes.has(hash)) return;
     this._fetchingQuotes.add(hash);
     try {
+      /* Yield once so the synchronous renderFeed loop finishes repopulating
+         _postMap before we read it. The quoted post is often LATER in the same
+         feed than the post quoting it (a quote/link points back at an older
+         post that also renders below) — without this yield _postMap.get misses
+         it and we'd do a needless chain fetch (and, offline, fail outright). */
+      await Promise.resolve();
       const orig = this._postMap.get(hash) || await this._fetchTxByHash(hash);
       const placeholder = document.getElementById('qc-' + hash.slice(2, 8));
       if (!orig) {
