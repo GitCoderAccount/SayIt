@@ -6617,37 +6617,53 @@ class SayIt {
     if (cached !== undefined) return cached; /* null cached too — don't refetch */
     const s       = this._getSettings();
     const primary = s.apiUrl      || 'https://api.scan.pulsechain.com/api';
-    const backup  = s.backupApiUrl || '';
-    const qs = `?module=account&action=txlist&address=${lc}&offset=1&page=1&sort=asc`;
-    const fetchOldest = async url => {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 15000);
-      let res;
-      try { res = await fetch(url + qs, { signal: ctrl.signal }); }
-      finally { clearTimeout(timer); }
-      if (!res.ok) throw new Error(`API ${res.status}`);
-      const data = await res.json();
-      /* Same validation apiFetch applies — status '1' + array result. */
-      if (data.status !== '1' || !Array.isArray(data.result) || !data.result.length) return null;
-      const tx = utils.sanitizeTxs(data.result)[0];
-      const tsSec = Number(tx?.timeStamp);
-      if (!Number.isFinite(tsSec) || tsSec <= 0) return null;
-      return tsSec * 1000;
-    };
+    /* Blockscout can't serve sort=asc txlist on busy addresses — verified
+       live: the query hangs server-side, then errors. Instead: (1) the tx
+       COUNT from the v2 counters endpoint, (2) the LAST page of the normal
+       desc listing — its final row is the first-ever tx. Two bounded calls;
+       very large accounts (>20k txs → deep pagination gets slow) are
+       skipped and simply show no line. */
+    const v2base = primary.replace(/\/api\/?$/, '/api/v2');
     let ms = null;
     try {
-      ms = await fetchOldest(primary);
-    } catch {
-      if (backup) { try { ms = await fetchOldest(backup); } catch { ms = null; } }
-    }
+      const ctl1 = new AbortController();
+      const t1 = setTimeout(() => ctl1.abort(), 10000);
+      let count;
+      try {
+        const r = await fetch(`${v2base}/addresses/${lc}/counters`, { signal: ctl1.signal });
+        if (!r.ok) throw new Error('counters ' + r.status);
+        count = Number((await r.json())?.transactions_count);
+      } finally { clearTimeout(t1); }
+      if (Number.isFinite(count) && count > 0 && count <= 20000) {
+        const lastPage = Math.max(1, Math.ceil(count / 50));
+        const ctl2 = new AbortController();
+        const t2 = setTimeout(() => ctl2.abort(), 15000);
+        try {
+          const r = await fetch(
+            `${primary}?module=account&action=txlist&address=${lc}&offset=50&page=${lastPage}&sort=desc`,
+            { signal: ctl2.signal });
+          if (r.ok) {
+            const data = await r.json();
+            /* Same ingestion gate apiFetch applies — status '1' + sanitized rows. */
+            if (data.status === '1' && Array.isArray(data.result) && data.result.length) {
+              const rows = utils.sanitizeTxs(data.result);
+              const tsSec = Number(rows[rows.length - 1]?.timeStamp);
+              if (Number.isFinite(tsSec) && tsSec > 0) ms = tsSec * 1000;
+            }
+          }
+        } finally { clearTimeout(t2); }
+      }
+    } catch { /* explorer hiccup — cache the null, no error UI */ }
     /* Cache on the in-memory profile record (create a stub if absent). */
     (this.state.profCache[lc] ||= {}).firstSeen = ms;
     return ms;
   }
 
-  /* Resolve + render the profile's "🗓 On-chain since <Month Year>" line.
+  /* Resolve + render the profile's "On-chain since <Month Year>" line.
      Guards against the user navigating away mid-fetch. Leaves the span empty
-     (no error UI) if the explorer rejects the ascending query. */
+     (no error UI) if the explorer can't answer. Inline SVG calendar (own
+     asset) instead of an emoji — the owner's system lacks a color-emoji
+     font, so emoji icons render as broken boxes there. */
   async _fillFirstSeen(address) {
     const lc = (address || '').toLowerCase();
     let ms;
@@ -6658,7 +6674,9 @@ class SayIt {
     const el = document.getElementById('prof-firstseen');
     if (!el) return;
     const when = new Date(ms).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-    el.textContent = `🗓 On-chain since ${when}`;
+    el.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"
+        style="vertical-align:-2px;margin-right:3px"><path fill="currentColor"
+        d="M7 2v2H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2V2h-2v2H9V2H7zm-2 7h14v10H5V9z"/></svg>On-chain since ${utils.safe(when)}`;
     el.style.display = '';
   }
 
