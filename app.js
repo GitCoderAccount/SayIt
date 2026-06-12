@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260612-161';
+const SW_CACHE_VER = '20260612-162';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -1915,6 +1915,9 @@ class SayIt {
        orphaned to "All"-only. */
     const inTab = (n) => {
       if (tab === 'likes')    return n.type === 'like';
+      /* Verified: same items as All, filtered to actors with an on-chain
+         profile (username present in profCache). Cache-only — no fetches. */
+      if (tab === 'verified') return !!this.state.profCache[n.from]?.username;
       if (tab === 'mentions') return n.type !== 'like';
       return true; /* all */
     };
@@ -1922,6 +1925,7 @@ class SayIt {
     const tabBar = `
       <div class="notif-tabs">
         <button class="notif-tab ${tab==='all'?'active':''}" data-notif-tab="all">All</button>
+        <button class="notif-tab ${tab==='verified'?'active':''}" data-notif-tab="verified">Verified</button>
         <button class="notif-tab ${tab==='mentions'?'active':''}" data-notif-tab="mentions">Mentions</button>
         <button class="notif-tab ${tab==='likes'?'active':''}" data-notif-tab="likes">Likes</button>
       </div>`;
@@ -5365,6 +5369,9 @@ class SayIt {
     });
     this.g('feed').innerHTML = profHeaderHTML + this._profilePageHTML(address, prof, isOwn);
     this._wireProfilePageListeners(address, isOwn);
+    /* Fill the "On-chain since <Month Year>" line async (X's Joined parity).
+       Mirrors the prof-tips pattern: empty span, filled when the call lands. */
+    this._fillFirstSeen(address);
     /* If this profile is a token contract, fill in its identity (logo, name,
        banner, verified profile, links) the same way the channel banner does. */
     if (!isOwn) this._applyTokenIdentityToProfile(address);
@@ -5468,6 +5475,7 @@ class SayIt {
       location ? `<span class="prof-meta-item">📍 ${location}</span>` : '',
       websiteHrefSafe ? `<span class="prof-meta-item">🔗 <a href="${websiteHrefSafe}" target="_blank" rel="noopener noreferrer">${websiteDisplay}</a></span>` : '',
       joined   ? `<span class="prof-meta-item">📅 Joined ${utils.safe(joined)}</span>` : '',
+      `<span class="prof-meta-item" id="prof-firstseen" style="display:none" title="First on-chain activity"></span>`,
       `<span class="prof-meta-item" id="prof-tips" style="display:none" title="PLS tips received on posts"></span>`,
     ].filter(Boolean).join('');
 
@@ -6166,6 +6174,8 @@ class SayIt {
     try {
       let posts = [];
       let scannedHasMore = false; /* set below: were there more pages past the initial scan? */
+      let pinnedHash = null;      /* resolved pinned-post hash for the Posts tab, or null */
+      const addrLc = address.toLowerCase();
 
       if (tab === 'likes') {
         /* Likes: resolve txHashes from state.likes */
@@ -6210,11 +6220,29 @@ class SayIt {
         /* If the initial scan filled all its pages, there's likely more. */
         scannedHasMore = raw.length >= PROFILE_INIT_PAGES * 50;
 
+        /* Pinned-post resolution (Posts tab only): self-sent PIN:/UNPIN: txs
+           where from === to === address. Last action wins via the composite
+           block*1e5+txIndex order (same pattern as the follower scan). */
+        let pinResolved; /* { hash, order } | undefined */
         raw.forEach(tx => {
           const from = tx.from?.toLowerCase();
           const to   = tx.to?.toLowerCase();
           if (from !== address.toLowerCase()) return;
           if (!tx.input || tx.input === '0x') return;
+          if (tab === 'posts' && to === addrLc) {
+            try {
+              const t = ethers.toUtf8String(tx.input).trim();
+              let pinHash = null, isUnpin = false;
+              if (t.startsWith(UNPIN_PREFIX)) { pinHash = t.slice(UNPIN_PREFIX.length).trim().toLowerCase(); isUnpin = true; }
+              else if (t.startsWith(PIN_PREFIX)) { pinHash = t.slice(PIN_PREFIX.length).trim().toLowerCase(); }
+              if (pinHash && /^0x[a-f0-9]{64}$/.test(pinHash)) {
+                const order = (Number(tx.blockNumber) || 0) * 100000 + (Number(tx.transactionIndex) || 0);
+                if (!pinResolved || order >= pinResolved.order) {
+                  pinResolved = { hash: isUnpin ? null : pinHash, order };
+                }
+              }
+            } catch { /* skip malformed pin tx */ }
+          }
           try {
             /* Canonical parse — identical poll/vote/repost/reply handling
                to the main feed. Returns null for non-post txs (profile,
@@ -6228,9 +6256,19 @@ class SayIt {
             posts.push(parsed);
           } catch { /* skip */ }
         });
+        /* Reconcile the pin: on-chain scan is authoritative when it found any
+           PIN/UNPIN marker; otherwise fall back to the optimistic localStorage
+           value for our own profile (the just-pinned post may post-date the
+           cached scan). */
+        if (tab === 'posts') {
+          if (pinResolved) pinnedHash = pinResolved.hash;
+          else if (addrLc === this.state.signerAddr) pinnedHash = this._getMyPin();
+          /* Keep our own optimistic record in sync with the chain. */
+          if (pinResolved && addrLc === this.state.signerAddr) this._setMyPin(pinResolved.hash);
+        }
       }
 
-      if (!posts.length) {
+      if (!posts.length && !pinnedHash) {
         /* No matching posts in the initial pages, but more history remains —
            don't show the empty state yet; keep scanning deeper pages. */
         if (scannedHasMore && tab !== 'likes') {
@@ -6269,16 +6307,41 @@ class SayIt {
       /* Posts / Replies / Likes: standard post list */
       const replyMap = new Map();
       posts.forEach(p => { if (p.parentTx) replyMap.set(p.parentTx, (replyMap.get(p.parentTx)||0)+1); });
+      /* Pinned post (Posts tab): hoist it to the top under a 📌 label and
+         remove its natural occurrence so it isn't shown twice. If it wasn't in
+         the scanned set, fetch it by hash; skip silently if unfetchable. */
+      let pinnedPost = null;
+      if (tab === 'posts' && pinnedHash) {
+        pinnedPost = posts.find(p => p.txHash === pinnedHash) || null;
+        if (pinnedPost) posts = posts.filter(p => p.txHash !== pinnedHash);
+        else {
+          try {
+            const fetched = await this._fetchTxByHash(pinnedHash);
+            /* Only honor a pin that points at one of this author's own posts. */
+            if (fetched && fetched.reporter === addrLc && !fetched.parentTx) pinnedPost = fetched;
+          } catch { /* unfetchable — skip silently */ }
+        }
+      }
       const frag = document.createDocumentFragment();
-      posts.forEach(p => {
+      const renderPost = (p, pinned) => {
         this._postMap.set(p.txHash, p);
         const el = document.createElement('div');
-        el.className      = 'post-item';
+        el.className      = 'post-item' + (pinned ? ' prof-pinned-post' : '');
         el.dataset.txhash = p.txHash;
-        el.innerHTML      = this.postHTML(p, false, replyMap, null);
+        el.innerHTML      = (pinned ? '<div class="prof-pinned-label">📌 Pinned</div>' : '')
+          + this.postHTML(p, false, replyMap, null);
         frag.appendChild(el);
         if (p.reporter !== this.state.signerAddr) this.fetchOtherProfile(p.reporter);
-      });
+      };
+      /* Pin hash was set but the post couldn't be resolved AND there are no
+         other posts — show the normal empty state rather than a blank list. */
+      if (!pinnedPost && !posts.length) {
+        feedEl.innerHTML = `<div class="prof-empty"><span>📝</span><h3>No posts yet</h3><p>Posts will appear here.</p></div>`;
+        if (this._profilePageState) { this._profilePageState.tab = tab; this._profilePageState.hasMore = scannedHasMore; }
+        return;
+      }
+      if (pinnedPost) renderPost(pinnedPost, true);
+      posts.forEach(p => renderPost(p, false));
       feedEl.innerHTML = '';
       feedEl.appendChild(frag);
       /* Tally any polls just rendered so their results fill in. */
@@ -6293,6 +6356,7 @@ class SayIt {
         this._profilePageState.pagesScanned = Math.max(this._profilePageState.pagesScanned, PROFILE_INIT_PAGES);
         this._profilePageState.hasMore = scannedHasMore;
         this._profilePageState.visibleTxHashes = new Set(posts.map(p => p.txHash));
+        if (pinnedPost) this._profilePageState.visibleTxHashes.add(pinnedPost.txHash);
       }
       /* If the initial posts don't fill the screen, auto-load more so the user
          sees a full feed without having to scroll a short page. */
@@ -6541,6 +6605,63 @@ class SayIt {
     }
   }
 
+  /* Resolve an address's FIRST on-chain activity (X's "Joined" parity).
+     One Etherscan-style txlist call sorted ascending, offset=1 — the single
+     oldest tx. Reuses apiFetch's endpoint plumbing + the same ingestion gate
+     (explorer data is untrusted). Returns ms timestamp, or null on failure /
+     no history. Cached in-memory on profCache[addr].firstSeen. */
+  async _fetchFirstSeen(address) {
+    const lc = (address || '').toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(lc)) return null;
+    const cached = this.state.profCache[lc]?.firstSeen;
+    if (cached !== undefined) return cached; /* null cached too — don't refetch */
+    const s       = this._getSettings();
+    const primary = s.apiUrl      || 'https://api.scan.pulsechain.com/api';
+    const backup  = s.backupApiUrl || '';
+    const qs = `?module=account&action=txlist&address=${lc}&offset=1&page=1&sort=asc`;
+    const fetchOldest = async url => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 15000);
+      let res;
+      try { res = await fetch(url + qs, { signal: ctrl.signal }); }
+      finally { clearTimeout(timer); }
+      if (!res.ok) throw new Error(`API ${res.status}`);
+      const data = await res.json();
+      /* Same validation apiFetch applies — status '1' + array result. */
+      if (data.status !== '1' || !Array.isArray(data.result) || !data.result.length) return null;
+      const tx = utils.sanitizeTxs(data.result)[0];
+      const tsSec = Number(tx?.timeStamp);
+      if (!Number.isFinite(tsSec) || tsSec <= 0) return null;
+      return tsSec * 1000;
+    };
+    let ms = null;
+    try {
+      ms = await fetchOldest(primary);
+    } catch {
+      if (backup) { try { ms = await fetchOldest(backup); } catch { ms = null; } }
+    }
+    /* Cache on the in-memory profile record (create a stub if absent). */
+    (this.state.profCache[lc] ||= {}).firstSeen = ms;
+    return ms;
+  }
+
+  /* Resolve + render the profile's "🗓 On-chain since <Month Year>" line.
+     Guards against the user navigating away mid-fetch. Leaves the span empty
+     (no error UI) if the explorer rejects the ascending query. */
+  async _fillFirstSeen(address) {
+    const lc = (address || '').toLowerCase();
+    let ms;
+    try { ms = await this._fetchFirstSeen(lc); } catch { ms = null; }
+    if (ms == null) return;
+    /* Stale-guard: still on this same profile page? */
+    if (this.state.mode !== 'profile' || this.state.channel?.toLowerCase() !== lc) return;
+    const el = document.getElementById('prof-firstseen');
+    if (!el) return;
+    const when = new Date(ms).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    el.textContent = `🗓 On-chain since ${when}`;
+    el.style.display = '';
+  }
+
   /* Fetch only an address's SENT transactions via the Blockscout v2 API
      (filter=from), newest first. The etherscan-compat txlist mixes sent and
      received txs, and a popular account's received engagement (every like/
@@ -6713,6 +6834,9 @@ class SayIt {
     }
     /* Community notes + ratings are not feed posts — gathered via _scanChannelNotes. */
     if (text.startsWith(NOTE_PREFIX) || text.startsWith(NOTERATE_PREFIX)) return null;
+    /* Pin markers are self-sent control txs, never feed posts. UNPIN checked
+       first so the PIN prefix can't swallow it. */
+    if (text.startsWith(UNPIN_PREFIX) || text.startsWith(PIN_PREFIX)) return null;
     if (text.startsWith(LIKE_PREFIX) || text.startsWith(UNLIKE_PREFIX)
       || text.startsWith(BOOKMARK_PREFIX) || text.startsWith(UNBOOKMARK_PREFIX)
       || text.startsWith(FOLLOW_PREFIX) || text.startsWith(UNFOLLOW_PREFIX)) return null;
@@ -8512,6 +8636,8 @@ class SayIt {
           !body.startsWith(TOKEN_PROFILE_PREFIX) &&
           !body.startsWith(NOTE_PREFIX) &&
           !body.startsWith(SPACE_END_PREFIX) &&
+          !body.startsWith(PIN_PREFIX) &&
+          !body.startsWith(UNPIN_PREFIX) &&
           !body.startsWith(LC_SYNC_PREFIX)) {
         /* If this is a poll, parse it so the feed renders the poll UI
            rather than the raw POLL:{json} text. */
@@ -8733,6 +8859,55 @@ class SayIt {
       }
     } finally {
       this._pendingTx.delete('bookmark:' + hash);
+    }
+  }
+
+  /* ── Pinned post (X parity) ──────────────────────────────────────────────
+     Your pin is a self-sent PIN:0x<hash> tx; UNPIN clears it. We mirror the
+     bookmark target (this.state.signerAddr) and track the current pin
+     optimistically in localStorage (sayitMyPin:<addr>) so the profile renders
+     it instantly without re-scanning. On-chain remains the source of truth —
+     the profile scan reconciles last-action-wins. */
+  _myPinKey() {
+    return this.state.signerAddr ? `sayitMyPin:${this.state.signerAddr}` : null;
+  }
+
+  _getMyPin() {
+    if (this._myPin !== undefined) return this._myPin;
+    const key = this._myPinKey();
+    this._myPin = key ? (utils.safeLS.get(key, '') || null) : null;
+    return this._myPin;
+  }
+
+  _setMyPin(hash) {
+    this._myPin = hash || null;
+    const key = this._myPinKey();
+    if (!key) return;
+    if (hash) utils.safeLS.set(key, hash);
+    else      utils.safeLS.remove(key);
+  }
+
+  async togglePin(post) {
+    if (!this.signer) { utils.toast('Connect wallet to pin posts'); return; }
+    if (post.reporter !== this.state.signerAddr) { utils.toast('You can only pin your own posts'); return; }
+    const hash = post.txHash;
+    if (!this._reactionBusy('pin:' + hash)) return;
+    try {
+      const isPinned = this._getMyPin() === hash;
+      const prefix = isPinned ? UNPIN_PREFIX : PIN_PREFIX;
+      const ok = await this.publish(prefix + hash, null, this.state.signerAddr);
+      if (!ok) return;
+      this._setMyPin(isPinned ? null : hash);
+      utils.toast(isPinned ? 'Unpinned from your profile' : '📌 Pinned to your profile');
+      /* If we're looking at our own profile Posts tab, re-render so the pin
+         surfaces / clears immediately. */
+      if (this.state.mode === 'profile'
+          && this.state.channel?.toLowerCase() === this.state.signerAddr
+          && this._profilePageState?.tab === 'posts') {
+        this.loadProfileTab(this.state.signerAddr, true, 'posts');
+      }
+    } finally {
+      this._pendingTx.delete('pin:' + hash);
     }
   }
 
@@ -11009,8 +11184,13 @@ class SayIt {
       { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18.36 5.64c-1.95-1.96-5.11-1.96-7.07 0L9.88 7.05 8.46 5.64l1.42-1.42c2.73-2.73 7.16-2.73 9.9 0 2.73 2.74 2.73 7.17 0 9.9l-1.42 1.42-1.41-1.42 1.41-1.41c1.96-1.96 1.96-5.12 0-7.07zm-2.12 3.53l-7.07 7.07-1.41-1.41 7.07-7.07 1.41 1.41zm-12.02.71l1.42-1.42 1.41 1.42-1.41 1.41c-1.96 1.96-1.96 5.12 0 7.07 1.95 1.96 5.11 1.96 7.07 0l1.41-1.41 1.42 1.41-1.42 1.42c-2.73 2.73-7.16 2.73-9.9 0-2.73-2.74-2.73-7.17 0-9.9z"/></svg>',
         label: 'View on OtterScan', action: () => window.open(`https://otter.pulsechain.com/tx/${post.txHash}`, '_blank', 'noopener,noreferrer'), danger: false },
     );
-    /* Own posts get a note about on-chain permanence */
+    /* Own posts: pin/unpin to your profile + a note about on-chain permanence */
     if (isOwn) {
+      const isPinned = this._getMyPin() === post.txHash;
+      items.unshift({
+        icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>',
+        label: isPinned ? 'Unpin from your profile' : 'Pin to your profile',
+        action: () => this.togglePin(post), danger: false });
       items.push({ icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>',
         label: 'Posts are permanent on-chain', action: () => utils.toast('On-chain posts are permanent by design.'), danger: false });
     }

@@ -47,6 +47,13 @@ const LC_SYNC_PREFIX  = 'LC_SYNC:';
 const TIP_PREFIX      = 'TIP:';     /* TIP:0x<posthash> — tx VALUE carries the tip, sent to the post author */
 const SPACE_PREFIX    = 'SPACE:';   /* SPACE:{"r":roomId,"s":startsMs}\n\n<title> — live audio room announcement */
 const SPACE_END_PREFIX = 'SPACE_END:'; /* SPACE_END:0x<spacehash> — the host ends a Space (honored only from the Space's author) */
+/* Pinned post — sent to SELF (like bookmarks). PIN:0x<posthash> marks one of
+   your own posts to surface atop your profile's Posts tab; UNPIN:0x<posthash>
+   clears it. Last action wins (composite block/tx order), so re-pinning a new
+   post supersedes the old one. UNPIN_PREFIX must be checked before PIN_PREFIX —
+   prefix collision ('UNPIN:' starts with neither, but ordering kept explicit). */
+const PIN_PREFIX   = 'PIN:';
+const UNPIN_PREFIX = 'UNPIN:';
 const CHANNELS_KEY    = 'sayitChannelsScan';
 const SPACE_ENDS_KEY  = 'sayitSpaceEnds';   /* JSON { "<spaceTxHash>": "<senderAddr>" } — persisted SPACE_END markers (capped ~200) */
 const ACTIVE_SPACE_KEY = 'sayitActiveSpace'; /* JSON {txHash,roomId,title,startsMs,channel,ts} — host's own live Space, for the rejoin banner */
