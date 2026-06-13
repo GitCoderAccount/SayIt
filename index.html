@@ -1751,6 +1751,67 @@ body.mode-explore .sb-search { display:none; }
 .ch-unread-dot { width:10px; height:10px; border-radius:50%; background:var(--primary); flex-shrink:0; align-self:center; }
 .ch-empty-tab { text-align:center; color:var(--muted); padding:48px 16px; font-size:15px; }
 
+/* Channels page — X-style two-column Chat layout (list + pane). Mirrors the
+   Settings two-pane pattern: fixed-width list on the left, flexible pane on
+   the right. Mobile drills from the list into the pane (.pane-open). */
+.ch-layout { display:flex; align-items:flex-start; }
+.ch-col-list { width:340px; flex:0 0 340px; border-right:1px solid var(--border); min-width:0; }
+.ch-col-pane { flex:1; min-width:0; }
+/* Active channel row highlight (mirror .settings-nav-item.active). */
+.ch-history-item.active { background:var(--hov-1); box-shadow:inset -2px 0 0 var(--primary); }
+.ch-history-item.active .ch-hist-name { font-weight:800; }
+/* Right-pane empty state (nothing selected). */
+.ch-pane-empty {
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  text-align:center; gap:10px; padding:64px 24px; color:var(--muted);
+}
+.ch-pane-empty svg { opacity:0.7; }
+.ch-pane-empty h3 { margin:6px 0 0; font-size:18px; color:var(--text); }
+.ch-pane-empty p { margin:0; font-size:14px; max-width:280px; }
+/* Selected-channel pane header. */
+.ch-pane-header {
+  display:flex; align-items:center; gap:12px;
+  padding:12px 16px; border-bottom:1px solid var(--border);
+}
+.ch-pane-avatar {
+  width:40px; height:40px; border-radius:50%; flex-shrink:0;
+  background:var(--bg-mid); object-fit:cover; border:1px solid var(--border);
+}
+.ch-pane-id { flex:1; min-width:0; }
+.ch-pane-name { font-size:16px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ch-pane-addr { font-size:13px; color:var(--muted); }
+.ch-pane-fullview {
+  flex-shrink:0; background:transparent; border:1px solid var(--border);
+  border-radius:9999px; color:var(--muted); font-size:13px; font-weight:600;
+  padding:6px 12px; cursor:pointer; white-space:nowrap;
+}
+.ch-pane-fullview:hover { border-color:var(--primary); color:var(--primary-lt); }
+/* Compose-to-channel box. */
+.ch-pane-compose { padding:12px 16px; border-bottom:1px solid var(--border); }
+.ch-pane-compose textarea {
+  width:100%; box-sizing:border-box; resize:vertical; min-height:48px;
+  background:var(--bg-mid); border:1px solid var(--border); border-radius:12px;
+  color:var(--text); font-size:15px; font-family:inherit; padding:10px 12px;
+}
+.ch-pane-compose textarea:focus { border-color:var(--primary); background:var(--bg-dark); outline:none; }
+.ch-pane-compose textarea::placeholder { color:var(--muted); }
+.ch-pane-compose-actions { display:flex; justify-content:flex-end; margin-top:8px; }
+.ch-pane-loading { display:flex; justify-content:center; padding:40px 0; }
+/* Back button — mobile only (mirror .settings-pane-back). */
+.ch-pane-back { display:none; }
+@media (max-width:768px) {
+  .ch-layout { overflow-x:hidden; }
+  .ch-col-list { width:100%; flex:1 1 auto; border-right:none; }
+  .ch-col-pane { display:none; }
+  .ch-layout.pane-open .ch-col-list { display:none; }
+  .ch-layout.pane-open .ch-col-pane { display:block; }
+  .ch-pane-back {
+    display:flex; align-items:center; gap:8px; width:100%;
+    background:none; border:none; color:var(--text);
+    font-size:15px; font-weight:700; padding:12px 16px; cursor:pointer;
+  }
+}
+
 .sb-version {
   display:inline-block; margin-left:6px; padding:1px 7px;
   border:1px solid var(--border); border-radius:9999px;

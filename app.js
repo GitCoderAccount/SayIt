@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260612-166';
+const SW_CACHE_VER = '20260612-167';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -2784,6 +2784,10 @@ class SayIt {
     this.g('feed-tabs').style.display    = 'none';
     this.g('loading-more').style.display = 'none';
     this.state.mode = 'channels';
+    /* Fresh start on each entry: clear the selected pane so re-entering the
+       page begins with the desktop auto-select (first channel) or the mobile
+       list, rather than a stale selection from a previous visit. */
+    this._chSelected = null;
 
     /* Load cached immediately */
     const cached = await this.cache.getChannels();
@@ -3518,8 +3522,188 @@ class SayIt {
     /* Seed the "seen" baseline on first ever visit so the Unread tab starts
        quiet (everything read as of now); new activity surfaces after that. */
     if (utils.safeLS.get('sayitChannelSeen') === null) this._markAllChannelsSeen();
-    this.g('feed').innerHTML = headerHTML + `<div id="ch-page"></div>`;
+    /* X-style two-column Chat layout, rendered entirely inside #feed (channels
+       is a self-managed mode, so renderFeed bails and we own #feed). The left
+       column is the existing channel list (#ch-page); the right column loads
+       the selected channel's posts in place — no navigation away. Mirrors the
+       Settings two-pane + mobile-drill pattern. */
+    this.g('feed').innerHTML = headerHTML + `
+      <div class="ch-layout" id="ch-layout">
+        <div class="ch-col-list"><div id="ch-page"></div></div>
+        <div class="ch-col-pane">
+          <button class="ch-pane-back" id="ch-pane-back">← Channels</button>
+          <div id="ch-pane-content"></div>
+        </div>
+      </div>`;
+    const back = this.g('ch-pane-back');
+    if (back) back.onclick = () => this.g('ch-layout')?.classList.remove('pane-open');
     this._renderChannelPage();
+    /* Desktop: auto-select the first channel of the active tab so the pane
+       isn't empty (X opens the first conversation). Mobile starts on the list
+       (pane hidden by CSS until a row is tapped). If nothing is selected and
+       the list is empty, the placeholder stays. */
+    if (window.innerWidth > 768 && !this._chSelected) {
+      const firstRow = this.g('ch-page')?.querySelector('[data-ch-open]');
+      if (firstRow) this._selectChannelPane(firstRow.dataset.chOpen);
+      else this._renderChannelPanePlaceholder();
+    } else if (!this._chSelected) {
+      this._renderChannelPanePlaceholder();
+    }
+  }
+
+  /* Centered empty-state for the right pane (nothing selected). */
+  _renderChannelPanePlaceholder() {
+    const host = this.g('ch-pane-content');
+    if (!host) return;
+    host.innerHTML = `
+      <div class="ch-pane-empty">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none"
+             stroke="var(--muted)" stroke-width="1.6" stroke-linecap="round"
+             stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+        </svg>
+        <h3>Select a channel</h3>
+        <p>Choose a conversation from the list to view its posts here.</p>
+      </div>`;
+  }
+
+  /* Select a channel row: highlight it in the list, mark the pane open on
+     mobile (drill-in), and load the channel into the right pane in place. */
+  _selectChannelPane(addr) {
+    if (!addr) return;
+    this._chSelected = addr.toLowerCase();
+    /* Highlight the active row (mirror .settings-nav-item.active). */
+    const page = this.g('ch-page');
+    if (page) {
+      page.querySelectorAll('[data-ch-open]').forEach(el => {
+        el.classList.toggle('active', (el.dataset.chOpen || '').toLowerCase() === this._chSelected);
+      });
+    }
+    /* Mobile drill-in: reveal the pane, hide the list. Desktop ignores this. */
+    this.g('ch-layout')?.classList.add('pane-open');
+    this._loadChannelPane(this._chSelected);
+  }
+
+  /* Load one channel's recent posts into the right pane WITHOUT mutating the
+     global state.channel/mode. Posts are registered in _postMap so the global
+     #feed click delegation handles their like/reply/repost/menu actions. */
+  async _loadChannelPane(addr) {
+    const host = this.g('ch-pane-content');
+    if (!host) return;
+    addr = (addr || '').toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(addr)) {
+      host.innerHTML = `<div class="ch-pane-empty"><h3>Invalid address</h3></div>`;
+      return;
+    }
+    /* Header (avatar + name + truncated address + "Open full view ↗") and a
+       compose box render immediately; the post list streams in after fetch. */
+    const prof = this.state.profCache[addr];
+    const name = prof?.username || this.trunc(addr);
+    const pic  = prof?.picUrl || 'image1.jpeg';
+    host.innerHTML = `
+      <div class="ch-pane-header">
+        <img src="${utils.safe(pic)}" class="ch-pane-avatar" alt="" data-fallback-src="image1.jpeg">
+        <div class="ch-pane-id">
+          <div class="ch-pane-name">${utils.safe(name)}</div>
+          <div class="ch-pane-addr">${utils.safe(this.trunc(addr))}</div>
+        </div>
+        <button class="ch-pane-fullview" id="ch-pane-fullview" title="Open the full channel feed">Open full view ↗</button>
+      </div>
+      <div class="ch-pane-compose">
+        <textarea id="ch-pane-compose" rows="2" placeholder="Post to this channel…"></textarea>
+        <div class="ch-pane-compose-actions">
+          <button class="go-btn" id="ch-pane-post" disabled>Post</button>
+        </div>
+      </div>
+      <div id="ch-pane-posts"><div class="ch-pane-loading"><div class="spinner" aria-hidden="true"></div></div></div>`;
+
+    /* Wire header + compose (CSP-safe: no inline handlers). */
+    const fv = this.g('ch-pane-fullview');
+    if (fv) fv.onclick = () => this._openChannelFromHistory(addr);
+    const ta = this.g('ch-pane-compose'), post = this.g('ch-pane-post');
+    if (ta && post) {
+      ta.oninput = () => { post.disabled = !ta.value.trim(); };
+      post.onclick = () => this._postToChannelPane(addr);
+    }
+
+    /* Fetch one page of the channel's txlist and parse posts TO this channel,
+       newest-first, capped at 30. Stale-guard against rapid row switching. */
+    let raw;
+    try { raw = await this.apiFetch(addr, 1); }
+    catch {
+      if (this._chSelected !== addr || this.state.mode !== 'channels') return;
+      const ph = this.g('ch-pane-posts');
+      if (ph) ph.innerHTML = `<div class="ch-pane-empty"><p>Couldn't load this channel. Try again.</p></div>`;
+      return;
+    }
+    if (this._chSelected !== addr || this.state.mode !== 'channels') return;
+
+    const posts = [];
+    for (const tx of raw) {
+      if (tx.to?.toLowerCase() !== addr) continue; /* posts TO this channel only */
+      const p = this._parsePostTx(tx, { mode: 'custom', extra: { channel: addr } });
+      if (p) posts.push(p);
+      if (posts.length >= 30) break;
+    }
+
+    const ph = this.g('ch-pane-posts');
+    if (!ph) return;
+    if (!posts.length) {
+      ph.innerHTML = `<div class="ch-pane-empty"><p>No posts in this channel yet — be the first.</p></div>`;
+      return;
+    }
+    /* Reply counts for these posts (same as the profile tab). */
+    const replyMap = new Map();
+    posts.forEach(p => { if (p.parentTx) replyMap.set(p.parentTx, (replyMap.get(p.parentTx) || 0) + 1); });
+    /* Register each post so the global #feed delegation can resolve it. */
+    posts.forEach(p => this._postMap.set(p.txHash, p));
+    ph.innerHTML = posts.map(p =>
+      `<div class="post-item" data-txhash="${utils.safe(p.txHash)}">${this.postHTML(p, false, replyMap, null)}</div>`
+    ).join('');
+    /* Lazy-load author profiles so names/avatars fill in (like the profile tab). */
+    posts.forEach(p => { if (p.reporter !== this.state.signerAddr) this.fetchOtherProfile(p.reporter); });
+    /* Tally any polls just rendered. */
+    if (posts.some(pp => pp.poll)) setTimeout(() => this._tallyVisiblePolls(), 100);
+  }
+
+  /* Post to the channel currently shown in the pane. Optimistically prepends
+     the new post to the pane list and registers it in _postMap. */
+  async _postToChannelPane(addr) {
+    addr = (addr || '').toLowerCase();
+    const ta = this.g('ch-pane-compose');
+    const text = ta?.value.trim();
+    if (!text) return;
+    if (!this.signer) { utils.toast('Connect wallet to post'); return; }
+    const post = this.g('ch-pane-post');
+    if (post) post.disabled = true;
+    let hash;
+    try { hash = await this.publish(text, null, addr); }
+    finally { if (post) post.disabled = !ta?.value.trim(); }
+    if (!hash) return;
+    /* Clear the box. */
+    if (ta) { ta.value = ''; }
+    if (post) post.disabled = true;
+    /* Stale-guard: only mutate the pane if it still shows this channel. */
+    if (this._chSelected !== addr || this.state.mode !== 'channels') return;
+    /* Build a minimal optimistic post (same shape as publish's optimistic row). */
+    const optimistic = {
+      content: text, display: text,
+      parentTx: null, direction: null, repostOf: null, poll: null, postType: 'post',
+      reporter: this.state.signerAddr, to: addr,
+      timestamp: new Date().toISOString(),
+      txHash: hash, channel: addr, mode: 'custom',
+    };
+    this._postMap.set(hash, optimistic);
+    const ph = this.g('ch-pane-posts');
+    if (!ph) return;
+    /* Drop any empty-state placeholder before prepending the first post. */
+    const empty = ph.querySelector('.ch-pane-empty');
+    if (empty) ph.innerHTML = '';
+    const el = document.createElement('div');
+    el.className = 'post-item';
+    el.dataset.txhash = hash;
+    el.innerHTML = this.postHTML(optimistic, false, new Map(), null);
+    ph.insertBefore(el, ph.firstChild);
   }
 
   /* Render (and re-render on tab switch / mark-read) the Channels page body:
@@ -3618,7 +3802,14 @@ class SayIt {
       el.onclick = () => { this._channelTab = el.dataset.chTab; this._renderChannelPage(); };
     });
     host.querySelectorAll('[data-ch-open]').forEach(el => {
-      el.onclick = () => this._openChannelFromHistory(el.dataset.chOpen);
+      /* Load the channel into the right pane in place — do NOT navigate away.
+         (The "Open full view ↗" button in the pane header reaches goCustom
+         for power users who want the virtualized full feed.) */
+      el.onclick = () => this._selectChannelPane(el.dataset.chOpen);
+      /* Re-apply the active highlight after a tab switch / rescan re-render. */
+      if (this._chSelected && (el.dataset.chOpen || '').toLowerCase() === this._chSelected) {
+        el.classList.add('active');
+      }
     });
     host.querySelectorAll('[data-ch-special]').forEach(el => {
       el.onclick = () => this._openChannelSpecial(el.dataset.chSpecial);
@@ -3631,7 +3822,10 @@ class SayIt {
       if (!ch.label || ch.picUrl === 'image1.jpeg') {
         this.fetchOtherProfile(ch.address).then(() => {
           const prof = this.state.profCache[ch.address];
-          if (prof?.username || prof?.picUrl !== 'image1.jpeg') {
+          /* prof can be null when a concurrent fetch is still in flight (the
+             dedup early-return leaves the cache null) — guard before reading
+             .username, or this throws "null.username". */
+          if (prof && (prof.username || prof.picUrl !== 'image1.jpeg')) {
             this.cache.saveChannel({ ...ch, label: prof.username, picUrl: prof.picUrl });
           }
         });
