@@ -1690,11 +1690,17 @@ body.mode-explore .sb-search { display:none; }
 @media (min-width:701px) {
   body.mode-channels #sidebar-right,
   body.mode-settings #sidebar-right { display:none; }
-  /* Wider, comfortable two-pane; still centered via margin:auto. */
-  body.mode-channels #app,
-  body.mode-settings #app { max-width:1080px; }
+  /* Two-pane fills all the way to the right edge (where the right column used
+     to end) — #app keeps its normal max-width, #main takes the freed space. */
   body.mode-channels #main,
   body.mode-settings #main { flex:1 1 auto; width:auto; max-width:none; }
+  /* Chat is a full-height app pane (list + thread scroll internally; the
+     compose box pins to the bottom like X) — not part of the page scroll. */
+  body.mode-channels #main { height:100vh; }
+  body.mode-channels #feed { display:flex; flex-direction:column; flex:1; min-height:0; }
+  body.mode-channels #feed > .page-header { flex:0 0 auto; }
+  body.mode-channels .ch-layout { flex:1; min-height:0; }
+  body.mode-channels .ch-col-list { overflow-y:auto; }
   /* Left nav → icon rail (mirror of the ≤1300px collapse). */
   body.mode-channels #sidebar-left,
   body.mode-settings #sidebar-left { width:72px; flex:0 0 72px; align-items:center; padding:0; }
@@ -1843,18 +1849,18 @@ body.mode-explore .sb-search { display:none; }
 
 /* Channels page — tab bar, pinned quick-access rows, unread indicators */
 .ch-tabs {
-  display:flex; align-items:center; gap:6px;
-  padding:8px 12px; border-bottom:1px solid var(--border);
+  display:flex; align-items:center; gap:4px;
+  padding:8px 10px; border-bottom:1px solid var(--border); overflow:hidden;
 }
 .ch-tab {
   background:transparent; border:none; border-radius:9999px;
-  color:var(--muted); font-size:14px; font-weight:700; padding:7px 14px;
+  color:var(--muted); font-size:13px; font-weight:700; padding:6px 10px;
   cursor:pointer; transition:background 0.15s, color 0.15s; white-space:nowrap;
 }
 .ch-tab:hover { background:var(--primary-hov); color:var(--text); }
 .ch-tab.active { background:var(--primary); color:#fff; }
-.ch-tab-spacer { flex:1; }
-.ch-tab-action { font-size:13px; font-weight:600; color:var(--muted); border:1px solid var(--border); padding:5px 11px; }
+.ch-tab-spacer { flex:1; min-width:4px; }
+.ch-tab-action { font-size:12px; font-weight:600; color:var(--muted); border:1px solid var(--border); padding:5px 8px; flex:0 0 auto; }
 .ch-tab-action:hover { border-color:var(--primary); color:var(--primary-lt); background:transparent; }
 .ch-pin-icon {
   width:44px; height:44px; border-radius:50%; flex-shrink:0;
@@ -1870,9 +1876,13 @@ body.mode-explore .sb-search { display:none; }
 /* Channels page — X-style two-column Chat layout (list + pane). Mirrors the
    Settings two-pane pattern: fixed-width list on the left, flexible pane on
    the right. Mobile drills from the list into the pane (.pane-open). */
-.ch-layout { display:flex; align-items:flex-start; }
-.ch-col-list { width:340px; flex:0 0 340px; border-right:1px solid var(--border); min-width:0; }
-.ch-col-pane { flex:1; min-width:0; }
+.ch-layout { display:flex; align-items:stretch; }
+.ch-col-list { width:340px; flex:0 0 340px; border-right:1px solid var(--border); min-width:0; overflow-x:hidden; }
+.ch-col-pane { flex:1; min-width:0; display:flex; flex-direction:column; }
+#ch-pane-content { display:flex; flex-direction:column; flex:1; min-height:0; }
+/* Posts scroll in the middle; compose pins to the bottom (X chat layout). */
+#ch-pane-posts { flex:1; min-height:0; overflow-y:auto; }
+.ch-pane-empty { flex:1; }
 /* Active channel row highlight (mirror .settings-nav-item.active). */
 .ch-history-item.active { background:var(--hov-1); box-shadow:inset -2px 0 0 var(--primary); }
 .ch-history-item.active .ch-hist-name { font-weight:800; }
@@ -1902,8 +1912,8 @@ body.mode-explore .sb-search { display:none; }
   padding:6px 12px; cursor:pointer; white-space:nowrap;
 }
 .ch-pane-fullview:hover { border-color:var(--primary); color:var(--primary-lt); }
-/* Compose-to-channel box. */
-.ch-pane-compose { padding:12px 16px; border-bottom:1px solid var(--border); }
+/* Compose-to-channel box — pinned at the bottom of the pane (X chat style). */
+.ch-pane-compose { padding:12px 16px; border-top:1px solid var(--border); flex:0 0 auto; }
 .ch-pane-compose textarea {
   width:100%; box-sizing:border-box; resize:vertical; min-height:48px;
   background:var(--bg-mid); border:1px solid var(--border); border-radius:12px;

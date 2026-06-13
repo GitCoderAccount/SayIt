@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260612-172';
+const SW_CACHE_VER = '20260612-173';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -3621,13 +3621,13 @@ class SayIt {
         </div>
         <button class="ch-pane-fullview" id="ch-pane-fullview" title="Open the full channel feed">Open full view ↗</button>
       </div>
+      <div id="ch-pane-posts"><div class="ch-pane-loading"><div class="spinner" aria-hidden="true"></div></div></div>
       <div class="ch-pane-compose">
         <textarea id="ch-pane-compose" rows="2" placeholder="Post to this channel…"></textarea>
         <div class="ch-pane-compose-actions">
           <button class="go-btn" id="ch-pane-post" disabled>Post</button>
         </div>
-      </div>
-      <div id="ch-pane-posts"><div class="ch-pane-loading"><div class="spinner" aria-hidden="true"></div></div></div>`;
+      </div>`;
 
     /* Wire header + compose (CSP-safe: no inline handlers). */
     const fv = this.g('ch-pane-fullview');
