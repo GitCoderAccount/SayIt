@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260612-177';
+const SW_CACHE_VER = '20260612-178';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -417,6 +417,12 @@ class SayIt {
     if (mlBtn) mlBtn.onclick = () => { this.hideMoreMenu(); this.goLists(); };
     const mcBtn = g('more-communities');
     if (mcBtn) mcBtn.onclick = () => { this.hideMoreMenu(); this.goCommunities(); };
+    /* Bookmarks + Creator dashboard live in the nav on wide screens and in
+       More once it compresses (CSS toggles visibility; both handlers wired). */
+    const mbkBtn = g('more-bookmarks-mn');
+    if (mbkBtn) mbkBtn.onclick = () => { this.hideMoreMenu(); this.goBookmarks(); };
+    const msdBtn = g('more-studio');
+    if (msdBtn) msdBtn.onclick = () => { this.hideMoreMenu(); this.goDashboard(); };
     const maBtn = g('more-analytics');
     if (maBtn) maBtn.onclick = () => { this.hideMoreMenu(); this.goAnalytics(); };
     const mvBtn = g('more-verify');

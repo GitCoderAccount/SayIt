@@ -1605,6 +1605,12 @@ body.mode-explore .sb-search { display:none; }
    - At ≤1100px: also begin reducing right sidebar width gracefully.
    - Below 900px and 768px we hit the existing mobile breakpoints. */
 @media (max-width:1300px) {
+  /* Nav compressed → offload Bookmarks + Creator dashboard from the nav into
+     the More menu (X behavior). #more-popup prefix beats the later
+     unconditional `.more-when-rail{display:none}` default (equal-specificity,
+     source-order otherwise). */
+  .nav-responsive { display:none !important; }
+  #more-popup .more-when-rail { display:flex; }
   /* Re-center: once the nav collapses to the icon rail, shrink #app's max-width
      to the new column total (72 + 600 + 360) so margin:auto keeps the content
      centered instead of letting the freed width pool on the right. */
@@ -1797,6 +1803,11 @@ body.mode-explore .sb-search { display:none; }
   cursor:pointer; text-align:left; transition:background 0.15s;
 }
 .more-item:hover { background:var(--hov-2); }
+/* Responsive nav offload (X behavior): on wide screens Bookmarks + Creator
+   dashboard live in the left nav; once the nav compresses (≤1300px) they drop
+   out of the nav and appear in the More menu instead. Default (wide) = the
+   More copies are hidden; the ≤1300px block below flips both. */
+.more-when-rail { display:none; }
 .more-item.more-soon { opacity:0.5; cursor:default; }
 .more-divider { height:1px; background:var(--border); margin:6px 0; }
 .more-icon { font-size:20px; width:24px; text-align:center; flex-shrink:0; }
@@ -3022,12 +3033,12 @@ html.force-reduce-motion *, html.force-reduce-motion *::before, html.force-reduc
           <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M1.998 5.5c0-1.381 1.119-2.5 2.5-2.5h15c1.381 0 2.5 1.119 2.5 2.5v13c0 1.381-1.119 2.5-2.5 2.5h-15c-1.381 0-2.5-1.119-2.5-2.5v-13zm2.5-.5a.5.5 0 00-.5.5v2.764l8 3.638 8-3.638V5.5a.5.5 0 00-.5-.5h-15zM19.998 10.236l-8 3.636-8-3.636V18.5a.5.5 0 00.5.5h15a.5.5 0 00.5-.5v-8.264z"/></svg>
         </span><span class="nav-label">Channels</span>
       </a>
-      <a class="nav-btn" id="nav-bookmarks" href="#/bookmarks">
+      <a class="nav-btn nav-responsive" id="nav-bookmarks" href="#/bookmarks">
         <span class="nav-icon">
           <svg viewBox="0 0 26 26" width="26" height="26"><path fill="currentColor" d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5zM6.5 4c-.276 0-.5.22-.5.5v14.56l6-4.29 6 4.29V4.5c0-.28-.224-.5-.5-.5h-11z" transform="translate(1 1)"/></svg>
         </span><span class="nav-label">Bookmarks</span>
       </a>
-      <a class="nav-btn" id="nav-studio" href="#/dashboard">
+      <a class="nav-btn nav-responsive" id="nav-studio" href="#/dashboard">
         <span class="nav-icon">
           <svg viewBox="0 0 26 26" width="26" height="26"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M4 4.5C4 3.67 4.67 3 5.5 3h15c.83 0 1.5.67 1.5 1.5v15c0 .83-.67 1.5-1.5 1.5h-15c-.83 0-1.5-.67-1.5-1.5v-15z"/><path fill="currentColor" d="M7.5 13h1.6v5H7.5zM11.7 9h1.6v9h-1.6zM15.9 11h1.6v7h-1.6z"/></svg>
         </span><span class="nav-label">Creator dashboard</span>
@@ -3283,6 +3294,14 @@ html.force-reduce-motion *, html.force-reduce-motion *::before, html.force-reduc
           <button class="more-item" id="more-communities">
             <span class="more-icon">👥</span>
             <span class="more-label">Communities</span>
+          </button>
+          <button class="more-item more-when-rail" id="more-bookmarks-mn">
+            <span class="more-icon">🔖</span>
+            <span class="more-label">Bookmarks</span>
+          </button>
+          <button class="more-item more-when-rail" id="more-studio">
+            <span class="more-icon">🎬</span>
+            <span class="more-label">Creator dashboard</span>
           </button>
           <div class="more-divider"></div>
           <button class="more-item" id="more-verify">
