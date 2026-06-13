@@ -796,6 +796,7 @@ nav { flex:1; padding:4px 0; }
 .post-menu-item:hover { background:var(--hov-2); }
 .post-menu-item.danger { color:#f4212e; }
 .post-menu-item svg { flex-shrink:0; }
+.post-menu-divider { height:1px; background:var(--border); margin:5px 0; }
 /* J/K keyboard navigation focus ring — subtle, doesn't fight the dark theme */
 .post-item.kb-focus {
   outline:2px solid var(--primary);
@@ -1673,6 +1674,7 @@ body.mode-explore .sb-search { display:none; }
 }
 .more-item:hover { background:var(--hov-2); }
 .more-item.more-soon { opacity:0.5; cursor:default; }
+.more-divider { height:1px; background:var(--border); margin:6px 0; }
 .more-icon { font-size:20px; width:24px; text-align:center; flex-shrink:0; }
 .more-label { display:flex; align-items:center; gap:8px; flex:1; }
 .soon-tag {
@@ -2806,21 +2808,6 @@ html.force-reduce-motion *, html.force-reduce-motion *::before, html.force-reduc
           <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M1.998 5.5c0-1.381 1.119-2.5 2.5-2.5h15c1.381 0 2.5 1.119 2.5 2.5v13c0 1.381-1.119 2.5-2.5 2.5h-15c-1.381 0-2.5-1.119-2.5-2.5v-13zm2.5-.5a.5.5 0 00-.5.5v2.764l8 3.638 8-3.638V5.5a.5.5 0 00-.5-.5h-15zM19.998 10.236l-8 3.636-8-3.636V18.5a.5.5 0 00.5.5h15a.5.5 0 00.5-.5v-8.264z"/></svg>
         </span><span class="nav-label">Channels</span>
       </a>
-      <a class="nav-btn" id="nav-lists" href="#/lists">
-        <span class="nav-icon">
-          <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M4 6.5c0-.83.67-1.5 1.5-1.5S7 5.67 7 6.5 6.33 8 5.5 8 4 7.33 4 6.5zM9 5.5a1 1 0 011-1h10a1 1 0 110 2H10a1 1 0 01-1-1zM4 12c0-.83.67-1.5 1.5-1.5S7 11.17 7 12s-.67 1.5-1.5 1.5S4 12.83 4 12zm5-1a1 1 0 011-1h10a1 1 0 110 2H10a1 1 0 01-1-1zM4 17.5c0-.83.67-1.5 1.5-1.5S7 16.67 7 17.5 6.33 19 5.5 19 4 18.33 4 17.5zm5-1a1 1 0 011-1h10a1 1 0 110 2H10a1 1 0 01-1-1z"/></svg>
-        </span><span class="nav-label">Lists</span>
-      </a>
-      <a class="nav-btn" id="nav-bookmarks" href="#/bookmarks">
-        <span class="nav-icon">
-          <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5zM6.5 4c-.276 0-.5.22-.5.5v14.56l6-4.29 6 4.29V4.5c0-.28-.224-.5-.5-.5h-11z"/></svg>
-        </span><span class="nav-label">Bookmarks</span>
-      </a>
-      <a class="nav-btn" id="nav-communities" href="#/communities">
-        <span class="nav-icon">
-          <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M8.5 9c1.38 0 2.5-1.12 2.5-2.5S9.88 4 8.5 4 6 5.12 6 6.5 7.12 9 8.5 9zm0-3c.28 0 .5.22.5.5s-.22.5-.5.5-.5-.22-.5-.5.22-.5.5-.5zM16 9.5c1.24 0 2.25-1.01 2.25-2.25S17.24 5 16 5s-2.25 1.01-2.25 2.25S14.76 9.5 16 9.5zm-7.5 1.5c-2.21 0-4 1.79-4 4v2.5a1 1 0 001 1h6a1 1 0 001-1V15c0-2.21-1.79-4-4-4zm2 5.5h-4V15c0-1.1.9-2 2-2s2 .9 2 2v1.5zm5.5-5.5c-.46 0-.9.08-1.31.23.79.93 1.31 2.12 1.31 3.27v2a1 1 0 001 1h2.5a1 1 0 001-1v-1.75c0-1.52-1.23-2.75-2.75-2.75z"/></svg>
-        </span><span class="nav-label">Communities</span>
-      </a>
       <button class="nav-btn" id="nav-premium">
         <span class="nav-icon">
           <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 1.5l2.917 6.064 6.583.79-4.86 4.494 1.27 6.652L12 16.98l-5.91 3.52 1.27-6.652L2.5 8.354l6.583-.79L12 1.5z"/></svg>
@@ -3069,13 +3056,18 @@ html.force-reduce-motion *, html.force-reduce-motion *::before, html.force-reduc
             <span class="more-icon">📋</span>
             <span class="more-label">Lists</span>
           </button>
+          <button class="more-item" id="more-bookmarks-mn">
+            <span class="more-icon">🔖</span>
+            <span class="more-label">Bookmarks</span>
+          </button>
           <button class="more-item" id="more-communities">
             <span class="more-icon">👥</span>
             <span class="more-label">Communities</span>
           </button>
-          <button class="more-item" id="more-bookmarks-mn">
-            <span class="more-icon">🔖</span>
-            <span class="more-label">Bookmarks</span>
+          <div class="more-divider"></div>
+          <button class="more-item" id="more-studio">
+            <span class="more-icon">🎬</span>
+            <span class="more-label">Creator dashboard</span>
           </button>
           <button class="more-item" id="more-analytics">
             <span class="more-icon">📊</span>
@@ -3089,22 +3081,7 @@ html.force-reduce-motion *, html.force-reduce-motion *::before, html.force-reduc
             <span class="more-icon">🎙</span>
             <span class="more-label">Start a Space<span class="soon-tag">beta</span></span>
           </button>
-          <button class="more-item" id="more-studio">
-            <span class="more-icon">🎬</span>
-            <span class="more-label">Creator dashboard</span>
-          </button>
-          <button class="more-item more-soon" disabled>
-            <span class="more-icon">💼</span>
-            <span class="more-label">Business<span class="soon-tag">soon</span></span>
-          </button>
-          <button class="more-item more-soon" disabled>
-            <span class="more-icon">📢</span>
-            <span class="more-label">Ads<span class="soon-tag">soon</span></span>
-          </button>
-          <button class="more-item more-soon" disabled>
-            <span class="more-icon">✨</span>
-            <span class="more-label">Create your Space<span class="soon-tag">soon</span></span>
-          </button>
+          <div class="more-divider"></div>
           <button class="more-item" id="more-settings">
             <span class="more-icon">
               <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M10.54 2.751l.52-1.5h1.88l.52 1.5.72 2.08 2.08-.72 1.5-.52 1.33 1.33-.52 1.5-.72 2.08 2.08.72 1.5.52v1.88l-1.5.52-2.08.72.72 2.08.52 1.5-1.33 1.33-1.5-.52-2.08-.72-.72 2.08-.52 1.5H9.46l-.52-1.5-.72-2.08-2.08.72-1.5.52-1.33-1.33.52-1.5.72-2.08-2.08-.72-1.5-.52V9.46l1.5-.52 2.08-.72-.72-2.08-.52-1.5 1.33-1.33 1.5.52 2.08.72.72-2.08zM12 15.5c1.93 0 3.5-1.57 3.5-3.5S13.93 8.5 12 8.5 8.5 10.07 8.5 12s1.57 3.5 3.5 3.5z"/></svg>
