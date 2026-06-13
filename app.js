@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260612-163';
+const SW_CACHE_VER = '20260612-164';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -399,8 +399,11 @@ class SayIt {
     g('nav-notifs').onclick    = navClick(() => this.goNotifications());
     g('nav-channels').onclick  = navClick(() => this.goChannels());
     w('nav-mychannel', 'onclick', navClick(() => this.goSelf()));
-    /* Bookmarks lives only in the More menu now (removed from the main nav).
-       Lists/Communities also live in More, keeping the left rail compact. */
+    /* Top-level nav entries (X-parity). These also remain in the More menu —
+       X keeps the duplicates too and it's harmless. */
+    g('nav-lists').onclick       = navClick(() => this.goLists());
+    g('nav-bookmarks').onclick   = navClick(() => this.goBookmarks());
+    g('nav-communities').onclick = navClick(() => this.goCommunities());
     w('nav-premium', 'onclick', () => this.goPremium());
     w('sb-premium-btn', 'onclick', () => this.goPremium());
     g('nav-profile').onclick   = navClick(() => this.openProfileModal());
@@ -2138,6 +2141,7 @@ class SayIt {
         </div>
         <div class="explore-tabs" role="tablist">
           ${tabBtn('trending', 'Trending')}
+          ${tabBtn('news', 'News')}
           ${tabBtn('people', 'People')}
           ${tabBtn('channels', 'Channels')}
           ${tabBtn('latest', 'Latest')}
@@ -2191,7 +2195,8 @@ class SayIt {
   _renderExploreTab(tab) {
     const host = this.g('explore-tab-content');
     if (!host) return;
-    if (tab === 'people')        host.innerHTML = this._explorePeopleHTML();
+    if (tab === 'news')          host.innerHTML = this._exploreNewsHTML();
+    else if (tab === 'people')   host.innerHTML = this._explorePeopleHTML();
     else if (tab === 'channels') host.innerHTML = this._exploreChannelsHTML();
     else if (tab === 'latest')   this._exploreRenderLatest(host);
     else                         host.innerHTML = this._exploreTrendingHTML();
@@ -2435,6 +2440,67 @@ class SayIt {
             <div class="explore-content"><div class="explore-name" style="color:var(--primary-lt)">Show all latest posts</div></div>
             <div class="explore-arrow">→</div>
           </div>` : '');
+  }
+
+  /* ── News: full-page ranked headlines (same heuristic as the sidebar's
+     renderTodaysNews — recency + hashtags + media + substance — but the top
+     ~20 as X-news-tab-style headline rows). Clicking opens the thread. ──── */
+  _exploreNewsHTML() {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000; /* 24h window */
+    const imgRe = /https?:\/\/[^\s<>"{}|\\^[\]`]+\.(jpg|jpeg|png|gif|webp|avif)/i;
+    const ipfsRe = /(ipfs:\/\/|\/ipfs\/)\S+/i;
+    const score = (p) => {
+      let s = 0;
+      const ageHours = (Date.now() - new Date(p.timestamp).getTime()) / 3_600_000;
+      s += Math.max(0, 24 - ageHours) * 2;
+      if ((p.display || '').match(/#[A-Za-z0-9_]{2,30}/)) s += 8;
+      if (imgRe.test(p.display || '') || ipfsRe.test(p.display || '')) s += 10;
+      if ((p.display || '').length > 80) s += 4;
+      return s;
+    };
+    /* A sparse chain day can leave the 24h window empty — widen to 7 days
+       rather than render an empty tab (X's News always has content; ours
+       depends on organic volume). */
+    const pick = (cut) => this.state.posts
+      .filter(p => {
+        if (p.postType && p.postType !== 'post') return false;
+        if (!p.display || p.display.length < 40) return false;
+        return new Date(p.timestamp).getTime() >= cut;
+      })
+      .map(p => ({ post: p, score: score(p) }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 20)
+      .map(x => x.post);
+    let ranked = pick(cutoff);
+    if (!ranked.length) ranked = pick(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+    if (!ranked.length) {
+      return `<div class="explore-empty">No fresh news yet — load the feed, then check back.</div>`;
+    }
+    return ranked.map(p => {
+      const author = this.state.profCache[p.reporter];
+      const authorName = author?.username ? utils.safe(author.username) : this.trunc(p.reporter || '');
+      const tagMatch = (p.display || '').match(/#([A-Za-z0-9_]{2,30})/);
+      const label = tagMatch ? '#' + utils.safe(tagMatch[1]) + ' · Trending' : utils.safe(authorName);
+      const thumbUrl = this._mediaImageUrls(p.display)[0] || '';
+      const thumb = thumbUrl ? utils.safe(utils.safeUrl(thumbUrl) || '') : '';
+      const headlineRaw = (p.display || '').replace(/https?:\/\/\S+/g, '').trim();
+      const headline = utils.safe(headlineRaw.slice(0, 140));
+      const time = this.relTime(p.timestamp);
+      return `
+        <div class="news-row" role="button" tabindex="0" data-act="open-thread" data-act-arg="${utils.safe(p.txHash)}">
+          <div class="news-body">
+            <div class="news-label">${label}</div>
+            <div class="news-headline">${headline}</div>
+            <div class="news-meta">
+              <span>${utils.safe(authorName)}</span>
+              <span>·</span>
+              <span>${time}</span>
+            </div>
+          </div>
+          ${thumb ? `<img src="${thumb}" class="news-thumb" alt="" loading="lazy" data-fallback="hide">` : ''}
+        </div>`;
+    }).join('');
   }
 
   /* ── People: who-to-follow, ranked by post activity ───────────────────── */
@@ -6646,6 +6712,12 @@ class SayIt {
        skipped and simply show no line. */
     const v2base = primary.replace(/\/api\/?$/, '/api/v2');
     let ms = null;
+    /* Only persist a null result when the explorer answered AUTHORITATIVELY
+       (count===0, count too large to scan, or the last page came back with no
+       usable rows). On a fetch FAILURE (network error / non-ok status / abort)
+       we leave the cache untouched so the next profile visit retries instead
+       of blanking the "On-chain since" line for the rest of the session. */
+    let authoritative = false;
     try {
       const ctl1 = new AbortController();
       const t1 = setTimeout(() => ctl1.abort(), 10000);
@@ -6655,7 +6727,10 @@ class SayIt {
         if (!r.ok) throw new Error('counters ' + r.status);
         count = Number((await r.json())?.transactions_count);
       } finally { clearTimeout(t1); }
-      if (Number.isFinite(count) && count > 0 && count <= 20000) {
+      if (Number.isFinite(count) && (count === 0 || count > 20000)) {
+        /* Explorer answered: no txs, or too many to scan — null is correct. */
+        authoritative = true;
+      } else if (Number.isFinite(count) && count > 0 && count <= 20000) {
         const lastPage = Math.max(1, Math.ceil(count / 50));
         const ctl2 = new AbortController();
         const t2 = setTimeout(() => ctl2.abort(), 15000);
@@ -6663,18 +6738,24 @@ class SayIt {
           const r = await fetch(
             `${primary}?module=account&action=txlist&address=${lc}&offset=50&page=${lastPage}&sort=desc`,
             { signal: ctl2.signal });
-          if (r.ok) {
-            const data = await r.json();
-            /* Same ingestion gate apiFetch applies — status '1' + sanitized rows. */
-            if (data.status === '1' && Array.isArray(data.result) && data.result.length) {
-              const rows = utils.sanitizeTxs(data.result);
-              const tsSec = Number(rows[rows.length - 1]?.timeStamp);
-              if (Number.isFinite(tsSec) && tsSec > 0) ms = tsSec * 1000;
-            }
+          if (!r.ok) throw new Error('txlist ' + r.status);
+          const data = await r.json();
+          /* The last page answered — whatever it contains is authoritative. */
+          authoritative = true;
+          /* Same ingestion gate apiFetch applies — status '1' + sanitized rows. */
+          if (data.status === '1' && Array.isArray(data.result) && data.result.length) {
+            const rows = utils.sanitizeTxs(data.result);
+            const tsSec = Number(rows[rows.length - 1]?.timeStamp);
+            if (Number.isFinite(tsSec) && tsSec > 0) ms = tsSec * 1000;
           }
         } finally { clearTimeout(t2); }
       }
-    } catch { /* explorer hiccup — cache the null, no error UI */ }
+    } catch {
+      /* explorer hiccup / network failure — DON'T cache, leave undefined so
+         the next visit retries. No error UI. */
+      return undefined;
+    }
+    if (!authoritative) return undefined; /* nothing definitive — allow retry */
     /* Cache on the in-memory profile record (create a stub if absent). */
     (this.state.profCache[lc] ||= {}).firstSeen = ms;
     return ms;
@@ -9155,7 +9236,7 @@ class SayIt {
     try {
       switch (seg) {
         case '': case 'home':  this.goHome(); break;
-        case 'explore':        this.goExplore(['people','channels','latest','trending'].includes(arg) ? arg : null); break;
+        case 'explore':        this.goExplore(['news','people','channels','latest','trending'].includes(arg) ? arg : null); break;
         case 'notifications':  this.goNotifications(); break;
         case 'bookmarks':      this.goBookmarks(); break;
         case 'channels':       this.goChannels(); break;
@@ -12500,7 +12581,7 @@ class SayIt {
   goLists() {
     this._updateTitle('Lists');
     this._setRoute('/lists');
-    this.setNav(null, null);
+    this.setNav('nav-lists', null);
     this.state.mode = 'lists';
     this.state.activeList = null;
     this.g('compose-area').style.display   = 'none';
@@ -12766,7 +12847,7 @@ class SayIt {
   goCommunities() {
     this._updateTitle('Communities');
     this._setRoute('/communities');
-    this.setNav(null, null);
+    this.setNav('nav-communities', null);
     this.state.mode = 'communities';
     this.g('compose-area').style.display   = 'none';
     this.g('channel-banner').style.display = 'none';
