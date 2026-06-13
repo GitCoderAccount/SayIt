@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260612-173';
+const SW_CACHE_VER = '20260612-174';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -149,8 +149,10 @@ class SayIt {
   async init(opts = {}) {
     this.wireListeners();
     this.updateChLabel();
-    /* Use the user's pruneAgeDays setting (default 7). */
-    const _pruneDays = parseInt(this._getSettings().pruneAgeDays, 10) || 7;
+    /* Apply the saved notification-badge color override (accent by default). */
+    this._applyNotifBadgeColor(this._getSettings().notifBadgeColor);
+    /* Use the user's pruneAgeDays setting (default 30). */
+    const _pruneDays = parseInt(this._getSettings().pruneAgeDays, 10) || 30;
     /* Housekeeping — never block boot on it. */
     this.cache.pruneIfStale(_pruneDays).catch(err => console.warn('Prune failed', err));
     /* Deep-sync auto-resume: quietly pick up an interrupted archive once
@@ -2889,6 +2891,15 @@ class SayIt {
     for (const [n, v] of Object.entries(vars)) de.style.setProperty(n, v);
   }
 
+  /* Notification-badge color (Settings → Appearance). Empty/undefined → clear
+     the override so the badge falls back to the accent (--primary) via the CSS
+     var fallback. */
+  _applyNotifBadgeColor(color) {
+    const de = document.documentElement;
+    if (color) de.style.setProperty('--notif-badge', color);
+    else de.style.removeProperty('--notif-badge');
+  }
+
   /* ── Local-first deep sync ──────────────────────────────────────────
      Opt-in archive of the main channel's full history into IndexedDB.
      Pages oldest cursor → end at a polite rate while the user keeps
@@ -3909,7 +3920,9 @@ class SayIt {
   _getMaxScanPages() {
     const s = this._getSettings();
     const v = Number(s.maxScanPages);
-    if (s.maxScanPages === 0 || s.maxScanPages === '0') return Infinity;
+    /* Default (unset) is now Unlimited — deeper history for follows/search/
+       profile scans. The main feed is bounded by MAX_PAGES regardless. */
+    if (s.maxScanPages === undefined || s.maxScanPages === 0 || s.maxScanPages === '0') return Infinity;
     return v || 100;
   }
   /* Polite rate-limit pause between API pages */
@@ -3959,6 +3972,18 @@ class SayIt {
                 data-accent="${key}" title="${utils.safe(a.name)}" aria-label="${utils.safe(a.name)} accent"
                 aria-pressed="${(s.accentColor || 'purple') === key ? 'true' : 'false'}"
                 style="background:${a.primary}"></button>`).join('')}
+          </div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label"><strong>Notification badge color</strong><span>Color of the unread-count badge (defaults to your accent)</span></div>
+          <div class="accent-swatches" id="set-notif-color">
+            <button type="button" class="accent-swatch${!s.notifBadgeColor ? ' selected' : ''}" data-notif=""
+              title="Match accent" aria-label="Match accent" aria-pressed="${!s.notifBadgeColor ? 'true' : 'false'}"
+              style="background:var(--primary)"></button>
+            ${[['#ff3cac','Pink'],['#f4212e','Red'],['#1d9bf0','Blue'],['#00ba7c','Green'],['#ff7a00','Orange']].map(([c,name]) => `
+              <button type="button" class="accent-swatch${s.notifBadgeColor === c ? ' selected' : ''}" data-notif="${c}"
+                title="${name}" aria-label="${name} badge" aria-pressed="${s.notifBadgeColor === c ? 'true' : 'false'}"
+                style="background:${c}"></button>`).join('')}
           </div>
         </div>
       </div>
@@ -4113,7 +4138,7 @@ class SayIt {
             <span>Posts older than this are pruned daily</span>
           </div>
           <select class="settings-btn" id="set-prune-age" style="padding:9px 12px">
-            ${[3,7,14,30].map(d => `<option value="${d}" ${(s.pruneAgeDays||7)==d?'selected':''}>${d} days</option>`).join('')}
+            ${[3,7,14,30].map(d => `<option value="${d}" ${(s.pruneAgeDays||30)==d?'selected':''}>${d} days</option>`).join('')}
           </select>
         </div>
         <div class="settings-row">
@@ -4135,7 +4160,7 @@ class SayIt {
           </div>
           <select class="settings-btn" id="set-max-scan" style="padding:9px 12px">
             ${[30,100,300,0].map(n =>
-              `<option value="${n}" ${(s.maxScanPages ?? 100) == n ? 'selected' : ''}>${n === 0 ? 'Unlimited' : n + ' pages (' + (n*50).toLocaleString() + ' txs)'}</option>`
+              `<option value="${n}" ${(s.maxScanPages ?? 0) == n ? 'selected' : ''}>${n === 0 ? 'Unlimited' : n + ' pages (' + (n*50).toLocaleString() + ' txs)'}</option>`
             ).join('')}
           </select>
         </div>
@@ -4375,6 +4400,21 @@ class SayIt {
         this._saveSettings(s);
         this._applyAccent(key);
         g('set-accent').querySelectorAll('.accent-swatch').forEach(b => {
+          const on = b === btn;
+          b.classList.toggle('selected', on);
+          b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
+      });
+    });
+    /* Notification badge color — empty data-notif = match accent (clear override). */
+    g('set-notif-color')?.querySelectorAll('.accent-swatch').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const color = btn.dataset.notif || '';
+        const s = this._getSettings();
+        if (color) s.notifBadgeColor = color; else delete s.notifBadgeColor;
+        this._saveSettings(s);
+        this._applyNotifBadgeColor(color);
+        g('set-notif-color').querySelectorAll('.accent-swatch').forEach(b => {
           const on = b === btn;
           b.classList.toggle('selected', on);
           b.setAttribute('aria-pressed', on ? 'true' : 'false');
@@ -4940,37 +4980,45 @@ class SayIt {
     }
   }
 
-  /* (poll notifs are included in the badge via _scanPollNotifications
-     called from checkNotifBadge below) */
+  /* Count NEW notifications (since LAST_CHECK_KEY) for the nav badge. Counts
+     inbound follows/messages + engagement (likes/replies/reposts on my posts).
+     Poll-vote/poll-ended notifs are NOT counted here — they need channel scans
+     too heavy for a poller; they still show on the Notifications page.
+     Accuracy: txlist is newest-first, so we page until we cross the lastCheck
+     boundary (then everything older follows) — usually just 1 page, but it
+     won't undercount a busy account the way a fixed page-1 scan did. */
   async checkNotifBadge() {
     if (!this.state.signerAddr) return;
+    const me = this.state.signerAddr;
     const lastCheck = parseInt(utils.safeLS.get(LAST_CHECK_KEY, '0'), 10);
     try {
-      const raw   = await this.apiFetch(this.state.signerAddr, 1);
-      /* Inbound txs sent TO me, newer than last check. In practice this is
-         follows (sent to the target) and direct messages — likes/replies/
-         reposts are addressed to the channel, not me, so they're counted
-         separately below via the engagement accumulator. */
-      let count = raw.filter(tx => {
-        if (tx.to?.toLowerCase()   !== this.state.signerAddr) return false;
-        if (tx.from?.toLowerCase() === this.state.signerAddr) return false;
-        if (!tx.input || tx.input === '0x') return false;
-        if (Number(tx.timeStamp) * 1000 <= lastCheck) return false;
-        try {
-          const text = ethers.toUtf8String(tx.input).trim();
-          if (text.startsWith(PROFILE_PREFIX)) return false;
-          if (text.startsWith(BOOKMARK_PREFIX)) return false;
-          if (text.startsWith(UNBOOKMARK_PREFIX)) return false;
-          if (text.startsWith(UNLIKE_PREFIX)) return false;
-          if (text.startsWith(UNFOLLOW_PREFIX)) return false;
-          if (!text.length) return false;
-          /* Inbound txs are follows (sent to the target) or messages; honor the
-             per-type opt-outs so a muted category doesn't inflate the badge. */
-          return this._notifEnabled(text.startsWith(FOLLOW_PREFIX) ? 'follow' : 'message');
-        } catch { return false; }
-      }).length;
-      /* Likes/replies/reposts on my posts (gathered from feed scans). Disjoint
-         from the inbound set above (those are channel txs), so no double-count. */
+      let count = 0;
+      const maxPages = Math.min(this._getMaxScanPages(), 5); /* bound the poll */
+      for (let page = 1; page <= maxPages; page++) {
+        let raw;
+        try { raw = await this.apiFetch(me, page); } catch { break; }
+        let reachedOld = false;
+        for (const tx of raw) {
+          if (Number(tx.timeStamp) * 1000 <= lastCheck) { reachedOld = true; continue; }
+          if (tx.to?.toLowerCase() !== me) continue;
+          if (tx.from?.toLowerCase() === me) continue;
+          if (!tx.input || tx.input === '0x') continue;
+          try {
+            const text = ethers.toUtf8String(tx.input).trim();
+            if (!text.length
+              || text.startsWith(PROFILE_PREFIX) || text.startsWith(BOOKMARK_PREFIX)
+              || text.startsWith(UNBOOKMARK_PREFIX) || text.startsWith(UNLIKE_PREFIX)
+              || text.startsWith(UNFOLLOW_PREFIX)) continue;
+            /* Inbound = follow (sent to target) or message; honor opt-outs. */
+            if (this._notifEnabled(text.startsWith(FOLLOW_PREFIX) ? 'follow' : 'message')) count++;
+          } catch { /* skip non-UTF8 */ }
+        }
+        /* Newest-first: once we hit txs older than lastCheck, or a short page,
+           nothing newer remains further down. */
+        if (reachedOld || raw.length < 50) break;
+      }
+      /* Likes/replies/reposts on my posts (from feed-scan accumulator).
+         Disjoint from the inbound set (those are channel txs) — no double count. */
       try {
         const eng = await this._engagementNotifs();
         count += eng.filter(e => new Date(e.timestamp).getTime() > lastCheck && this._notifEnabled(e.type)).length;
