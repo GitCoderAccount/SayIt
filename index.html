@@ -1683,53 +1683,53 @@ body.mode-explore .sb-search { display:none; }
   }
 }
 /* ── Chat (Channels) + Settings: X-style full-width two-pane ───────────────
-   On X, opening Messages or Settings collapses the left nav to its icon rail
-   AND removes the right column, so the two-pane content fills the width — even
-   on wide screens. We mirror that here, keyed on the body-mode classes
-   (goChannels/goSettings add them; setNav clears them). Scoped to ≥701px so the
-   mobile bottom-nav layout (≤700px) is untouched. The rail rules duplicate the
-   ≤1300px media block (which can't be triggered by a class). */
+   Both drop the right column so the two-pane fills the width. CHAT additionally
+   collapses the left nav to its icon rail and becomes a full-height app pane
+   (X Messages). SETTINGS keeps the normal labeled nav (matching X's Settings,
+   which does NOT collapse the rail) and just widens into the freed space.
+   Keyed on the body-mode classes (goChannels/goSettings add them; setNav
+   clears them); scoped ≥701px so the mobile bottom-nav layout is untouched.
+   The rail rules duplicate the ≤1300px media block (a class can't trigger it). */
 @media (min-width:701px) {
   body.mode-channels #sidebar-right,
   body.mode-settings #sidebar-right { display:none; }
-  /* Two-pane fills all the way to the right edge (where the right column used
-     to end) — #app keeps its normal max-width, #main takes the freed space. */
+  /* Two-pane fills to the right edge — #app keeps its max-width, #main takes
+     the freed right-column space. */
   body.mode-channels #main,
   body.mode-settings #main { flex:1 1 auto; width:auto; max-width:none; }
-  /* Chat is a full-height app pane (list + thread scroll internally; the
-     compose box pins to the bottom like X) — not part of the page scroll. */
+  /* Chat only: full-height app pane (list + thread scroll internally; compose
+     pinned to the bottom like X) — not part of the page scroll. */
   body.mode-channels #main { height:100vh; }
   body.mode-channels #feed { display:flex; flex-direction:column; flex:1; min-height:0; }
   body.mode-channels #feed > .page-header { flex:0 0 auto; }
   body.mode-channels .ch-layout { flex:1; min-height:0; }
   body.mode-channels .ch-col-list { overflow-y:auto; }
-  /* Left nav → icon rail (mirror of the ≤1300px collapse). */
-  body.mode-channels #sidebar-left,
-  body.mode-settings #sidebar-left { width:72px; flex:0 0 72px; align-items:center; padding:0; }
-  body.mode-channels #sidebar-left > *, body.mode-settings #sidebar-left > *,
-  body.mode-channels #sidebar-left nav, body.mode-settings #sidebar-left nav { max-width:none; }
-  body.mode-channels .nav-label, body.mode-settings .nav-label,
-  body.mode-channels .site-name,  body.mode-settings .site-name { display:none; }
-  body.mode-channels .nav-btn, body.mode-settings .nav-btn {
+  /* Chat only: left nav → icon rail (mirror of the ≤1300px collapse).
+     Settings deliberately keeps the labeled nav. */
+  body.mode-channels #sidebar-left { width:72px; flex:0 0 72px; align-items:center; padding:0; }
+  body.mode-channels #sidebar-left > *,
+  body.mode-channels #sidebar-left nav { max-width:none; }
+  body.mode-channels .nav-label,
+  body.mode-channels .site-name { display:none; }
+  body.mode-channels .nav-btn {
     width:50px; height:50px; padding:0; gap:0; justify-content:center; margin:2px auto; border-radius:9999px;
   }
-  body.mode-channels #nav-post-btn, body.mode-settings #nav-post-btn {
+  body.mode-channels #nav-post-btn {
     width:50px; height:50px; margin:12px auto; padding:0; font-size:24px; font-weight:400;
     border-radius:50%; color:transparent; position:relative;
   }
-  body.mode-channels #nav-post-btn::before, body.mode-settings #nav-post-btn::before {
+  body.mode-channels #nav-post-btn::before {
     content:'✦'; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#fff; font-size:22px;
   }
-  body.mode-channels .logo-text, body.mode-settings .logo-text { display:none; }
-  body.mode-channels #logo-wrap, body.mode-settings #logo-wrap { width:50px; max-width:50px; padding:10px 0 8px; margin:0 auto; justify-content:center; gap:0; }
-  body.mode-channels .logo-icon, body.mode-settings .logo-icon { width:40px; }
-  body.mode-channels #ap-info, body.mode-settings #ap-info,
-  body.mode-channels #ap-dots, body.mode-settings #ap-dots { display:none; }
-  body.mode-channels #account-pill, body.mode-settings #account-pill { width:50px; height:50px; margin:0 auto; padding:0; justify-content:center; }
-  body.mode-channels #ap-avatar, body.mode-settings #ap-avatar { margin:0; }
-  body.mode-channels #connect-btn, body.mode-settings #connect-btn { width:50px; height:50px; padding:0; font-size:0; margin:12px auto; border-radius:50%; position:relative; }
-  body.mode-channels #connect-btn::before, body.mode-settings #connect-btn::before { content:'🔗'; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:20px; }
-  body.mode-channels .more-popup, body.mode-settings .more-popup { left:12px; bottom:90px; }
+  body.mode-channels .logo-text { display:none; }
+  body.mode-channels #logo-wrap { width:50px; max-width:50px; padding:10px 0 8px; margin:0 auto; justify-content:center; gap:0; }
+  body.mode-channels .logo-icon { width:40px; }
+  body.mode-channels #ap-info, body.mode-channels #ap-dots { display:none; }
+  body.mode-channels #account-pill { width:50px; height:50px; margin:0 auto; padding:0; justify-content:center; }
+  body.mode-channels #ap-avatar { margin:0; }
+  body.mode-channels #connect-btn { width:50px; height:50px; padding:0; font-size:0; margin:12px auto; border-radius:50%; position:relative; }
+  body.mode-channels #connect-btn::before { content:'🔗'; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:20px; }
+  body.mode-channels .more-popup { left:12px; bottom:90px; }
 }
 @media (max-width:1100px) {
   #app { max-width:980px; }   /* 72 + 600 + 308 — fits the tier's narrowest viewport */
@@ -1879,7 +1879,7 @@ body.mode-explore .sb-search { display:none; }
    Settings two-pane pattern: fixed-width list on the left, flexible pane on
    the right. Mobile drills from the list into the pane (.pane-open). */
 .ch-layout { display:flex; align-items:stretch; }
-.ch-col-list { width:340px; flex:0 0 340px; border-right:1px solid var(--border); min-width:0; overflow-x:hidden; }
+.ch-col-list { width:390px; flex:0 0 390px; border-right:1px solid var(--border); min-width:0; overflow-x:hidden; }
 .ch-col-pane { flex:1; min-width:0; display:flex; flex-direction:column; }
 #ch-pane-content { display:flex; flex-direction:column; flex:1; min-height:0; }
 /* Posts scroll in the middle; compose pins to the bottom (X chat layout). */
