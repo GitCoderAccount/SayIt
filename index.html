@@ -175,9 +175,7 @@ a { color:inherit; text-decoration:none; }
 }
 .logo-text-1 { color:var(--text); font-size:18px; }
 .logo-text-2 { color:var(--text); font-size:18px; }
-nav { flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; padding:4px 0;
-      scrollbar-width:none; }
-nav::-webkit-scrollbar { display:none; }
+nav { flex:1; padding:4px 0; }
 .nav-btn {
   display:flex; align-items:center; gap:20px;
   width:fit-content; max-width:100%; padding:12px 16px;
@@ -1805,11 +1803,17 @@ body.mode-explore .sb-search { display:none; }
   cursor:pointer; text-align:left; transition:background 0.15s;
 }
 .more-item:hover { background:var(--hov-2); }
-/* Responsive nav offload (X behavior): on wide screens Bookmarks + Creator
-   dashboard live in the left nav; once the nav compresses (≤1300px) they drop
-   out of the nav and appear in the More menu instead. Default (wide) = the
-   More copies are hidden; the ≤1300px block below flips both. */
+/* Responsive nav offload (X behavior): Bookmarks + Creator dashboard live in
+   the left nav on a roomy screen and fold into the More menu when there isn't
+   space — when the nav compresses to a rail (≤1300px wide) OR the viewport is
+   too SHORT to fit all items (≤700px tall; the full 9-item nav is ~698px,
+   the 7-item nav ~590px). The nav itself stays STATIC (no scroll) — items are
+   removed, not scrolled, exactly like X. Default = the More copies hidden. */
 .more-when-rail { display:none; }
+@media (max-height: 700px) {
+  .nav-responsive { display:none !important; }
+  #more-popup .more-when-rail { display:flex; }
+}
 .more-item.more-soon { opacity:0.5; cursor:default; }
 .more-divider { height:1px; background:var(--border); margin:6px 0; }
 .more-icon { font-size:20px; width:24px; text-align:center; flex-shrink:0; }
