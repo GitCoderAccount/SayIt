@@ -30,14 +30,16 @@
      (IPFS, Arweave, any gateway) and the explorer/RPC endpoints are
      user-configurable in Settings. frame-ancestors can't be set via a meta
      tag (header-only, and GitHub Pages can't send custom headers). -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * data: blob:; connect-src *; frame-src https://www.youtube-nocookie.com https://player.vimeo.com https://platform.twitter.com; object-src 'none'; base-uri 'self'; form-action 'none'; worker-src 'self'; manifest-src 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * data: blob:; connect-src *; frame-src https://www.youtube-nocookie.com https://player.vimeo.com https://platform.twitter.com; object-src 'none'; base-uri 'self'; form-action 'none'; worker-src 'self'; manifest-src 'self'">
 <script src="boot.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.15.0/ethers.umd.min.js" integrity="sha384-OwtfwhPoP4aGLIw192UbPWjNbSkb7AllEbIhEJ01Yp8MxhNLLNUMA+DSjh6Zct05" crossorigin="anonymous"></script>
 <!-- Twemoji (Twitter/X's own emoji images) for X-identical full-color emoji on every device.
-     Library hosted on cdnjs (same host as ethers, allowed by script-src; SRI-pinned). cdnjs only
-     mirrors the twemoji JS up to 12.0.1 — newer versions ship assets only — so we pin the latest
-     library cdnjs serves. The emoji IMAGES come from a live jsdelivr base set in _twemojify(). -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/12.0.1/twemoji.min.js" integrity="sha512-7truTWYOQL7Lu9+y3/vzCwhyWdedgh87SSqqWRACxLWYi1n4cJATEfQvoSasZ76cvoboKl5QrVlaCc05b71jWQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+     Library + image assets both from jsdelivr (jdecked/twemoji fork via @twemoji/api), SRI-pinned.
+     We pin the MODERN parser (15.1.0) — cdnjs only mirrors the JS up to 12.0.1, whose 2019 emoji
+     regex misses ~36% of our (newer) emoji, leaving them as system glyphs. The 15.1.0 parser
+     recognizes the full current set and is version-matched to the @15.1.0 image base in _twemojify()
+     so every parsed emoji's SVG exists. jsdelivr is added to script-src for this (img-src is already *). -->
+<script src="https://cdn.jsdelivr.net/npm/@twemoji/api@15.1.0/dist/twemoji.min.js" integrity="sha512-NlLejBxHIssHRs7VksNxTM7JHJ/eMt820BE4KF3LaIxoyxk1HmhkbjLGKrmcZslbG7aatHvkON0JrJdRSmxnSw==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <style>
 /* ── Variables ──────────────────────────────────────────────────────────── */
 :root {
