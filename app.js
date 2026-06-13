@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260612-175';
+const SW_CACHE_VER = '20260612-176';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -402,7 +402,9 @@ class SayIt {
     g('nav-notifs').onclick    = navClick(() => this.goNotifications());
     g('nav-channels').onclick  = navClick(() => this.goChannels());
     w('nav-mychannel', 'onclick', navClick(() => this.goSelf()));
-    /* Lists / Bookmarks / Communities are NOT top-level nav entries in X —
+    g('nav-bookmarks').onclick = navClick(() => this.goBookmarks());
+    g('nav-studio').onclick    = navClick(() => this.goDashboard());
+    /* Lists / Communities are NOT top-level nav entries in X —
        they live in the More menu (wired below). */
     w('nav-premium', 'onclick', () => this.goPremium());
     w('sb-premium-btn', 'onclick', () => this.goPremium());
@@ -415,12 +417,8 @@ class SayIt {
     if (mlBtn) mlBtn.onclick = () => { this.hideMoreMenu(); this.goLists(); };
     const mcBtn = g('more-communities');
     if (mcBtn) mcBtn.onclick = () => { this.hideMoreMenu(); this.goCommunities(); };
-    const mbBtn = g('more-bookmarks-mn');
-    if (mbBtn) mbBtn.onclick = () => { this.hideMoreMenu(); this.goBookmarks(); };
     const maBtn = g('more-analytics');
     if (maBtn) maBtn.onclick = () => { this.hideMoreMenu(); this.goAnalytics(); };
-    const mdBtn = g('more-studio');
-    if (mdBtn) mdBtn.onclick = () => { this.hideMoreMenu(); this.goDashboard(); };
     const mvBtn = g('more-verify');
     if (mvBtn) mvBtn.onclick = () => { this.hideMoreMenu(); this.goVerify(); };
     const msBtn = g('more-space');
@@ -2645,7 +2643,7 @@ class SayIt {
     this._bkFetchAttempted = new Set();
     this._updateTitle('Bookmarks');
     this._setRoute('/bookmarks');
-    this.setNav(null, null); /* reached via More — no sidebar button */
+    this.setNav('nav-bookmarks', null); /* highlights the sidebar Bookmarks item */
     this.state.mode = 'bookmarks';
     this.g('feed-tabs').classList.remove('tabs-sticky');
     const bkUser = this.state.profile.username
@@ -3220,7 +3218,7 @@ class SayIt {
   async goDashboard() {
     this._updateTitle('Creator dashboard');
     this._setRoute('/dashboard');
-    this.setNav(null, null);
+    this.setNav('nav-studio', null); /* highlights the sidebar Creator dashboard item */
     this.state.mode = 'dashboard';
     this.g('compose-area').style.display   = 'none';
     this.g('channel-banner').style.display = 'none';
@@ -5613,20 +5611,48 @@ class SayIt {
   /* Premium — placeholder for now. A future subscription will unlock Articles
      (long-form on-chain posts), unlimited post length, profile Highlights, etc. */
   goPremium() {
-    this._showGenericModal('Premium', `
-      <div style="text-align:center;padding:8px 4px">
-        <div style="font-size:46px;margin-bottom:6px;color:var(--primary-lt)">✦</div>
-        <h3 style="margin:0 0 10px;font-size:20px">Say It Premium — coming soon</h3>
-        <p style="color:var(--muted);font-size:14px;line-height:1.6;margin-bottom:16px">
-          A future subscription unlocking long-form <strong>Articles</strong> (essays, guides,
-          even whole books on-chain), unlimited post length, profile <strong>Highlights</strong>,
-          and more — all settled on-chain.
-        </p>
-        <button class="btn-ghost" id="premium-close-btn">Got it</button>
-      </div>
-    `);
-    const b = document.getElementById('premium-close-btn');
-    if (b) b.onclick = () => this._closeGenericModal();
+    this._updateTitle('Premium');
+    this._setRoute('/premium');
+    this.setNav('nav-premium', null);
+    this.state.mode = 'premium';
+    this.g('compose-area').style.display   = 'none';
+    this.g('channel-banner').style.display = 'none';
+    this.g('feed-tabs').style.display      = 'none';
+    this.g('loading-more').style.display   = 'none';
+    this._pendingPageHeader = this._makePageHeader({ title: 'Premium', noBack: true });
+    const headerHTML = this._applyPageHeader();
+    const rows = [
+      ['📝', 'Articles',
+        'Publish long-form essays, guides, even whole books — settled on-chain and readable forever.'],
+      ['♾️', 'Unlimited post length',
+        'Drop the character cap. Say everything you need to in a single on-chain post.'],
+      ['🌟', 'Profile Highlights',
+        'Pin your best posts to a dedicated Highlights tab so newcomers see your finest first.'],
+      ['🖼️', 'Larger media uploads',
+        'Share higher-resolution images and longer clips with room-to-breathe limits.'],
+      ['✦', 'Verified-style profile perks',
+        'A distinct premium mark and profile flourishes that travel with your wallet, not a server.'],
+    ];
+    const rowsHTML = rows.map(([icon, title, desc]) => `
+        <div class="premium-feature">
+          <span class="pf-icon" aria-hidden="true">${icon}</span>
+          <div class="pf-body">
+            <div class="pf-title">${utils.safe(title)}</div>
+            <div class="pf-desc">${utils.safe(desc)}</div>
+          </div>
+        </div>`).join('');
+    this.g('feed').innerHTML = headerHTML + `
+      <div class="premium-page">
+        <div class="pp-hero">
+          <div class="pp-mark" aria-hidden="true">✦</div>
+          <h2 class="pp-title">Say It Premium</h2>
+          <p class="pp-intro">A future subscription that unlocks long-form writing and richer ways to
+          express yourself — all settled on the same public chain as everything else here.</p>
+        </div>
+        <div class="pp-features">${rowsHTML}</div>
+        <p class="pp-soon">Coming soon — Premium is not yet available.</p>
+        <button class="pp-subscribe" id="premium-subscribe-btn" disabled>Subscribe (coming soon)</button>
+      </div>`;
   }
 
   openProfileModal() {
@@ -9565,6 +9591,7 @@ class SayIt {
         case 'analytics':      this.goAnalytics?.(); break;
         case 'dashboard':      this.goDashboard?.(); break;
         case 'verify':         this.goVerify?.(); break;
+        case 'premium':        this.goPremium?.(); break;
         case 'communities':    this.goCommunities?.(); break;
         case 'profile':        /^0x[a-f0-9]{40}$/i.test(arg)
                                  ? this.goProfilePage(arg.toLowerCase(), arg.toLowerCase() === this.state.signerAddr)
@@ -11729,7 +11756,7 @@ class SayIt {
   _selfManagedModes = new Set([
     'notifications', 'profile', 'thread', 'channels',
     'explore', 'bookmarks', 'settings', 'lists', 'communities', 'followlist',
-    'analytics', 'verify', 'dashboard'
+    'analytics', 'verify', 'dashboard', 'premium'
   ]);  /* lists/communities render their own browse UI into #feed */
   /* Modes where pollNew's "Show N posts" banner makes no sense.
      Superset of _selfManagedModes — includes wave/self/custom where
