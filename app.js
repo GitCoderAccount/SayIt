@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260612-170';
+const SW_CACHE_VER = '20260612-171';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -468,7 +468,14 @@ class SayIt {
     const g = this.g.bind(this);
     const handlePostClick = (e, inModal) => {
       const img = e.target.closest('.post-img-thumb');
-      if (img?.dataset.href) { e.stopPropagation(); window.open(img.dataset.href, '_blank', 'noopener,noreferrer'); return; }
+      if (img) {
+        e.stopPropagation();
+        const wrap = img.closest('.post-images') || img.parentElement;
+        const thumbs = [...(wrap?.querySelectorAll('.post-img-thumb') || [img])];
+        const imgs = thumbs.map(t => ({ full: t.dataset.href || t.src, thumb: t.src, alt: t.alt || '' }));
+        this._openImageLightbox(imgs, Math.max(0, thumbs.indexOf(img)));
+        return;
+      }
       const tag = e.target.closest('.post-tag');
       if (tag) { e.stopPropagation(); this.filterByTag(tag.dataset.tag); return; }
       const mention = e.target.closest('.post-mention');
@@ -11540,6 +11547,124 @@ class SayIt {
         utils.updateCharCount(this.g('compose-text'), null);
         this._saveDraft();
       }
+    }
+  }
+
+  /* ── Full-screen image lightbox (X parity) ──────────────────────────
+     Clicking a post image opens a top-most in-app viewer instead of a
+     new tab. `images` = [{full, thumb, alt}] for the clicked post (its
+     sibling thumbs within one .post-images container); `startIndex` is
+     the clicked thumb's position. Supports a clamped carousel (no wrap),
+     keyboard (Esc / ←/→), backdrop-to-close, focus trap restore, and an
+     "Open original" escape hatch preserving the old new-tab affordance.
+     CSP-safe: built via createElement + addEventListener, no inline HTML
+     for user data; URLs/alt run through utils.safeUrl()/utils.safe(). */
+  _openImageLightbox(images, startIndex) {
+    if (!Array.isArray(images) || images.length === 0) return;
+    /* Only one at a time — replace any existing overlay. */
+    this._closeImageLightbox();
+
+    const SVG = {
+      close: '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M13.41 12l6.3-6.29a1 1 0 0 0-1.42-1.42L12 10.59l-6.29-6.3a1 1 0 0 0-1.42 1.42l6.3 6.29-6.3 6.29a1 1 0 1 0 1.42 1.42L12 13.41l6.29 6.3a1 1 0 0 0 1.42-1.42z"/></svg>',
+      prev:  '<svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path fill="currentColor" d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>',
+      next:  '<svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path fill="currentColor" d="M10 6 8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>'
+    };
+
+    const multi = images.length > 1;
+    let idx = Math.min(Math.max(0, startIndex | 0), images.length - 1);
+
+    const overlay = document.createElement('div');
+    overlay.className = 'lightbox';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', 'Image viewer');
+
+    /* Centered image. utils.safeUrl blocks javascript:/data: schemes from
+       attacker-controlled chain data; alt is escaped via utils.safe. */
+    const imgEl = document.createElement('img');
+    imgEl.className = 'lightbox-img';
+    imgEl.loading = 'eager';
+    overlay.appendChild(imgEl);
+
+    /* Close (top-left, X behavior). */
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'lightbox-close';
+    closeBtn.setAttribute('aria-label', 'Close');
+    closeBtn.innerHTML = SVG.close;
+    closeBtn.onclick = () => this._closeImageLightbox();
+    overlay.appendChild(closeBtn);
+
+    let counter = null, prevBtn = null, nextBtn = null;
+    if (multi) {
+      counter = document.createElement('div');
+      counter.className = 'lightbox-counter';
+      overlay.appendChild(counter);
+
+      prevBtn = document.createElement('button');
+      prevBtn.type = 'button';
+      prevBtn.className = 'lightbox-nav lightbox-prev';
+      prevBtn.setAttribute('aria-label', 'Previous image');
+      prevBtn.innerHTML = SVG.prev;
+      prevBtn.onclick = (e) => { e.stopPropagation(); show(idx - 1); };
+      overlay.appendChild(prevBtn);
+
+      nextBtn = document.createElement('button');
+      nextBtn.type = 'button';
+      nextBtn.className = 'lightbox-nav lightbox-next';
+      nextBtn.setAttribute('aria-label', 'Next image');
+      nextBtn.innerHTML = SVG.next;
+      nextBtn.onclick = (e) => { e.stopPropagation(); show(idx + 1); };
+      overlay.appendChild(nextBtn);
+    }
+
+    /* "Open original" — preserves the prior new-tab affordance. */
+    const orig = document.createElement('a');
+    orig.className = 'lightbox-original';
+    orig.target = '_blank';
+    orig.rel = 'noopener noreferrer';
+    orig.textContent = 'Open original ↗';
+    overlay.appendChild(orig);
+
+    const show = (i) => {
+      idx = Math.min(Math.max(0, i), images.length - 1); /* clamp, no wrap */
+      const cur = images[idx] || {};
+      imgEl.src = utils.safeUrl(cur.full || '');
+      imgEl.alt = utils.safe(cur.alt || '');
+      orig.href = utils.safeUrl(cur.full || '');
+      if (counter) counter.textContent = `${idx + 1} / ${images.length}`;
+      if (prevBtn) prevBtn.disabled = idx <= 0;
+      if (nextBtn) nextBtn.disabled = idx >= images.length - 1;
+    };
+
+    /* Backdrop click closes; clicks on the image or a button do not. */
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) this._closeImageLightbox();
+    });
+
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); this._closeImageLightbox(); return; }
+      if (!multi) return;
+      if (e.key === 'ArrowLeft')  { e.preventDefault(); show(idx - 1); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); show(idx + 1); }
+    };
+    document.addEventListener('keydown', onKey);
+
+    this._lightbox = { overlay, onKey, prevFocus: document.activeElement };
+    show(idx);
+    document.body.appendChild(overlay);
+    closeBtn.focus();
+  }
+
+  _closeImageLightbox() {
+    const lb = this._lightbox;
+    if (!lb) return;
+    document.removeEventListener('keydown', lb.onKey);
+    if (lb.overlay && lb.overlay.parentNode) lb.overlay.parentNode.removeChild(lb.overlay);
+    this._lightbox = null;
+    /* Restore focus to the element that was focused before opening. */
+    if (lb.prevFocus && typeof lb.prevFocus.focus === 'function') {
+      try { lb.prevFocus.focus(); } catch (_) { /* element may be gone */ }
     }
   }
 

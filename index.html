@@ -617,6 +617,61 @@ nav { flex:1; padding:4px 0; }
   transition:opacity 0.15s;
 }
 .post-img-thumb:hover { opacity:0.9; }
+
+/* ── Full-screen image lightbox (X parity) ────────────────────────────
+   Top-most overlay (z 9999) above the generic modal (500) and the space
+   dock (499). Backdrop closes; image + buttons sit above it. */
+.lightbox {
+  position:fixed; inset:0; z-index:9999;
+  background:rgba(0,0,0,0.92);
+  display:flex; align-items:center; justify-content:center;
+  padding:24px;
+}
+.lightbox-img {
+  max-width:90vw; max-height:90vh;
+  object-fit:contain; border-radius:8px;
+  position:relative; z-index:1;
+}
+.lightbox-close, .lightbox-nav {
+  position:absolute; z-index:2;
+  display:flex; align-items:center; justify-content:center;
+  border:none; cursor:pointer;
+  color:#fff; background:rgba(0,0,0,0.6);
+  border-radius:50%;
+  transition:background 0.15s, opacity 0.15s;
+}
+.lightbox-close:hover, .lightbox-nav:hover { background:rgba(0,0,0,0.85); }
+.lightbox-close {
+  top:14px; left:14px; width:42px; height:42px;
+}
+.lightbox-nav { top:50%; transform:translateY(-50%); width:48px; height:48px; }
+.lightbox-prev { left:14px; }
+.lightbox-next { right:14px; }
+.lightbox-nav:disabled { opacity:0.3; cursor:default; }
+.lightbox-nav:disabled:hover { background:rgba(0,0,0,0.6); }
+.lightbox-counter {
+  position:absolute; z-index:2; top:18px; left:50%;
+  transform:translateX(-50%);
+  background:rgba(0,0,0,0.6); color:#fff;
+  padding:5px 14px; border-radius:999px;
+  font-size:14px; font-weight:600; letter-spacing:0.02em;
+}
+.lightbox-original {
+  position:absolute; z-index:2; bottom:16px; right:16px;
+  background:rgba(0,0,0,0.6); color:#fff;
+  padding:7px 14px; border-radius:999px;
+  font-size:13px; text-decoration:none;
+  transition:background 0.15s;
+}
+.lightbox-original:hover { background:rgba(0,0,0,0.85); text-decoration:underline; }
+@media (max-width:700px) {
+  .lightbox { padding:10px; }
+  .lightbox-img { max-width:96vw; max-height:92vh; }
+  .lightbox-nav { width:40px; height:40px; }
+  .lightbox-prev { left:6px; }
+  .lightbox-next { right:6px; }
+  .lightbox-close { top:8px; left:8px; width:38px; height:38px; }
+}
 .post-vid-wrap {
   position:relative; display:block; border-radius:12px; overflow:hidden;
   background:#000; margin-top:8px;
