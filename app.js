@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260612-181';
+const SW_CACHE_VER = '20260612-182';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -3689,18 +3689,13 @@ class SayIt {
     if (ta && post) {
       ta.oninput = () => { post.disabled = !ta.value.trim(); };
       post.onclick = () => this._postToChannelPane(addr);
-      /* Compose toolbar — media/GIF insert a URL at the cursor (matches the
-         thread reply composer); emoji opens the picker targeting THIS box (its
-         insert dispatches 'input', which re-enables Post via ta.oninput). */
-      const insertIntoCh = (txt) => {
-        const pos = ta.selectionStart ?? ta.value.length;
-        ta.value = ta.value.slice(0, pos) + txt + ta.value.slice(pos);
-        ta.focus(); post.disabled = !ta.value.trim();
-      };
+      /* Compose toolbar — media/GIF open the rich media modal (with preview)
+         targeting THIS box; emoji opens the picker targeting it. Both their
+         inserts dispatch 'input', which re-enables Post via ta.oninput. */
       const cm = this.g('ch-media-btn');
-      if (cm) cm.onclick = () => { const u = prompt('Paste an image, GIF, or video URL:'); if (u && u.trim()) insertIntoCh((ta.value ? ' ' : '') + u.trim()); };
+      if (cm) cm.onclick = () => this.openMediaModal('media', ta);
       const cg = this.g('ch-gif-btn');
-      if (cg) cg.onclick = () => { const u = prompt('Paste a GIF URL:'); if (u && u.trim()) insertIntoCh((ta.value ? ' ' : '') + u.trim()); };
+      if (cg) cg.onclick = () => this.openMediaModal('gif', ta);
       const ce = this.g('ch-emoji-btn');
       if (ce) ce.onclick = () => this._openEmojiPickerFor(ta, ce);
     }
@@ -11185,8 +11180,11 @@ class SayIt {
   }
 
   /* ── Media attach ───────────────────────────────────────────────────── */
-  openMediaModal(type) {
+  openMediaModal(type, targetEl) {
     this._mediaType = type;
+    /* Optional insert target (e.g. the Channels chat box). Null = the main
+       composer, preserving the original behavior. */
+    this._mediaTarget = targetEl || null;
     const title   = this.g('media-modal-title');
     const hint    = this.g('media-url-hint');
     const preview = this.g('media-preview-area');
@@ -11261,16 +11259,23 @@ class SayIt {
   _attachMedia() {
     const raw = this.g('media-url-input').value.trim();
     if (!raw) { utils.toast('Enter a URL first'); return; }
-    /* Append the ORIGINAL URL (ipfs:// etc.) to compose text on a new line.
+    /* Append the ORIGINAL URL (ipfs:// etc.) to the target box on a new line.
        linkify() resolves it for display. On-chain the raw URL is preserved. */
-    const compose = this.g('compose-text');
+    const compose = this._mediaTarget || this.g('compose-text');
     const existing = compose.value;
     compose.value = existing
       ? existing.trimEnd() + '\n' + raw
       : raw;
     utils.autoGrow(compose);
-    utils.updateCharCount(compose, null);
-    this._saveDraft();
+    if (this._mediaTarget) {
+      /* Custom target (e.g. the Channels chat box) — fire its own oninput so
+         its Post button enables / it re-measures, instead of the main
+         composer's char-count + draft save. */
+      this._mediaTarget.dispatchEvent(new Event('input', { bubbles: true }));
+    } else {
+      utils.updateCharCount(compose, null);
+      this._saveDraft();
+    }
     this.closeModal('media-modal');
     utils.toast('Media attached ✓');
   }
