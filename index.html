@@ -33,6 +33,11 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * data: blob:; connect-src *; frame-src https://www.youtube-nocookie.com https://player.vimeo.com https://platform.twitter.com; object-src 'none'; base-uri 'self'; form-action 'none'; worker-src 'self'; manifest-src 'self'">
 <script src="boot.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.15.0/ethers.umd.min.js" integrity="sha384-OwtfwhPoP4aGLIw192UbPWjNbSkb7AllEbIhEJ01Yp8MxhNLLNUMA+DSjh6Zct05" crossorigin="anonymous"></script>
+<!-- Twemoji (Twitter/X's own emoji images) for X-identical full-color emoji on every device.
+     Library hosted on cdnjs (same host as ethers, allowed by script-src; SRI-pinned). cdnjs only
+     mirrors the twemoji JS up to 12.0.1 — newer versions ship assets only — so we pin the latest
+     library cdnjs serves. The emoji IMAGES come from a live jsdelivr base set in _twemojify(). -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/12.0.1/twemoji.min.js" integrity="sha512-7truTWYOQL7Lu9+y3/vzCwhyWdedgh87SSqqWRACxLWYi1n4cJATEfQvoSasZ76cvoboKl5QrVlaCc05b71jWQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <style>
 /* ── Variables ──────────────────────────────────────────────────────────── */
 :root {
@@ -102,6 +107,17 @@ body {
   scrollbar-gutter:stable;
 }
 button,input,textarea { font-family:inherit; }
+/* Twemoji color-emoji images (Twitter/X's own glyphs), inlined where emoji
+   text used to render. Sized to sit on the text baseline like a normal glyph. */
+img.emoji {
+  width:1.2em; height:1.2em; vertical-align:-0.25em; margin:0 0.05em;
+  display:inline-block; object-fit:contain;
+}
+/* Picker cells are sized for glyph buttons — make their emoji images fill the
+   button face and centre, keeping the 8-col grid alignment intact. */
+#emoji-picker-pop button img.emoji {
+  width:22px; height:22px; vertical-align:middle; margin:0;
+}
 a { color:inherit; text-decoration:none; }
 :focus-visible { outline:2px solid var(--primary); outline-offset:2px; }
 
