@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260612-182';
+const SW_CACHE_VER = '20260613-183';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -3276,16 +3276,31 @@ class SayIt {
       });
       if (raw.length < 50) break;
     }
-    const spacesHosted = [...myPosts.values()].filter(p => p.postType === 'space');
-
-    /* Cache: replies to my posts; archive: likes. */
+    /* Cover the SAME corpus the Analytics page does — not just the live 6-page
+       address scan — so the two pages agree. Union my posts from the cached
+       archive AND the in-memory feed into myPosts (older liked posts beyond the
+       live scan would otherwise be missed, making "Likes received"/top posts
+       diverge from Analytics); and count replies over that same cache∪feed
+       corpus (deduped) so per-post reply counts match too. Likes come from the
+       shared archive (cache.likeCounts) in both places. */
     let cached = [];
     try { cached = await this.cache.getPosts(() => true); } catch { /* cache empty */ }
+    if (this.state.mode !== 'dashboard') return;
     const likeCounts = await this.cache.likeCounts();
     if (this.state.mode !== 'dashboard') return;
+    const isFeedType = p => !p.postType || ['post', 'repost', 'poll', 'space'].includes(p.postType);
+    const corpus = [...cached, ...this.state.posts];
+    corpus.forEach(p => {
+      if (p.reporter === me && p.txHash && !myPosts.has(p.txHash) && isFeedType(p)) myPosts.set(p.txHash, p);
+    });
+    const spacesHosted = [...myPosts.values()].filter(p => p.postType === 'space');
     const replyCounts = new Map();
-    cached.forEach(p => {
-      if (p.parentTx && myPosts.has(p.parentTx)) replyCounts.set(p.parentTx, (replyCounts.get(p.parentTx) || 0) + 1);
+    const seenReply = new Set();
+    corpus.forEach(p => {
+      if (p.parentTx && p.txHash && !seenReply.has(p.txHash) && myPosts.has(p.parentTx)) {
+        seenReply.add(p.txHash);
+        replyCounts.set(p.parentTx, (replyCounts.get(p.parentTx) || 0) + 1);
+      }
     });
     const tipByPost = new Map();
     tips.forEach(t => tipByPost.set(t.post, (tipByPost.get(t.post) || 0n) + t.wei));
