@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260612-165';
+const SW_CACHE_VER = '20260612-166';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -399,11 +399,8 @@ class SayIt {
     g('nav-notifs').onclick    = navClick(() => this.goNotifications());
     g('nav-channels').onclick  = navClick(() => this.goChannels());
     w('nav-mychannel', 'onclick', navClick(() => this.goSelf()));
-    /* Top-level nav entries (X-parity). These also remain in the More menu —
-       X keeps the duplicates too and it's harmless. */
-    g('nav-lists').onclick       = navClick(() => this.goLists());
-    g('nav-bookmarks').onclick   = navClick(() => this.goBookmarks());
-    g('nav-communities').onclick = navClick(() => this.goCommunities());
+    /* Lists / Bookmarks / Communities are NOT top-level nav entries in X —
+       they live in the More menu (wired below). */
     w('nav-premium', 'onclick', () => this.goPremium());
     w('sb-premium-btn', 'onclick', () => this.goPremium());
     g('nav-profile').onclick   = navClick(() => this.openProfileModal());
@@ -2638,7 +2635,7 @@ class SayIt {
     this._bkFetchAttempted = new Set();
     this._updateTitle('Bookmarks');
     this._setRoute('/bookmarks');
-    this.setNav('nav-bookmarks', null);
+    this.setNav(null, null); /* reached via More — no sidebar button */
     this.state.mode = 'bookmarks';
     this.g('feed-tabs').classList.remove('tabs-sticky');
     const bkUser = this.state.profile.username
@@ -11028,6 +11025,12 @@ class SayIt {
       utils.autoGrow(compose);
       utils.updateCharCount(compose, modalOpen ? this.g('modal-char-count') : null);
       this._saveDraft();
+      /* Re-sync the Post button enable-state — inserting an emoji counts as
+         content, so the button must light up even if the user never typed.
+         For custom targets (thread/reply boxes) fire a synthetic input event
+         so that target's own oninput enable-logic runs too. */
+      this._syncPostBtn();
+      if (this._emojiTarget) this._emojiTarget.dispatchEvent(new Event('input', { bubbles: true }));
       /* Picker intentionally stays open for multi-select. */
     };
 
@@ -11277,50 +11280,64 @@ class SayIt {
     menu.className = 'post-menu-dropdown open';
     menu.setAttribute('role', 'menu');
 
-    const items = [];
-    /* Follow / unfollow + mute — never shown on your own posts */
-    if (!isOwn) {
-      const isFollowing = this.state.following.has(post.reporter?.toLowerCase());
-      items.push({
-        icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h10v-2c0-.41.06-.81.17-1.19C13.2 14.27 12.5 14 12 14zm7 0v3h-3v2h3v3h2v-3h3v-2h-3v-3h-2z"/></svg>',
-        label: (isFollowing ? 'Unfollow ' : 'Follow ') + handle,
-        action: () => this.toggleFollowAddr(post.reporter.toLowerCase(), null), danger: false });
-      items.push(isMuted
-        ? { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18 6.41L16.59 5 12 9.59 7.41 5 6 6.41 10.59 11 6 15.59 7.41 17 12 12.41 16.59 17 18 15.59 13.41 11z"/></svg>',
-            label: `Unmute ${handle}`, action: () => this.unmuteAddress(post.reporter), danger: false }
-        : { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18 11v2h4v-2h-4zm-2 6.61c.96.71 2.21 1.65 3.2 2.39.4-.53.8-1.07 1.2-1.6-.99-.74-2.24-1.68-3.2-2.4-.4.54-.8 1.08-1.2 1.61zM20.4 5.6c-.4-.53-.8-1.07-1.2-1.6-.99.74-2.24 1.68-3.2 2.4.4.53.8 1.07 1.2 1.6.96-.72 2.21-1.65 3.2-2.4zM4 9c-1.1 0-2 .9-2 2v2c0 1.1.9 2 2 2h1l5 5V4L5 9H4zm11.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>',
-            label: `Mute ${handle}`, action: () => this.muteAddress(post.reporter), danger: false });
-    }
-    items.push(
-      /* Not interested — locally hides this single post from the feed */
-      { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2C6.49 2 2 6.49 2 12s4.49 10 10 10 10-4.49 10-10S17.51 2 12 2zm0 18c-4.41 0-8-3.59-8-8 0-1.85.63-3.55 1.69-4.9L16.9 18.31C15.55 19.37 13.85 20 12 20zm6.31-3.1L7.1 5.69C8.45 4.63 10.15 4 12 4c4.41 0 8 3.59 8 8 0 1.85-.63 3.55-1.69 4.9z"/></svg>',
-        label: 'Not interested in this post', action: () => this.markNotInterested(post), danger: false },
-      /* Add / remove from a List */
-      { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M3 5h18v2H3V5zm0 6h12v2H3v-2zm0 6h12v2H3v-2zm15-3v3h-3v2h3v3h2v-3h3v-2h-3v-3h-2z"/></svg>',
-        label: 'Add / remove from List', action: () => this._openListPicker(post.reporter?.toLowerCase(), anchorEl), danger: false },
-      /* Write a community note */
-      { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>',
-        label: 'Write a community note', action: () => this.openNoteComposer(post), danger: false },
-      /* Copy link */
-      { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.48-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>',
-        label: 'Copy post link', action: () => utils.copyToClipboard(this._postUrl(post.txHash), 'Link copied!'), danger: false },
-      /* About this post — metadata (channel, author, type, block, tx) */
-      { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M11 7h2v2h-2V7zm0 4h2v6h-2v-6zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>',
-        label: 'About this post', action: () => this._showAboutPost(post), danger: false },
-      /* View on OtterScan */
-      { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18.36 5.64c-1.95-1.96-5.11-1.96-7.07 0L9.88 7.05 8.46 5.64l1.42-1.42c2.73-2.73 7.16-2.73 9.9 0 2.73 2.74 2.73 7.17 0 9.9l-1.42 1.42-1.41-1.42 1.41-1.41c1.96-1.96 1.96-5.12 0-7.07zm-2.12 3.53l-7.07 7.07-1.41-1.41 7.07-7.07 1.41 1.41zm-12.02.71l1.42-1.42 1.41 1.42-1.41 1.41c-1.96 1.96-1.96 5.12 0 7.07 1.95 1.96 5.11 1.96 7.07 0l1.41-1.41 1.42 1.41-1.42 1.42c-2.73 2.73-7.16 2.73-9.9 0-2.73-2.74-2.73-7.17 0-9.9z"/></svg>',
-        label: 'View on OtterScan', action: () => window.open(`https://otter.pulsechain.com/tx/${post.txHash}`, '_blank', 'noopener,noreferrer'), danger: false },
-    );
-    /* Own posts: pin/unpin to your profile + a note about on-chain permanence */
-    if (isOwn) {
-      const isPinned = this._getMyPin() === post.txHash;
-      items.unshift({
-        icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>',
-        label: isPinned ? 'Unpin from your profile' : 'Pin to your profile',
-        action: () => this.togglePin(post), danger: false });
-      items.push({ icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>',
-        label: 'Posts are permanent on-chain', action: () => utils.toast('On-chain posts are permanent by design.'), danger: false });
-    }
+    /* Build the menu in X's order directly (no unshift/push juggling). Each
+       reusable item is defined once below, then assembled per isOwn. The
+       only structural addition vs X is a { divider:true } separating the
+       X-style core actions from our chain-specific group (Copy link / About /
+       OtterScan / Permanent). We deliberately OMIT Block & Report: they
+       contradict an uncensorable on-chain protocol — there's no central
+       authority to report to and a block can't remove on-chain data. */
+    const isFollowing = this.state.following.has(post.reporter?.toLowerCase());
+    const isPinned = isOwn && this._getMyPin() === post.txHash;
+
+    const followItem = {
+      icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h10v-2c0-.41.06-.81.17-1.19C13.2 14.27 12.5 14 12 14zm7 0v3h-3v2h3v3h2v-3h3v-2h-3v-3h-2z"/></svg>',
+      label: (isFollowing ? 'Unfollow ' : 'Follow ') + handle,
+      action: () => this.toggleFollowAddr(post.reporter.toLowerCase(), null), danger: false };
+    /* Not interested — locally hides this single post from the feed */
+    const notInterestedItem = {
+      icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2C6.49 2 2 6.49 2 12s4.49 10 10 10 10-4.49 10-10S17.51 2 12 2zm0 18c-4.41 0-8-3.59-8-8 0-1.85.63-3.55 1.69-4.9L16.9 18.31C15.55 19.37 13.85 20 12 20zm6.31-3.1L7.1 5.69C8.45 4.63 10.15 4 12 4c4.41 0 8 3.59 8 8 0 1.85-.63 3.55-1.69 4.9z"/></svg>',
+      label: 'Not interested in this post', action: () => this.markNotInterested(post), danger: false };
+    /* Add / remove from a List */
+    const listItem = {
+      icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M3 5h18v2H3V5zm0 6h12v2H3v-2zm0 6h12v2H3v-2zm15-3v3h-3v2h3v3h2v-3h3v-2h-3v-3h-2z"/></svg>',
+      label: 'Add / remove from List', action: () => this._openListPicker(post.reporter?.toLowerCase(), anchorEl), danger: false };
+    const muteItem = isMuted
+      ? { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18 6.41L16.59 5 12 9.59 7.41 5 6 6.41 10.59 11 6 15.59 7.41 17 12 12.41 16.59 17 18 15.59 13.41 11z"/></svg>',
+          label: `Unmute ${handle}`, action: () => this.unmuteAddress(post.reporter), danger: false }
+      : { icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18 11v2h4v-2h-4zm-2 6.61c.96.71 2.21 1.65 3.2 2.39.4-.53.8-1.07 1.2-1.6-.99-.74-2.24-1.68-3.2-2.4-.4.54-.8 1.08-1.2 1.61zM20.4 5.6c-.4-.53-.8-1.07-1.2-1.6-.99.74-2.24 1.68-3.2 2.4.4.53.8 1.07 1.2 1.6.96-.72 2.21-1.65 3.2-2.4zM4 9c-1.1 0-2 .9-2 2v2c0 1.1.9 2 2 2h1l5 5V4L5 9H4zm11.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>',
+          label: `Mute ${handle}`, action: () => this.muteAddress(post.reporter), danger: false };
+    /* Write a community note */
+    const noteItem = {
+      icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>',
+      label: 'Write a community note', action: () => this.openNoteComposer(post), danger: false };
+    const pinItem = {
+      icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>',
+      label: isPinned ? 'Unpin from your profile' : 'Pin to your profile',
+      action: () => this.togglePin(post), danger: false };
+    /* Copy link */
+    const copyItem = {
+      icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.48-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>',
+      label: 'Copy post link', action: () => utils.copyToClipboard(this._postUrl(post.txHash), 'Link copied!'), danger: false };
+    /* About this post — metadata (channel, author, type, block, tx) */
+    const aboutItem = {
+      icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M11 7h2v2h-2V7zm0 4h2v6h-2v-6zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>',
+      label: 'About this post', action: () => this._showAboutPost(post), danger: false };
+    /* View on OtterScan */
+    const otterItem = {
+      icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18.36 5.64c-1.95-1.96-5.11-1.96-7.07 0L9.88 7.05 8.46 5.64l1.42-1.42c2.73-2.73 7.16-2.73 9.9 0 2.73 2.74 2.73 7.17 0 9.9l-1.42 1.42-1.41-1.42 1.41-1.41c1.96-1.96 1.96-5.12 0-7.07zm-2.12 3.53l-7.07 7.07-1.41-1.41 7.07-7.07 1.41 1.41zm-12.02.71l1.42-1.42 1.41 1.42-1.41 1.41c-1.96 1.96-1.96 5.12 0 7.07 1.95 1.96 5.11 1.96 7.07 0l1.41-1.41 1.42 1.41-1.42 1.42c-2.73 2.73-7.16 2.73-9.9 0-2.73-2.74-2.73-7.17 0-9.9z"/></svg>',
+      label: 'View on OtterScan', action: () => window.open(`https://otter.pulsechain.com/tx/${post.txHash}`, '_blank', 'noopener,noreferrer'), danger: false };
+    const permanentItem = {
+      icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>',
+      label: 'Posts are permanent on-chain', action: () => utils.toast('On-chain posts are permanent by design.'), danger: false };
+
+    const items = isOwn
+      ? [pinItem, listItem, noteItem,
+         { divider: true },
+         copyItem, aboutItem, otterItem, permanentItem]
+      : [followItem, notInterestedItem, listItem, muteItem, noteItem,
+         { divider: true },
+         copyItem, aboutItem, otterItem];
 
     /* removeMenu cleans up listeners + the trigger's aria-expanded; restores
        focus to the trigger only on keyboard dismissal (Escape). */
@@ -11331,7 +11348,13 @@ class SayIt {
       anchorEl?.setAttribute?.('aria-expanded', 'false');
       if (restoreFocus) anchorEl?.focus?.();
     };
-    items.forEach(({ icon, label, action, danger }) => {
+    items.forEach(({ icon, label, action, danger, divider }) => {
+      if (divider) {
+        const sep = document.createElement('div');
+        sep.className = 'post-menu-divider';
+        menu.appendChild(sep);
+        return;
+      }
       const el = document.createElement('button');
       el.type = 'button';
       el.setAttribute('role', 'menuitem');
@@ -12588,7 +12611,7 @@ class SayIt {
   goLists() {
     this._updateTitle('Lists');
     this._setRoute('/lists');
-    this.setNav('nav-lists', null);
+    this.setNav(null, null); /* reached via More — no sidebar button */
     this.state.mode = 'lists';
     this.state.activeList = null;
     this.g('compose-area').style.display   = 'none';
@@ -12854,7 +12877,7 @@ class SayIt {
   goCommunities() {
     this._updateTitle('Communities');
     this._setRoute('/communities');
-    this.setNav('nav-communities', null);
+    this.setNav(null, null); /* reached via More — no sidebar button */
     this.state.mode = 'communities';
     this.g('compose-area').style.display   = 'none';
     this.g('channel-banner').style.display = 'none';
