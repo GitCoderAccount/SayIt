@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260612-171';
+const SW_CACHE_VER = '20260612-172';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -2785,6 +2785,10 @@ class SayIt {
     this._updateTitle('Channels');
     this._setRoute('/channels');
     this.setNav('nav-channels','channels');
+    /* X behavior: the Chat page collapses the left nav to its icon rail and
+       drops the right column so the two-pane area fills the width (CSS keys
+       off body.mode-channels; setNav clears it on every nav). */
+    document.body.classList.add('mode-channels');
     this.g('feed-tabs').classList.remove('tabs-sticky');
     this._pendingPageHeader = this._makePageHeader({ title: 'Channels', noBack: true });
     this.g('compose-area').style.display = 'none';
@@ -4603,6 +4607,7 @@ class SayIt {
        the compose FAB on Settings) re-add their class after calling setNav. */
     document.body.classList.remove('mode-settings');
     document.body.classList.remove('mode-explore');
+    document.body.classList.remove('mode-channels');
     this._profileScanCache = {}; /* clear stale profile scan data on navigation */
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.mn-btn').forEach(b => b.classList.remove('active'));
