@@ -229,6 +229,7 @@ const utils = {
         if (/(^|\.)vimeo\.com$/i.test(host) && vimeoId(url)) return 'vimeo';
       } catch { /* invalid URL — skip */ }
       if (xPost(url)) return 'tweet';   /* X / Twitter post → styled link card */
+      if (grokPost(url)) return 'grok'; /* Grok (grok.com) → click-out link card */
       return null;
     };
     const resolveUrl = u => {
@@ -268,6 +269,22 @@ const utils = {
         if (h !== 'x.com' && h !== 'twitter.com') return null;
         const m = u.pathname.match(/^\/([A-Za-z0-9_]{1,15})\/status(?:es)?\/(\d+)/);
         return m ? { handle: m[1], id: m[2] } : null;
+      } catch { return null; }
+    };
+    /* Parse a Grok URL (grok.com / x.ai) → { kind, href } or null. Grok pages
+       send X-Frame-Options: DENY (frame-ancestors only x.com), so they CANNOT
+       be embedded in an iframe by us — and the URL is a web page, not a direct
+       media file, so there's nothing to play inline. We render our own styled
+       click-out card (canonical link, tracking params dropped) that opens Grok
+       in a new tab — the closest we can faithfully show. */
+    const grokPost = url => {
+      try {
+        const u = new URL(url);
+        const h = u.hostname.replace(/^www\./, '');
+        if (h !== 'grok.com' && h !== 'x.ai') return null;
+        const m = u.pathname.match(/^\/(imagine|share|chat)(?:\/|$)/);
+        if (!m) return null;
+        return { kind: m[1], href: u.origin + u.pathname };
       } catch { return null; }
     };
 
@@ -370,6 +387,28 @@ const utils = {
             <span class="x-embed-handle">@${safeHandle}</span>
             <span class="x-embed-cta">▶ Tap to load this post (text, images &amp; video)</span>
           </div>`;
+          mediaCount++;
+        }
+      } else if (mtype === 'grok') {
+        const gk = grokPost(resolved);
+        if (gk) {
+          mediaUrls.add(resolved);
+          /* Grok can't be iframed (X-Frame-Options: DENY) and the URL isn't a
+             direct media file, so this is a click-out card, not an inline
+             player — opens Grok in a new tab. */
+          const href = utils.safe(gk.href);
+          const label = gk.kind === 'imagine' ? 'Grok Imagine' : 'Grok';
+          const sub = gk.kind === 'imagine' ? 'Image &amp; video on Grok' : 'View on Grok';
+          embedHtml += `<a class="grok-card" href="${href}" target="_blank" rel="noopener noreferrer">
+            <span class="grok-card-logo" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M12 2.5l2.6 6.9L21.5 12l-6.9 2.6L12 21.5l-2.6-6.9L2.5 12l6.9-2.6z"/></svg>
+            </span>
+            <span class="grok-card-body">
+              <span class="grok-card-title">${label}</span>
+              <span class="grok-card-sub">${sub}</span>
+            </span>
+            <span class="grok-card-cta">Open ↗</span>
+          </a>`;
           mediaCount++;
         }
       }

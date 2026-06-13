@@ -2771,6 +2771,24 @@ body.mode-explore .sb-search { display:none; }
 .x-embed-loaded { padding:0; border:none; background:none; }
 .x-embed-frame { width:100%; min-height:280px; border:0; border-radius:14px; display:block; }
 
+/* Grok link card — grok.com can't be iframed (X-Frame-Options: DENY), so this
+   is a styled click-out card that opens Grok in a new tab. */
+.grok-card {
+  display:flex; align-items:center; gap:12px; text-decoration:none; color:var(--text);
+  border:1px solid var(--border); border-radius:14px;
+  padding:12px 14px; margin:8px 0 4px;
+  background:var(--bg-dark); transition:background 0.15s, border-color 0.15s;
+}
+.grok-card:hover { background:var(--hov-1); border-color:var(--muted); }
+.grok-card-logo {
+  display:flex; align-items:center; justify-content:center; flex-shrink:0;
+  width:40px; height:40px; border-radius:10px; color:#fff; background:#000;
+}
+.grok-card-body { display:flex; flex-direction:column; min-width:0; flex:1; }
+.grok-card-title { font-size:14px; font-weight:700; }
+.grok-card-sub { font-size:13px; color:var(--muted); }
+.grok-card-cta { flex-shrink:0; font-size:13px; font-weight:600; color:var(--primary-lt); }
+
 /* Community notes */
 .note-slot:empty { display:none; }
 .note-pending-toggle {
