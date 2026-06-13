@@ -2601,6 +2601,24 @@ body.mode-explore .sb-search { display:none; }
 .vp-lead { font-size:16px; color:var(--muted); padding:12px 0 4px; }
 .vp-foot { margin-top:24px; color:var(--muted); font-size:14px; }
 
+/* Premium page */
+.premium-page { padding:8px 20px 48px; max-width:600px; margin:0 auto; }
+.pp-hero { text-align:center; padding:24px 0 8px; }
+.pp-mark { font-size:46px; line-height:1; color:var(--primary-lt); margin-bottom:8px; }
+.pp-title { font-size:26px; font-weight:800; margin:0 0 10px; color:var(--text); }
+.pp-intro { font-size:15px; line-height:1.65; color:var(--muted); margin:0 auto; max-width:460px; }
+.pp-features { margin:24px 0 4px; display:flex; flex-direction:column; gap:10px; }
+.premium-feature { display:flex; gap:14px; align-items:flex-start; padding:14px 16px;
+  border:1px solid var(--border); border-radius:14px; background:var(--bg-mid); }
+.pf-icon { font-size:22px; line-height:1.3; flex:0 0 auto; }
+.pf-body { min-width:0; }
+.pf-title { font-size:15px; font-weight:700; color:var(--text); margin-bottom:2px; }
+.pf-desc { font-size:14px; line-height:1.55; color:var(--muted); }
+.pp-soon { text-align:center; color:var(--muted); font-size:14px; margin:22px 0 14px; }
+.pp-subscribe { display:block; width:100%; padding:13px 16px; border:none; border-radius:9999px;
+  background:var(--primary); color:#fff; font-size:16px; font-weight:700; cursor:not-allowed; opacity:.55; }
+.pp-subscribe:disabled { cursor:not-allowed; }
+
 /* Analytics range selector */
 .ana-range { display:flex; gap:8px; padding:12px 0 0; }
 .ana-range-btn {
@@ -2997,6 +3015,16 @@ html.force-reduce-motion *, html.force-reduce-motion *::before, html.force-reduc
           <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M1.998 5.5c0-1.381 1.119-2.5 2.5-2.5h15c1.381 0 2.5 1.119 2.5 2.5v13c0 1.381-1.119 2.5-2.5 2.5h-15c-1.381 0-2.5-1.119-2.5-2.5v-13zm2.5-.5a.5.5 0 00-.5.5v2.764l8 3.638 8-3.638V5.5a.5.5 0 00-.5-.5h-15zM19.998 10.236l-8 3.636-8-3.636V18.5a.5.5 0 00.5.5h15a.5.5 0 00.5-.5v-8.264z"/></svg>
         </span><span class="nav-label">Channels</span>
       </a>
+      <a class="nav-btn" id="nav-bookmarks" href="#/bookmarks">
+        <span class="nav-icon">
+          <svg viewBox="0 0 26 26" width="26" height="26"><path fill="currentColor" d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5zM6.5 4c-.276 0-.5.22-.5.5v14.56l6-4.29 6 4.29V4.5c0-.28-.224-.5-.5-.5h-11z" transform="translate(1 1)"/></svg>
+        </span><span class="nav-label">Bookmarks</span>
+      </a>
+      <a class="nav-btn" id="nav-studio" href="#/dashboard">
+        <span class="nav-icon">
+          <svg viewBox="0 0 26 26" width="26" height="26"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M4 4.5C4 3.67 4.67 3 5.5 3h15c.83 0 1.5.67 1.5 1.5v15c0 .83-.67 1.5-1.5 1.5h-15c-.83 0-1.5-.67-1.5-1.5v-15z"/><path fill="currentColor" d="M7.5 13h1.6v5H7.5zM11.7 9h1.6v9h-1.6zM15.9 11h1.6v7h-1.6z"/></svg>
+        </span><span class="nav-label">Creator dashboard</span>
+      </a>
       <button class="nav-btn" id="nav-premium">
         <span class="nav-icon">
           <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 1.5l2.917 6.064 6.583.79-4.86 4.494 1.27 6.652L12 16.98l-5.91 3.52 1.27-6.652L2.5 8.354l6.583-.79L12 1.5z"/></svg>
@@ -3245,23 +3273,11 @@ html.force-reduce-motion *, html.force-reduce-motion *::before, html.force-reduc
             <span class="more-icon">📋</span>
             <span class="more-label">Lists</span>
           </button>
-          <button class="more-item" id="more-bookmarks-mn">
-            <span class="more-icon">🔖</span>
-            <span class="more-label">Bookmarks</span>
-          </button>
           <button class="more-item" id="more-communities">
             <span class="more-icon">👥</span>
             <span class="more-label">Communities</span>
           </button>
           <div class="more-divider"></div>
-          <button class="more-item" id="more-studio">
-            <span class="more-icon">🎬</span>
-            <span class="more-label">Creator dashboard</span>
-          </button>
-          <button class="more-item" id="more-analytics">
-            <span class="more-icon">📊</span>
-            <span class="more-label">Analytics</span>
-          </button>
           <button class="more-item" id="more-verify">
             <span class="more-icon">🛡️</span>
             <span class="more-label">Verify it yourself</span>
@@ -3269,6 +3285,10 @@ html.force-reduce-motion *, html.force-reduce-motion *::before, html.force-reduc
           <button class="more-item" id="more-space">
             <span class="more-icon">🎙</span>
             <span class="more-label">Start a Space<span class="soon-tag">beta</span></span>
+          </button>
+          <button class="more-item" id="more-analytics">
+            <span class="more-icon">📊</span>
+            <span class="more-label">Analytics</span>
           </button>
           <div class="more-divider"></div>
           <button class="more-item" id="more-settings">
