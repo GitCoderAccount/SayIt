@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260612-164';
+const SW_CACHE_VER = '20260612-165';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -2484,7 +2484,14 @@ class SayIt {
       const label = tagMatch ? '#' + utils.safe(tagMatch[1]) + ' · Trending' : utils.safe(authorName);
       const thumbUrl = this._mediaImageUrls(p.display)[0] || '';
       const thumb = thumbUrl ? utils.safe(utils.safeUrl(thumbUrl) || '') : '';
-      const headlineRaw = (p.display || '').replace(/https?:\/\/\S+/g, '').trim();
+      let headlineRaw = (p.display || '').replace(/https?:\/\/\S+/g, '').trim();
+      /* Posts that are only a media/embed URL strip to nothing — an empty
+         headline reads as broken. Fall back to a plain-text media descriptor
+         (no emoji — the target system lacks color-emoji fonts). */
+      if (!headlineRaw) {
+        headlineRaw = (utils.ytId(p.display) || utils.vimeoId(p.display)) ? 'Shared a video'
+          : thumbUrl ? 'Shared an image' : 'Shared a link';
+      }
       const headline = utils.safe(headlineRaw.slice(0, 140));
       const time = this.relTime(p.timestamp);
       return `
