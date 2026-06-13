@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260612-176';
+const SW_CACHE_VER = '20260612-177';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -3353,15 +3353,42 @@ class SayIt {
           ${stat('Followers gained', Math.max(0, followsGained).toLocaleString())}
           ${stat('Spaces hosted', spacesHosted.length.toLocaleString())}
         </div>
-        <div class="ana-section"><h3>PLS tipped to you — last ${range} days</h3>
-          <div class="ana-chart">${bars}</div></div>
-        <div class="ana-section"><h3>Your top posts</h3>${postRows}</div>
-        <div class="ana-section"><h3>Top supporters</h3>${tipperRows}</div>
-        <div class="ana-section"><h3>Your Spaces</h3>${spaceRows}</div>
+        <!-- PROGRAMS — revenue + supporters (X Creator Studio parity). -->
+        <div class="studio-group">
+          <div class="studio-group-title">Programs</div>
+          <div class="ana-section"><h3>PLS tipped to you — last ${range} days</h3>
+            <div class="ana-chart">${bars}</div></div>
+          <div class="ana-section"><h3>Top supporters</h3>${tipperRows}</div>
+          <div class="ana-section"><h3>Subscriptions</h3>
+            <div class="ana-empty">Recurring on-chain subscriptions are coming soon — let supporters back you with a monthly PLS payment. For now, tips are your revenue stream.</div></div>
+        </div>
+        <!-- TOOLS — content performance + analytics. -->
+        <div class="studio-group">
+          <div class="studio-group-title">Tools</div>
+          <div class="ana-section"><h3>Your top posts</h3>${postRows}</div>
+          <div class="ana-section"><h3>Your Spaces</h3>${spaceRows}</div>
+          <div class="ana-section"><h3>Analytics</h3>
+            <div class="ana-row" role="button" tabindex="0" id="dash-analytics-link">
+              <span class="ana-row-name">Open full Analytics</span><span class="ana-row-val">→</span></div></div>
+        </div>
+        <!-- SUPPORT — help + learn more. -->
+        <div class="studio-group">
+          <div class="studio-group-title">Support</div>
+          <div class="ana-section">
+            <a class="ana-row" href="https://github.com/GitCoderAccount/SayIt/issues" target="_blank" rel="noopener noreferrer">
+              <span class="ana-row-name">Contact support (GitHub Issues)</span><span class="ana-row-val">↗</span></a>
+            <a class="ana-row" href="https://github.com/GitCoderAccount/SayIt" target="_blank" rel="noopener noreferrer">
+              <span class="ana-row-name">Learn more (docs &amp; source)</span><span class="ana-row-val">↗</span></a>
+            <div class="ana-row" role="button" tabindex="0" id="dash-verify-link">
+              <span class="ana-row-name">Verify it yourself</span><span class="ana-row-val">→</span></div>
+          </div>
+        </div>
       </div>`;
     feed.querySelectorAll('[data-dash-range]').forEach(btn => {
       btn.onclick = () => { this._dashRange = Number(btn.dataset.dashRange); this.goDashboard(); };
     });
+    const al = this.g('dash-analytics-link'); if (al) al.onclick = () => this.goAnalytics();
+    const vl = this.g('dash-verify-link');    if (vl) vl.onclick = () => this.goVerify();
   }
 
   goSettings() {
