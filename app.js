@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260612-168';
+const SW_CACHE_VER = '20260612-169';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -304,6 +304,7 @@ class SayIt {
     const g = this.g.bind(this);
     /* ── Top-level nav: logo, wallet, post buttons ─────────────────── */
     this._initVideoAutoWire();
+    this._initTwemoji();
     /* Unmute toggle for feed videos (was an inline handler; CSP-strict). */
     document.addEventListener('click', e => {
       const btn = e.target.closest('.vid-unmute-btn');
@@ -8028,6 +8029,67 @@ class SayIt {
     this._videoAutoWire.observe(document.body, { childList: true, subtree: true });
   }
 
+  /* ── Twemoji (Twitter/X color emoji) ──────────────────────────────────
+     Replace emoji TEXT with Twitter's own emoji images so they render
+     identically across every device/OS instead of each platform's native
+     monochrome-or-mismatched glyphs. Display-only: the source text nodes are
+     swapped for <img class="emoji">, but inputs/textareas keep the real char
+     in .value (twemoji only touches DOM text nodes, never form-control values).
+     Library is from cdnjs (SRI-pinned); images come from a live jsdelivr base. */
+  _twemojify(root) {
+    if (!root || !window.twemoji || this._twemojiParsing) return;
+    this._twemojiParsing = true;
+    try {
+      window.twemoji.parse(root, {
+        folder: 'svg', ext: '.svg',
+        base: 'https://cdn.jsdelivr.net/gh/jdecked/twemoji@15.1.0/assets/',
+        className: 'emoji',
+      });
+    } catch { /* twemoji unavailable/offline — emoji fall back to system glyphs */ }
+    finally { this._twemojiParsing = false; }
+  }
+
+  /* Auto-apply twemoji to everything the app renders. A debounced
+     MutationObserver on <body> catches every render path (feed, profiles,
+     threads, modals, quote cards, …) so we never have to remember to call
+     _twemojify by hand. Loop-safe: twemoji's own inserted <img class="emoji">
+     nodes are ignored, and the _twemojiParsing flag makes parse re-entrant-safe;
+     text inside <textarea>/<input> is skipped so typed content is never imaged. */
+  _initTwemoji() {
+    if (this._twemojiObserver || !window.twemoji) return;
+    this._twemojiQueue = new Set();
+    const flush = () => {
+      this._twemojiFlushTimer = null;
+      const nodes = this._twemojiQueue;
+      this._twemojiQueue = new Set();
+      for (const n of nodes) {
+        if (!n.isConnected) continue;
+        this._twemojify(n);
+        this._twemojiParseCount = (this._twemojiParseCount || 0) + 1;
+      }
+    };
+    this._twemojiObserver = new MutationObserver(muts => {
+      for (const m of muts) {
+        for (const n of m.addedNodes) {
+          if (n.nodeType !== 1) continue;                 // elements only
+          /* Skip twemoji's own output so we never re-trigger ourselves. */
+          if (n.tagName === 'IMG' && n.classList.contains('emoji')) continue;
+          /* Never parse into form controls — their text lives in .value. */
+          const tag = n.tagName;
+          if (tag === 'TEXTAREA' || tag === 'INPUT') continue;
+          if (n.closest?.('textarea, input')) continue;
+          this._twemojiQueue.add(n);
+        }
+      }
+      if (this._twemojiQueue.size && !this._twemojiFlushTimer) {
+        this._twemojiFlushTimer = setTimeout(flush, 80);
+      }
+    });
+    this._twemojiObserver.observe(document.body, { childList: true, subtree: true });
+    /* Parse whatever is already on the page (initial paint the observer missed). */
+    this._twemojify(document.body);
+  }
+
 
   /* Resolve display info (avatar, name, verified badge) for a post.
      Pulls from this.state.profile if it's our own post, otherwise from
@@ -11439,6 +11501,10 @@ class SayIt {
     picker.style.left = left + 'px';
     picker.style.top  = (top + window.scrollY) + 'px';
     document.body.appendChild(picker);
+    /* Render the picker grid with color Twemoji images too (otherwise the
+       buttons show the platform's monochrome/box glyphs). Explicit call so the
+       grid is colorized synchronously rather than waiting on the observer. */
+    this._twemojify(picker);
 
     /* Teardown helper + dismiss wiring */
     const removePicker = () => {
