@@ -766,9 +766,9 @@ nav { flex:1; padding:4px 0; }
   color:var(--muted); font-size:18px; cursor:pointer;
   width:34px; height:34px; border-radius:50%;
   display:flex; align-items:center; justify-content:center;
-  transition:background 0.15s, color 0.15s;
-  /* Desktop: hidden until hover. Mobile (no hover): always visible. */
-  opacity:0;
+  transition:background 0.15s, color 0.15s, opacity 0.15s;
+  /* Always faintly visible (X parity); brightens on hover. Mobile block below. */
+  opacity:0.5;
 }
 .post-item:hover .post-menu-btn { opacity:1; }
 @media (hover: none) {
