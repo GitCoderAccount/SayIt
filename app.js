@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260612-180';
+const SW_CACHE_VER = '20260612-181';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -3667,6 +3667,17 @@ class SayIt {
       <div class="ch-pane-compose">
         <textarea id="ch-pane-compose" rows="2" placeholder="Post to this channel…"></textarea>
         <div class="ch-pane-compose-actions">
+          <div class="compose-icons">
+            <button class="cmp-icon" id="ch-media-btn" title="Add photos or video" aria-label="Add media">
+              <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 5.5C3 4.119 4.119 3 5.5 3h13C19.881 3 21 4.119 21 5.5v13c0 1.381-1.119 2.5-2.5 2.5h-13C4.119 21 3 19.881 3 18.5v-13zM5.5 5c-.276 0-.5.224-.5.5v9.086l3-3 3 3 5-5 3 3V5.5c0-.276-.224-.5-.5-.5h-13zM19 15.414l-3-3-5 5-3-3-3 3V18.5c0 .276.224.5.5.5h13c.276 0 .5-.224.5-.5v-3.086zM9.75 7C8.784 7 8 7.784 8 8.75s.784 1.75 1.75 1.75 1.75-.784 1.75-1.75S10.716 7 9.75 7z"/></svg>
+            </button>
+            <button class="cmp-icon" id="ch-gif-btn" title="Add a GIF" aria-label="Add GIF">
+              <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 5.5C3 4.119 4.119 3 5.5 3h13C19.881 3 21 4.119 21 5.5v13c0 1.381-1.119 2.5-2.5 2.5h-13C4.119 21 3 19.881 3 18.5v-13zM5.5 5c-.276 0-.5.224-.5.5v13c0 .276.224.5.5.5h13c.276 0 .5-.224.5-.5v-13c0-.276-.224-.5-.5-.5h-13z"/></svg>
+            </button>
+            <button class="cmp-icon" id="ch-emoji-btn" title="Emoji" aria-label="Insert emoji">
+              <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M8 9.5C8 8.672 8.672 8 9.5 8s1.5.672 1.5 1.5S10.328 11 9.5 11 8 10.328 8 9.5zm6.5 1.5c.828 0 1.5-.672 1.5-1.5S15.328 8 14.5 8 13 8.672 13 9.5s.672 1.5 1.5 1.5zM12 16c-2.224 0-3.021-1.4-3.094-1.536l-1.76.992C7.196 15.69 8.638 18 12 18s4.804-2.31 4.854-2.544l-1.76-.992C15.021 14.6 14.224 16 12 16zm-.002-14C6.477 2 2 6.477 2 12s4.477 10 9.998 10C17.523 22 22 17.523 22 12S17.523 2 11.998 2zM12 20C7.582 20 4 16.418 4 12s3.582-8 8-8 8 3.582 8 8-3.582 8-8 8z"/></svg>
+            </button>
+          </div>
           <button class="go-btn" id="ch-pane-post" disabled>Post</button>
         </div>
       </div>`;
@@ -3678,6 +3689,20 @@ class SayIt {
     if (ta && post) {
       ta.oninput = () => { post.disabled = !ta.value.trim(); };
       post.onclick = () => this._postToChannelPane(addr);
+      /* Compose toolbar — media/GIF insert a URL at the cursor (matches the
+         thread reply composer); emoji opens the picker targeting THIS box (its
+         insert dispatches 'input', which re-enables Post via ta.oninput). */
+      const insertIntoCh = (txt) => {
+        const pos = ta.selectionStart ?? ta.value.length;
+        ta.value = ta.value.slice(0, pos) + txt + ta.value.slice(pos);
+        ta.focus(); post.disabled = !ta.value.trim();
+      };
+      const cm = this.g('ch-media-btn');
+      if (cm) cm.onclick = () => { const u = prompt('Paste an image, GIF, or video URL:'); if (u && u.trim()) insertIntoCh((ta.value ? ' ' : '') + u.trim()); };
+      const cg = this.g('ch-gif-btn');
+      if (cg) cg.onclick = () => { const u = prompt('Paste a GIF URL:'); if (u && u.trim()) insertIntoCh((ta.value ? ' ' : '') + u.trim()); };
+      const ce = this.g('ch-emoji-btn');
+      if (ce) ce.onclick = () => this._openEmojiPickerFor(ta, ce);
     }
 
     /* Fetch one page of the channel's txlist and parse posts TO this channel,
