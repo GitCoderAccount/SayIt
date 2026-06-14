@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260613-183';
+const SW_CACHE_VER = '20260614-184';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -914,6 +914,15 @@ class SayIt {
     }, true);
 
     document.addEventListener('keydown', e => {
+      /* Escape closes an open modal / generic modal BEFORE the INPUT/TEXTAREA
+         early-return below — these modals autofocus their textarea, so without
+         this Escape could never close them while you're typing (X parity). */
+      if (e.key === 'Escape') {
+        if (this.g('generic-modal')) { this._closeGenericModal(); return; }
+        const openModal = ['compose-modal','reply-modal','repost-modal','media-modal','share-modal','profile-modal']
+          .find(id => this.g(id)?.classList.contains('open'));
+        if (openModal) { this.closeModal(openModal); return; }
+      }
       const active = document.activeElement?.tagName;
       if (active === 'INPUT' || active === 'TEXTAREA') return;
       /* Enter/Space activates a focused custom button (role="button" on a
@@ -1074,10 +1083,14 @@ class SayIt {
     /* Expanded modal compose toolbar — same merged Media affordance. */
     const miBtn = g('modal-cmp-image-btn');
     const mgBtn = g('modal-cmp-gif-btn');
-    const mvBtn = g('modal-cmp-video-btn');
+    const mpBtn = g('modal-cmp-poll-btn');
+    const meBtn = g('modal-cmp-emoji-btn');
     if (miBtn) miBtn.onclick = () => this.openMediaModal('media');
     if (mgBtn) mgBtn.onclick = () => this.openMediaModal('gif');
-    if (mvBtn) mvBtn.onclick = () => this.openPollComposer(); /* modal poll button */
+    if (mpBtn) mpBtn.onclick = () => this.openPollComposer(); /* modal poll button */
+    /* Emoji in the expanded composer — picker anchored to its own button and
+       targeting the modal textarea (parity with the inline composer). */
+    if (meBtn) meBtn.onclick = () => this._openEmojiPickerFor(g('modal-compose-text'), meBtn);
     g('cmp-emoji-btn').onclick = () => this.toggleEmojiPicker();
 
     /* Media attach modal */
@@ -1861,17 +1874,13 @@ class SayIt {
          (the scanners above used the PREVIOUS value to build their windows). */
       utils.safeLS.set(LAST_CHECK_KEY, Date.now().toString());
 
-      if (!allNotifs.length) {
-        this.g('feed').innerHTML = this._applyPageHeader() +
-          `<div class="prof-empty"><span>🔔</span><h3>No notifications yet</h3><p>When someone likes, follows, replies, or votes on your poll, it appears here.</p></div>`;
-        return;
-      }
-
       /* Cache the parsed notifs so tab switching filters in place without
-         rescanning the chain. */
+         rescanning the chain. Always render via _renderNotifs so the All /
+         Verified / Mentions / Likes tab bar shows even when empty (X parity). */
       this._notifs = allNotifs;
       this._notifTab = this._notifTab || 'all';
       this._renderNotifs();
+      if (!allNotifs.length) return;
 
       /* Lazy-refresh avatars/names once profiles load. Single non-recursive update. */
       const refreshAvatars = () => {
@@ -2432,7 +2441,16 @@ class SayIt {
       /* Clean preview: strip URLs (media renders elsewhere); fall back to a
          media hint when the post was only a link. */
       let text = (p.display || '').replace(/(https?:|ipfs:|ar:|arweave:)\S+/g, '').replace(/\s{2,}/g, ' ').trim();
-      if (!text) text = utils.ytId(p.display) ? '▶ Video' : (this._postHasMedia(p.display) ? '🖼 Media post' : p.display.slice(0, 90));
+      if (!text) {
+        if (utils.ytId(p.display)) text = '▶ Video';
+        else if (this._postHasMedia(p.display)) text = '🖼 Media post';
+        else {
+          /* Link-only post (e.g. a Grok page): show "🔗 host" instead of the
+             full ugly URL. */
+          const m = (p.display || '').match(/https?:\/\/([^\s/]+)/);
+          text = m ? '🔗 ' + m[1].replace(/^www\./, '') : (p.display || '').slice(0, 90);
+        }
+      }
       return `<div class="explore-row" role="button" tabindex="0" data-act="open-thread" data-act-arg="${utils.safe(p.txHash)}">
         <div class="explore-content">
           <div class="explore-label">${name} · ${utils.safe(this.relTime(p.timestamp))}</div>
@@ -3112,6 +3130,36 @@ class SayIt {
   /* ── Analytics: client-side network stats computed from the local post
      cache + in-memory engagement maps. No server — the same data any
      client can derive from the chain. ── */
+  /* Per-post like counts merged from the deep-sync archive AND the LIKE txs
+     already sitting in the post cache (and any provided corpus), deduped by
+     LIKE-tx hash. This makes engagement on Analytics + the Creator dashboard
+     populate from normal browsing — no manual Deep sync required — and keeps
+     both pages reading from one shared source so their numbers agree. */
+  async _mergedLikeCounts(corpus) {
+    const byTarget = new Map(); /* target → Set(likeTxHash) */
+    const add = (target, txHash) => {
+      if (!target || !txHash) return;
+      let s = byTarget.get(target);
+      if (!s) { s = new Set(); byTarget.set(target, s); }
+      s.add(txHash);
+    };
+    try { (await this.cache.likeRows()).forEach(r => add(r.target, r.txHash)); }
+    catch { /* archive unavailable */ }
+    try {
+      const posts = corpus || await this.cache.getPosts(() => true);
+      posts.forEach(p => {
+        if (p.postType !== 'like') return;
+        let target = p.reactionTarget;
+        if (!target && typeof p.content === 'string' && p.content.startsWith('LIKE:'))
+          target = p.content.slice(5).trim().toLowerCase();
+        add(target, p.txHash);
+      });
+    } catch { /* cache unavailable */ }
+    const counts = new Map();
+    byTarget.forEach((s, t) => counts.set(t, s.size));
+    return counts;
+  }
+
   async goAnalytics() {
     this._updateTitle('Analytics');
     this._setRoute('/analytics');
@@ -3153,8 +3201,9 @@ class SayIt {
     const maxDay = Math.max(1, ...byDay.values());
     const fmtDay = ts => new Date(ts).toLocaleDateString('en-US', { month:'short', day:'numeric' });
 
-    /* Engagement: likes from the archive; replies computed from posts. */
-    const likeCounts = await this.cache.likeCounts();
+    /* Engagement: likes merged from the archive + cached LIKE txs (so numbers
+       populate without a Deep sync); replies computed from posts. */
+    const likeCounts = await this._mergedLikeCounts(posts);
     if (this.state.mode !== 'analytics') return;
     const replyCounts = new Map();
     feedPosts.forEach(p => { if (p.parentTx) replyCounts.set(p.parentTx, (replyCounts.get(p.parentTx) || 0) + 1); });
@@ -3286,10 +3335,13 @@ class SayIt {
     let cached = [];
     try { cached = await this.cache.getPosts(() => true); } catch { /* cache empty */ }
     if (this.state.mode !== 'dashboard') return;
-    const likeCounts = await this.cache.likeCounts();
-    if (this.state.mode !== 'dashboard') return;
     const isFeedType = p => !p.postType || ['post', 'repost', 'poll', 'space'].includes(p.postType);
     const corpus = [...cached, ...this.state.posts];
+    /* Likes from the merged source (archive + cached LIKE txs) so engagement
+       populates without a manual Deep sync — same source the Analytics page
+       uses, keeping the two pages consistent. */
+    const likeCounts = await this._mergedLikeCounts(corpus);
+    if (this.state.mode !== 'dashboard') return;
     corpus.forEach(p => {
       if (p.reporter === me && p.txHash && !myPosts.has(p.txHash) && isFeedType(p)) myPosts.set(p.txHash, p);
     });
@@ -3581,7 +3633,7 @@ class SayIt {
     if (this.state.mode === 'channels') {
       /* Refresh just the list body so the page header stays in place; if the
          page body isn't mounted yet, do a full render with a header. */
-      if (this.g('ch-page')) this._renderChannelPage();
+      if (this.g('ch-page')) { this._renderChannelPage(); this._autoSelectFirstChannel(); }
       else this.renderChannelHistory(this._applyPageHeader());
     }
     utils.toast('Channel history updated ✓');
@@ -3607,17 +3659,20 @@ class SayIt {
     const back = this.g('ch-pane-back');
     if (back) back.onclick = () => this.g('ch-layout')?.classList.remove('pane-open');
     this._renderChannelPage();
-    /* Desktop: auto-select the first channel of the active tab so the pane
-       isn't empty (X opens the first conversation). Mobile starts on the list
-       (pane hidden by CSS until a row is tapped). If nothing is selected and
-       the list is empty, the placeholder stays. */
-    if (window.innerWidth > 768 && !this._chSelected) {
-      const firstRow = this.g('ch-page')?.querySelector('[data-ch-open]');
-      if (firstRow) this._selectChannelPane(firstRow.dataset.chOpen);
-      else this._renderChannelPanePlaceholder();
-    } else if (!this._chSelected) {
-      this._renderChannelPanePlaceholder();
-    }
+    /* Mobile starts on the list (pane hidden by CSS until a row is tapped);
+       show the placeholder until something is selected. On desktop,
+       _autoSelectFirstChannel opens the first real (non-special) channel. */
+    if (!this._chSelected) this._renderChannelPanePlaceholder();
+    this._autoSelectFirstChannel();
+  }
+
+  /* Desktop: open the first NON-special channel (X opens the first conversation)
+     when nothing is selected yet. Safe to call repeatedly — it's re-invoked
+     after the async channel rescan so a channel that loads later still opens. */
+  _autoSelectFirstChannel() {
+    if (window.innerWidth <= 768 || this._chSelected) return;
+    const firstRow = this.g('ch-page')?.querySelector('[data-ch-open]');
+    if (firstRow) this._selectChannelPane(firstRow.dataset.chOpen);
   }
 
   /* Centered empty-state for the right pane (nothing selected). */
