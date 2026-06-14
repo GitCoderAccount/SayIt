@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260614-198';
+const SW_CACHE_VER = '20260614-199';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -3854,41 +3854,48 @@ class SayIt {
 
     /* Fetch one page of the channel's txlist and parse posts TO this channel,
        newest-first, capped at 30. Stale-guard against rapid row switching. */
+    /* Load the chat's posts page by page — full history via "Load older". */
+    this._chPanePosts = [];
+    await this._chPaneLoadPage(addr, 1);
+  }
+
+  /* Fetch one page of a chat's posts (TO the address), accumulate + render
+     newest-first, and show a "Load older posts" button while pages remain.
+     Stale-guarded against rapid row switching. */
+  async _chPaneLoadPage(addr, page) {
+    if (this._chSelected !== addr || this.state.mode !== 'channels') return;
+    const ph = this.g('ch-pane-posts');
+    if (!ph) return;
     let raw;
-    try { raw = await this.apiFetch(addr, 1); }
+    try { raw = await this.apiFetch(addr, page); }
     catch {
-      if (this._chSelected !== addr || this.state.mode !== 'channels') return;
-      const ph = this.g('ch-pane-posts');
-      if (ph) ph.innerHTML = `<div class="ch-pane-empty"><p>Couldn't load this channel. Try again.</p></div>`;
+      if (this._chSelected !== addr) return;
+      if (page === 1) ph.innerHTML = `<div class="ch-pane-empty"><p>Couldn't load this chat. Try again.</p></div>`;
+      else { const mb0 = this.g('ch-pane-more'); if (mb0) { mb0.disabled = false; mb0.textContent = 'Load older posts'; } }
       return;
     }
     if (this._chSelected !== addr || this.state.mode !== 'channels') return;
-
-    const posts = [];
     for (const tx of raw) {
-      if (tx.to?.toLowerCase() !== addr) continue; /* posts TO this channel only */
+      if (tx.to?.toLowerCase() !== addr) continue; /* posts TO this chat only */
       const p = this._parsePostTx(tx, { mode: 'custom', extra: { channel: addr } });
-      if (p) posts.push(p);
-      if (posts.length >= 30) break;
+      if (p && !this._chPanePosts.some(x => x.txHash === p.txHash)) this._chPanePosts.push(p);
     }
-
-    const ph = this.g('ch-pane-posts');
-    if (!ph) return;
+    const posts = this._chPanePosts;
     if (!posts.length) {
-      ph.innerHTML = `<div class="ch-pane-empty"><p>No posts in this channel yet — be the first.</p></div>`;
+      ph.innerHTML = `<div class="ch-pane-empty"><p>No posts in this chat yet — be the first.</p></div>`;
       return;
     }
-    /* Reply counts for these posts (same as the profile tab). */
     const replyMap = new Map();
     posts.forEach(p => { if (p.parentTx) replyMap.set(p.parentTx, (replyMap.get(p.parentTx) || 0) + 1); });
-    /* Register each post so the global #feed delegation can resolve it. */
     posts.forEach(p => this._postMap.set(p.txHash, p));
+    const moreBtn = raw.length >= 50
+      ? `<button class="settings-btn" id="ch-pane-more" style="display:block;margin:14px auto">Load older posts</button>` : '';
     ph.innerHTML = posts.map(p =>
       `<div class="post-item" data-txhash="${utils.safe(p.txHash)}">${this.postHTML(p, false, replyMap, null)}</div>`
-    ).join('');
-    /* Lazy-load author profiles so names/avatars fill in (like the profile tab). */
+    ).join('') + moreBtn;
+    const mb = this.g('ch-pane-more');
+    if (mb) mb.onclick = () => { mb.disabled = true; mb.textContent = 'Loading…'; this._chPaneLoadPage(addr, page + 1); };
     posts.forEach(p => { if (p.reporter !== this.state.signerAddr) this.fetchOtherProfile(p.reporter); });
-    /* Tally any polls just rendered. */
     if (posts.some(pp => pp.poll)) setTimeout(() => this._tallyVisiblePolls(), 100);
   }
 
@@ -9638,7 +9645,14 @@ class SayIt {
     const name = prof?.username ? utils.safe(prof.username) : this.trunc(addr);
     const convo = (this._dmConvos || []).find(c => c.addr === addr);
     const me = this.state.signerAddr;
-    const bubbles = (convo?.messages || []).map(m => {
+    /* Dedup by tx hash so a message never renders twice (e.g. optimistic +
+       scanned, or an explorer returning the tx on overlapping pages). */
+    const _seen = new Set();
+    const msgs = (convo?.messages || []).filter(m => {
+      const k = m.txHash || `${m.from}|${m.ts}|${m.text}`;
+      if (_seen.has(k)) return false; _seen.add(k); return true;
+    });
+    const bubbles = msgs.map(m => {
       const mine = m.from === me;
       return `<div class="dm-bubble ${mine ? 'mine' : 'theirs'}">${utils.safe(m.text).replace(/\n/g, '<br>')}
         <div class="dm-bubble-time">${utils.safe(this.relTime(new Date(m.ts).toISOString()))}</div></div>`;
@@ -9678,7 +9692,7 @@ class SayIt {
     const msg = { from: this.state.signerAddr, to: addr, text, ts: Date.now(), txHash: hash };
     let convo = (this._dmConvos = this._dmConvos || []).find(c => c.addr === addr);
     if (!convo) { convo = { addr, messages: [], last: 0 }; this._dmConvos.unshift(convo); }
-    convo.messages.push(msg); convo.last = msg.ts;
+    if (!convo.messages.some(m => m.txHash === hash)) { convo.messages.push(msg); convo.last = msg.ts; }
     if (this._dmPeer === addr) {
       const th = this.g('dm-thread');
       if (th) {
