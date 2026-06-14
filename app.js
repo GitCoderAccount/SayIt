@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260614-193';
+const SW_CACHE_VER = '20260614-194';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -9499,11 +9499,85 @@ class SayIt {
     if (autoOpenPeer) this._openDmThread(autoOpenPeer);
   }
 
+  /* "New message" → a recipient picker in the pane: pick someone you follow or
+     a follower, search them, or paste an address. */
   _dmNewMessage() {
-    const addr = (prompt('Recipient wallet address (0x…):') || '').trim().toLowerCase();
-    if (!addr) return;
-    if (!/^0x[0-9a-f]{40}$/.test(addr)) { utils.toast('Invalid address'); return; }
-    this._openDmThread(addr);
+    this._dmRecipTab = this._dmRecipTab || 'following';
+    this.g('ch-layout')?.classList.add('pane-open'); /* mobile drill-in */
+    this._renderDmRecipientPicker();
+  }
+
+  _renderDmRecipientPicker() {
+    const host = this.g('ch-pane-content');
+    if (!host) return;
+    const tab = this._dmRecipTab || 'following';
+    host.innerHTML = `
+      <div class="ch-pane-header">
+        <div class="ch-pane-id"><div class="ch-pane-name">New message</div>
+          <div class="ch-pane-addr">Pick someone you follow or a follower — or paste an address</div></div>
+      </div>
+      <div class="dm-pick-manual">
+        <input id="dm-pick-addr" placeholder="0x… wallet address" autocomplete="off" spellcheck="false">
+        <button class="go-btn" id="dm-pick-go">Go</button>
+      </div>
+      <div class="chat-toggle" role="tablist">
+        <button class="chat-toggle-btn${tab === 'following' ? ' active' : ''}" data-recip-tab="following" role="tab">Following</button>
+        <button class="chat-toggle-btn${tab === 'followers' ? ' active' : ''}" data-recip-tab="followers" role="tab">Followers</button>
+      </div>
+      <input id="dm-pick-search" class="dm-pick-search" placeholder="Search by name or address…" autocomplete="off">
+      <div id="dm-pick-list" class="dm-pick-list"></div>`;
+    const inp = this.g('dm-pick-addr'), go = this.g('dm-pick-go');
+    const submit = () => {
+      const a = (inp.value || '').trim().toLowerCase();
+      if (!/^0x[0-9a-f]{40}$/.test(a)) { utils.toast('Enter a valid 0x address'); return; }
+      this._openDmThread(a);
+    };
+    if (go) go.onclick = submit;
+    if (inp) inp.onkeydown = e => { if (e.key === 'Enter') submit(); };
+    host.querySelectorAll('[data-recip-tab]').forEach(btn => {
+      btn.onclick = () => { this._dmRecipTab = btn.dataset.recipTab; this._renderDmRecipientPicker(); };
+    });
+    const search = this.g('dm-pick-search');
+    if (search) search.oninput = () => this._fillDmPickList(search.value.trim());
+    this._fillDmPickList('');
+  }
+
+  async _fillDmPickList(query) {
+    const listEl = this.g('dm-pick-list');
+    if (!listEl) return;
+    const tab = this._dmRecipTab || 'following';
+    let addrs = [];
+    if (tab === 'following') {
+      addrs = [...(this.state.following || [])];
+    } else {
+      if (!this._dmFollowers) {
+        listEl.innerHTML = `<div class="ch-pane-loading"><div class="spinner" aria-hidden="true"></div></div>`;
+        this._dmFollowers = (await this._scanFollowers(this.state.signerAddr, this._navToken, null)) || [];
+        if (!this.g('dm-pick-list')) return; /* navigated/re-rendered away */
+      }
+      addrs = this._dmFollowers;
+    }
+    const q = (query || '').toLowerCase();
+    const me = (this.state.signerAddr || '').toLowerCase();
+    const rows = addrs
+      .filter(a => a && a !== me)
+      .filter(a => { if (!q) return true; const u = this.state.profCache[a]?.username || ''; return a.includes(q) || u.toLowerCase().includes(q); })
+      .slice(0, 100)
+      .map(a => {
+        const prof = this.state.profCache[a];
+        const name = prof?.username ? utils.safe(prof.username) : this.trunc(a);
+        const pic = utils.safe(utils.safeUrl(prof?.picUrl) || 'image1.jpeg');
+        this.fetchOtherProfile(a);
+        return `<div class="ch-history-item" role="button" tabindex="0" data-dm-pick="${utils.safe(a)}">
+          <img src="${pic}" class="ch-hist-avatar" alt="" data-fallback-src="image1.jpeg">
+          <div class="ch-hist-body"><div class="ch-hist-top"><span class="ch-hist-name">${name}</span></div>
+          <div class="ch-hist-preview">${utils.safe(this.trunc(a))}</div></div>
+        </div>`;
+      }).join('') || `<div class="ch-pane-empty" style="padding:24px"><p>${tab === 'following' ? 'Not following anyone yet.' : 'No followers found yet.'}</p></div>`;
+    listEl.innerHTML = rows;
+    listEl.querySelectorAll('[data-dm-pick]').forEach(el => {
+      el.onclick = () => this._openDmThread(el.dataset.dmPick);
+    });
   }
 
   /* Render one conversation (decrypted bubbles + composer) into the right pane. */
