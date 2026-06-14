@@ -54,6 +54,12 @@ const SPACE_END_PREFIX = 'SPACE_END:'; /* SPACE_END:0x<spacehash> — the host e
    prefix collision ('UNPIN:' starts with neither, but ordering kept explicit). */
 const PIN_PREFIX   = 'PIN:';
 const UNPIN_PREFIX = 'UNPIN:';
+/* Encrypted DMs. DMKEY1: publishes a user's public identity-key bundle
+   (X25519 + ML-KEM-768) once, so others can message them; DM1: carries one
+   hybrid-encrypted message (see DMCrypto below). Both are recognized by the
+   message/notification parsers so the raw blobs never render as plaintext. */
+const DMKEY_PREFIX = 'DMKEY1:';
+const DM_PREFIX    = 'DM1:';
 const CHANNELS_KEY    = 'sayitChannelsScan';
 const SPACE_ENDS_KEY  = 'sayitSpaceEnds';   /* JSON { "<spaceTxHash>": "<senderAddr>" } — persisted SPACE_END markers (capped ~200) */
 const ACTIVE_SPACE_KEY = 'sayitActiveSpace'; /* JSON {txHash,roomId,title,startsMs,channel,ts} — host's own live Space, for the rejoin banner */
@@ -1107,3 +1113,109 @@ class SpaceRTC {
     this.mic?.getTracks().forEach(t => t.stop());
   }
 }
+
+/* ── DMCrypto: end-to-end encrypted direct messages ─────────────────────────
+   Hybrid post-quantum scheme (so the permanent on-chain ciphertext stays safe
+   even against a future quantum computer, defeating "harvest now, decrypt
+   later"):
+
+     key agreement = X25519  ⊕  ML-KEM-768   (broken only if BOTH fall)
+     KDF           = HKDF-SHA256
+     AEAD          = XChaCha20-Poly1305
+
+   Identity keys are derived deterministically from a one-off wallet signature
+   (never stored; re-derived per session). The transaction's `from` already
+   proves the sender, so messages use an anonymous sealed box (fresh ephemeral
+   X25519 key per message → sender-side forward secrecy); sender/recipient are
+   bound into both the AEAD AAD and the plaintext to stop blob replay/spoofing.
+
+   Primitives come from window.SAYIT_CRYPTO (vendored sayit-crypto.js — see
+   CRYPTO_BUILD.md). Content is encrypted; on-chain METADATA (who↔who, when)
+   is inherently public — callers must surface that to users. */
+const DMCrypto = {
+  X_PUB_LEN: 32, ML_PUB_LEN: 1184, KEM_CT_LEN: 1088, NONCE_LEN: 24, VER: 1,
+
+  ready() { return typeof window !== 'undefined' && !!window.SAYIT_CRYPTO; },
+  _c() {
+    const c = (typeof window !== 'undefined') && window.SAYIT_CRYPTO;
+    if (!c) throw new Error('Encryption library not loaded yet');
+    return c;
+  },
+  _cat(...arrs) {
+    const n = arrs.reduce((s, a) => s + a.length, 0);
+    const out = new Uint8Array(n);
+    let i = 0; for (const a of arrs) { out.set(a, i); i += a.length; }
+    return out;
+  },
+  _b64(bytes) { let s = ''; for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]); return btoa(s); },
+  _unb64(b64) { const s = atob(b64); const o = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) o[i] = s.charCodeAt(i); return o; },
+
+  /* Deterministically derive this user's keypairs from a wallet signature
+     string. Returns { xSecret, xPublic, mlSecret, mlPublic }. */
+  deriveKeys(signature) {
+    const C = this._c(); const te = new TextEncoder();
+    const xSecret = C.sha512(this._cat(te.encode('SAYIT-DM-x25519-v1\n'), te.encode(signature))).slice(0, 32);
+    const xPublic = C.x25519.getPublicKey(xSecret);
+    const mlSeed  = C.sha512(this._cat(te.encode('SAYIT-DM-mlkem-v1\n'), te.encode(signature))); /* 64 bytes */
+    const ml      = C.ml_kem768.keygen(mlSeed);
+    return { xSecret, xPublic, mlSecret: ml.secretKey, mlPublic: ml.publicKey };
+  },
+
+  /* The DMKEY1: payload others read to message you (X25519 + ML-KEM public). */
+  packIdentityKey(keys) {
+    return DMKEY_PREFIX + this._b64(this._cat(new Uint8Array([this.VER]), keys.xPublic, keys.mlPublic));
+  },
+  parseIdentityKey(payload) {
+    if (typeof payload !== 'string' || !payload.startsWith(DMKEY_PREFIX)) return null;
+    let raw; try { raw = this._unb64(payload.slice(DMKEY_PREFIX.length)); } catch { return null; }
+    if (raw.length !== 1 + this.X_PUB_LEN + this.ML_PUB_LEN || raw[0] !== this.VER) return null;
+    return { xPublic: raw.slice(1, 1 + this.X_PUB_LEN), mlPublic: raw.slice(1 + this.X_PUB_LEN) };
+  },
+
+  _kdf(ssEC, ssPQ, ephPub, recipXPub, kemCt) {
+    const C = this._c();
+    const salt = C.sha256(this._cat(ephPub, recipXPub, kemCt));
+    return C.hkdf(C.sha256, this._cat(ssEC, ssPQ), salt, new TextEncoder().encode('SAYIT-DM-v1'), 32);
+  },
+
+  /* Encrypt plaintext for `recip` ({ xPublic, mlPublic }). Returns a DM1: string. */
+  encrypt(text, recip, fromAddr, toAddr) {
+    const C = this._c(); const te = new TextEncoder();
+    const ephSecret = C.randomBytes(32);
+    const ephPub = C.x25519.getPublicKey(ephSecret);
+    const ssEC = C.x25519.getSharedSecret(ephSecret, recip.xPublic);
+    const { cipherText: kemCt, sharedSecret: ssPQ } = C.ml_kem768.encapsulate(recip.mlPublic);
+    const key = this._kdf(ssEC, ssPQ, ephPub, recip.xPublic, kemCt);
+    const nonce = C.randomBytes(this.NONCE_LEN);
+    const from = (fromAddr || '').toLowerCase(), to = (toAddr || '').toLowerCase();
+    const aad = te.encode(from + '|' + to);
+    const inner = JSON.stringify({ v: this.VER, from, to, ts: Date.now(), text: String(text) });
+    const ct = C.xchacha20poly1305(key, nonce, aad).encrypt(te.encode(inner));
+    return DM_PREFIX + this._b64(this._cat(new Uint8Array([this.VER]), nonce, ephPub, kemCt, ct));
+  },
+
+  /* Decrypt a DM1: payload with `me` ({ xSecret, xPublic, mlSecret }). fromAddr
+     is the tx sender, toAddr is the recipient (you). Throws on any failure
+     (tamper, wrong key, sender/recipient binding mismatch). */
+  decrypt(payload, me, fromAddr, toAddr) {
+    const C = this._c(); const td = new TextDecoder(); const te = new TextEncoder();
+    if (typeof payload !== 'string' || !payload.startsWith(DM_PREFIX)) throw new Error('not a DM');
+    const raw = this._unb64(payload.slice(DM_PREFIX.length));
+    let o = 0;
+    if (raw[o++] !== this.VER) throw new Error('unsupported DM version');
+    const nonce  = raw.slice(o, o += this.NONCE_LEN);
+    const ephPub = raw.slice(o, o += this.X_PUB_LEN);
+    const kemCt  = raw.slice(o, o += this.KEM_CT_LEN);
+    const ct     = raw.slice(o);
+    const ssEC = C.x25519.getSharedSecret(me.xSecret, ephPub);
+    const ssPQ = C.ml_kem768.decapsulate(kemCt, me.mlSecret);
+    const key = this._kdf(ssEC, ssPQ, ephPub, me.xPublic, kemCt);
+    const from = (fromAddr || '').toLowerCase(), to = (toAddr || '').toLowerCase();
+    const aad = te.encode(from + '|' + to);
+    const pt = C.xchacha20poly1305(key, nonce, aad).decrypt(ct);
+    const inner = JSON.parse(td.decode(pt));
+    if (inner.from !== from || inner.to !== to) throw new Error('binding mismatch');
+    return { text: inner.text, ts: inner.ts };
+  },
+};
+if (typeof window !== 'undefined') window.DMCrypto = DMCrypto;

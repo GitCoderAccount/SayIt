@@ -105,7 +105,7 @@ function load() {
     fetch: () => Promise.reject(new Error('no network in tests')),
     AbortController,
     setTimeout, clearTimeout, setInterval, clearInterval,
-    console, URL, URLSearchParams, TextEncoder, TextDecoder,
+    console, URL, URLSearchParams, TextEncoder, TextDecoder, btoa, atob,
     Date, Math, JSON, Promise,
     requestAnimationFrame: fn => setTimeout(fn, 0),
     crypto: { randomUUID: () => 'test-uuid', getRandomValues: a => a },

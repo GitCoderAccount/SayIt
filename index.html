@@ -3602,6 +3602,9 @@ html.ul-links .post-mention { text-decoration:underline; }
 
 <!-- Classic scripts share the global lexical scope: core.js (constants,
      utils, SpaceRTC) and cache.js (IndexedDB Cache) load before app.js. -->
+<!-- Vendored, SRI-pinned crypto bundle for encrypted DMs (X25519 + ML-KEM-768);
+     self-contained, no eval/WASM/network. See CRYPTO_BUILD.md to reproduce. -->
+<script src="sayit-crypto.js" integrity="sha384-SO0IcIwt3f+M1WMw+PAfLT74xgyCtNGlqEE7HJYJfuq8DJFmmgEYeUEdkOXuVfmT"></script>
 <script src="core.js"></script>
 <script src="cache.js"></script>
 <script src="app.js"></script>
