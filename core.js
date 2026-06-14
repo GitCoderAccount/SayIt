@@ -68,6 +68,106 @@ const CHANNELS_KEY    = 'sayitChannelsScan';
 const SPACE_ENDS_KEY  = 'sayitSpaceEnds';   /* JSON { "<spaceTxHash>": "<senderAddr>" } — persisted SPACE_END markers (capped ~200) */
 const ACTIVE_SPACE_KEY = 'sayitActiveSpace'; /* JSON {txHash,roomId,title,startsMs,channel,ts} — host's own live Space, for the rejoin banner */
 
+/* ── Multichain registry ──────────────────────────────────────────────────
+   SayIt's protocol is chain-agnostic: a post is just a transaction whose
+   `input` carries a UTF-8 payload, so the SAME protocol works on any EVM
+   chain (and the user's address is identical across them — one identity
+   everywhere). This registry is the single source of truth for every
+   supported chain: its explorer API (reads), RPC + native currency (wallet
+   add/switch), display badge, and whether it's cheap enough to host the
+   social/engagement layer.
+
+   PulseChain (369) is CANONICAL: enabled, the default chain, and the default
+   social chain. Other chains are defined but `enabled:false` until the
+   multichain feature ships — Settings (or flipping `enabled`) turns them on.
+   Reads aggregate across enabled chains; a write happens on its post's chain.
+
+   `explorer.type` selects the read adapter (see explorerTxlistUrl):
+     - 'blockscout'   legacy etherscan-compatible txlist; no chainid/apikey
+     - 'etherscan-v2' unified api.etherscan.io/v2 — adds &chainid=N&apikey=KEY
+   One Etherscan v2 key covers ETH/Base/BSC/etc; PulseChain needs no key.
+
+   `social:true` marks a chain cheap enough to carry ported engagement
+   (likes/follows/reposts) for users who don't want to spend on an expensive
+   chain — the user picks WHICH social chain in Settings (default 369). */
+const CHAINS = {
+  369: {
+    id: 369, hex: '0x171', name: 'PulseChain', short: 'PLS', badge: 'PLS',
+    color: '#7c4dff',
+    nativeCurrency: { name: 'Pulse', symbol: 'PLS', decimals: 18 },
+    explorer: { type: 'blockscout', api: 'https://api.scan.pulsechain.com/api', web: 'https://scan.pulsechain.com' },
+    rpcUrls: ['https://rpc.pulsechain.com'],
+    canonical: true, social: true, enabled: true,
+  },
+  1: {
+    id: 1, hex: '0x1', name: 'Ethereum', short: 'ETH', badge: 'ETH',
+    color: '#627eea',
+    nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+    explorer: { type: 'etherscan-v2', api: 'https://api.etherscan.io/v2/api', web: 'https://etherscan.io' },
+    rpcUrls: ['https://eth.llamarpc.com'],
+    /* L1 gas is too high for cheap engagement — port likes/follows off it to
+       the user's chosen social chain (see engagement routing). */
+    social: false, enabled: false,
+  },
+  8453: {
+    id: 8453, hex: '0x2105', name: 'Base', short: 'BASE', badge: 'BASE',
+    color: '#0052ff',
+    nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+    explorer: { type: 'etherscan-v2', api: 'https://api.etherscan.io/v2/api', web: 'https://basescan.org' },
+    rpcUrls: ['https://mainnet.base.org'],
+    social: true, enabled: false, /* cheap L2 — a good social/engagement chain */
+  },
+  56: {
+    id: 56, hex: '0x38', name: 'BNB Smart Chain', short: 'BSC', badge: 'BSC',
+    color: '#f0b90b',
+    nativeCurrency: { name: 'BNB', symbol: 'BNB', decimals: 18 },
+    explorer: { type: 'etherscan-v2', api: 'https://api.etherscan.io/v2/api', web: 'https://bscscan.com' },
+    rpcUrls: ['https://bsc-dataseed.binance.org'],
+    social: true, enabled: false,
+  },
+};
+/* The default + canonical social chain. Everything that doesn't yet specify a
+   chain (existing single-chain call sites) resolves here, so the registry is a
+   no-op until multichain reads/writes are wired on. */
+const CANONICAL_CHAIN_ID = PULSE_CHAIN_ID;
+
+/* chainCfg(id): registry entry for a chainId (number or numeric string), or
+   undefined if the chain is unknown (e.g. a post fetched from a chain we don't
+   list). Callers must tolerate undefined and fall back to display defaults. */
+function chainCfg(id) { return CHAINS[Number(id)]; }
+
+/* chainList({ enabledOnly, socialOnly }): registry entries as an array. */
+function chainList(opts = {}) {
+  let arr = Object.values(CHAINS);
+  if (opts.enabledOnly) arr = arr.filter(c => c.enabled);
+  if (opts.socialOnly)  arr = arr.filter(c => c.social);
+  return arr;
+}
+
+/* Safe display lookups — never throw on an unknown chain. */
+function chainName(id)  { return chainCfg(id)?.name  || `Chain ${Number(id)}`; }
+function chainBadge(id) { return chainCfg(id)?.badge || `#${Number(id)}`; }
+function chainColor(id) { return chainCfg(id)?.color || '#71767b'; }
+
+/* explorerTxlistUrl(cfg, address, page, opts): build the account-txlist URL for
+   one chain, applying its explorer adapter. Blockscout (PulseScan) and the
+   Etherscan-v2 unified API share the `module=account&action=txlist` shape; v2
+   only prepends &chainid=N and appends &apikey=KEY. Keeping the query identical
+   for Blockscout means this is byte-for-byte the legacy PulseChain request.
+   opts: { offset=50, sort='desc', apiBase (override cfg.explorer.api with a
+   user-configured endpoint), apiKey }. */
+function explorerTxlistUrl(cfg, address, page, opts = {}) {
+  const base   = opts.apiBase || cfg.explorer.api;
+  const offset = opts.offset != null ? opts.offset : 50;
+  const sort   = opts.sort || 'desc';
+  let qs = `?module=account&action=txlist&address=${address}&offset=${offset}&page=${page}&sort=${sort}`;
+  if (cfg.explorer.type === 'etherscan-v2') {
+    qs = `?chainid=${cfg.id}&` + qs.slice(1);
+    if (opts.apiKey) qs += `&apikey=${encodeURIComponent(opts.apiKey)}`;
+  }
+  return base + qs;
+}
+
 /* Accent-color presets (Settings → Display). Each maps to the four CSS
    custom properties that drive the accent — primary, lighter primary, the
    translucent "dim" fill, the faint hover tint — plus the neon glow shadow.
