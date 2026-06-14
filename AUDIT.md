@@ -73,3 +73,30 @@ Effort: S/M/L. Status: `[ ]` todo · `[x]` done · `[~]` partial · `[-]` skippe
 
 ---
 _Security note (revised 2026-06-09): the dedicated security pass found no exploitable XSS from **user-authored on-chain data** — escaping via `safe`/`safeUrl`/`cssUrlValue` is applied at the sinks that matter, and the SW cache key is sanitized. A second pass identified and closed a trust-boundary gap: explorer-API-supplied fields (`hash`/`from`/`to`) reached inline-handler JS-string contexts unvalidated, so a malicious or compromised explorer endpoint (user-configurable in Settings) could have achieved XSS in a wallet-connected origin. All explorer responses are now shape-validated at ingestion, an interim CSP blocks external-script loading/eval/plugins/arbitrary iframes, and protocol parsing is covered by unit tests (`.ci/test/`) including JS-string-breakout shapes._
+
+---
+
+## 2026-06-14 — Post encrypted-DMs / Chat-refactor audit
+
+After shipping encrypted DMs (hybrid X25519 + ML-KEM-768), the Channels→Chat
+refactor, and the profile-popup work. Codebase is healthy (0 TODO/FIXME, 0
+eslint-disable, 28 unit + 16 regression tests green). Forward-looking items:
+
+### P0 — Security (DMs now exist)
+- [ ] **Independent cryptography review** of `DMCrypto` (dual-wrap envelope, KDF, key derivation) + the vendored bundle. Primitives are audited `@noble`; the *construction* is a custom integration and should get a human cryptographer's eyes before DMs go beyond "experimental." *(external)*
+- [x] **Crypto under CI** — added `.ci/test/dm-crypto.test.js` (loads the vendored bundle + core.js in node): keygen determinism, dual-wrap round-trip, tamper/spoof/wrong-key rejection. *(done)*
+- [ ] **Tighten CSP `connect-src`** (currently `*`). Hard because the explorer endpoint + Space relay are user-configurable; needs a design (allowlist + a validated slot for custom endpoints). *(needs decision)*
+
+### P1 — Maintainability & coverage
+- [ ] **Split `app.js` (~15k lines / ~293 methods)** into feature modules sharing the global scope like core/cache + update the extractor. Large, high-value, merge-risky. *(needs decision / scheduling)*
+- [~] **Grow unit coverage** on the DM scan/group + follow-count logic (crypto now covered; DM-scan still headless-only — needs apiFetch mocking).
+
+### P2 — Performance
+- [~] **Chat pane** — now appends incrementally + infinite-scrolls (no 30 cap), but the DOM still grows unbounded on very active channels; reuse the feed virtualizer if it gets heavy.
+- [x] **Cache follow counts** — popup counts persist to localStorage (12h TTL, capped) so repeat hovers/sessions skip the scan. *(done)*
+
+### P3 — Product / polish
+- [ ] **DM key backup & rotation** — losing the wallet loses DM history; offer an encrypted keypair export + rotation. *(feature)*
+- [ ] **Group DMs** — multi-recipient envelope (the dual-wrap points the way). *(feature)*
+- [ ] **Build "Not Grok"** — placeholder page shipped; real AI feature later. *(feature)*
+- [x] **X-embed facade in chats** — chat pane now auto-loads embeds on scroll (matches the profile), subject to embed-privacy settings. *(done)*
