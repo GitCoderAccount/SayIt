@@ -1194,13 +1194,15 @@ const DMCrypto = {
      body is sealed with a random key K, and K is wrapped twice — once to the
      recipient via the hybrid PQ KEM, once symmetrically to the sender. me = the
      sender's keys ({ xSecret, … }); recip = { xPublic, mlPublic }. → DM1: string. */
-  encrypt(text, recip, me, fromAddr, toAddr) {
+  encrypt(text, recip, me, fromAddr, toAddr, extra) {
     const C = this._c(); const te = new TextEncoder();
     const K = C.randomBytes(32);
     const from = (fromAddr || '').toLowerCase(), to = (toAddr || '').toLowerCase();
     const aad = te.encode(from + '|' + to);
     const nonceBody = C.randomBytes(this.NONCE_LEN);
-    const inner = JSON.stringify({ v: 2, from, to, ts: Date.now(), text: String(text) });
+    /* `extra` carries optional group metadata ({ gid, members }) so a group
+       message — sent as one tx per member — can be grouped client-side. */
+    const inner = JSON.stringify({ v: 2, from, to, ts: Date.now(), text: String(text), ...(extra || {}) });
     const bodyCt = C.xchacha20poly1305(K, nonceBody, aad).encrypt(te.encode(inner));
     /* Recipient wrap (hybrid PQ). */
     const ephSecret = C.randomBytes(32);
@@ -1250,7 +1252,7 @@ const DMCrypto = {
     const pt = C.xchacha20poly1305(K, nonceBody, aad).decrypt(bodyCt);
     const inner = JSON.parse(td.decode(pt));
     if (inner.from !== from || inner.to !== to) throw new Error('binding mismatch');
-    return { text: inner.text, ts: inner.ts };
+    return { text: inner.text, ts: inner.ts, gid: inner.gid, members: inner.members };
   },
 
   /* Legacy v1 (recipient-only sealed box) — kept so already-received messages

@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260614-202';
+const SW_CACHE_VER = '20260614-203';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -9433,6 +9433,39 @@ class SayIt {
     return await this.publish(payload, null, toAddr);
   }
 
+  /* Stable group id for a member SET — every member derives the same id, so
+     their clients group the conversation together. */
+  _dmGroupId(members) {
+    const sorted = [...new Set((members || []).map(m => (m || '').toLowerCase()).filter(Boolean))].sort();
+    const bytes = window.SAYIT_CRYPTO.sha256(new TextEncoder().encode('SAYIT-DM-group\n' + sorted.join(',')));
+    return [...bytes.slice(0, 8)].map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  /* Send a group message: one encrypted tx per other member (each readable by
+     that member + you), all tagged with the shared group id + member list.
+     Returns { gid, sent, failed }. Note: M members ⇒ M wallet confirmations. */
+  async sendGroupDm(allMembers, text) {
+    if (!text || !text.trim()) throw new Error('Message cannot be empty');
+    const keys = await this._ensureDmKeys();
+    const me = (this.state.signerAddr || '').toLowerCase();
+    const members = [...new Set((allMembers || []).map(m => (m || '').toLowerCase()).filter(Boolean))];
+    if (!members.includes(me)) members.push(me);
+    const recipients = members.filter(m => m !== me);
+    if (!recipients.length) throw new Error('Add at least one other member');
+    const gid = this._dmGroupId(members);
+    const extra = { gid, members };
+    let lastHash = null, sent = 0; const failed = [];
+    for (const m of recipients) {
+      const recip = await this._getDmKeyFor(m);
+      if (!recip) { failed.push(m); continue; }
+      const payload = DMCrypto.encrypt(text.trim(), recip, keys, me, m, extra);
+      const h = await this.publish(payload, null, m);
+      if (h) { lastHash = h; sent++; }
+    }
+    if (!sent) throw new Error('None of the members have enabled encrypted DMs');
+    return { gid, hash: lastHash, sent, failed };
+  }
+
   /* Scan the user's txs (BOTH directions) for encrypted DMs, decrypt the ones
      we can (received via the recipient wrap, sent via the self wrap), and group
      by counterparty. Returns [{ addr, messages:[{from,to,text,ts,txHash}], last }]
@@ -9441,7 +9474,7 @@ class SayIt {
     const me = (this.state.signerAddr || '').toLowerCase();
     if (!me) return [];
     const keys = await this._ensureDmKeys();
-    const byPeer = new Map();
+    const byKey = new Map();
     const seen = new Set();
     const pages = Math.min(this._getMaxScanPages(), 10);
     for (let page = 1; page <= pages; page++) {
@@ -9457,17 +9490,28 @@ class SayIt {
         if (h && seen.has(h)) continue; if (h) seen.add(h);
         let msg;
         try { msg = DMCrypto.decrypt(text, keys, from, to); } catch { continue; } /* not for us / tampered */
-        const peer = from === me ? to : from;             /* group by the OTHER party */
         const ts = tx.timeStamp ? Number(tx.timeStamp) * 1000 : (msg.ts || Date.now());
-        if (!byPeer.has(peer)) byPeer.set(peer, []);
-        byPeer.get(peer).push({ from, to, text: msg.text, ts, txHash: h });
+        /* Group messages (msg.gid) collapse across their per-member txs into one
+           conversation; 1:1 messages group by the other party. */
+        const key = msg.gid ? 'g:' + msg.gid : (from === me ? to : from);
+        if (!byKey.has(key)) byKey.set(key, { msgs: [], members: msg.members || null });
+        const conv = byKey.get(key);
+        if (msg.members && !conv.members) conv.members = msg.members;
+        conv.msgs.push({ from, to, text: msg.text, ts, txHash: h });
       }
       if (raw.length < 50) break;
     }
-    return [...byPeer.entries()]
-      .map(([addr, messages]) => {
+    return [...byKey.entries()]
+      .map(([key, c]) => {
+        /* Dedup group messages by tx hash (the same logical message arrives once
+           per member; on your own account you only see your copies, but guard
+           anyway). */
+        const seenMsg = new Set();
+        const messages = c.msgs.filter(m => { if (m.txHash && seenMsg.has(m.txHash)) return false; if (m.txHash) seenMsg.add(m.txHash); return true; });
         messages.sort((a, b) => a.ts - b.ts);
-        return { addr, messages, last: messages[messages.length - 1]?.ts || 0 };
+        const isGroup = key.startsWith('g:');
+        return { id: key, addr: isGroup ? null : key, isGroup, members: c.members,
+          messages, last: messages[messages.length - 1]?.ts || 0 };
       })
       .sort((a, b) => b.last - a.last);
   }
@@ -9540,23 +9584,36 @@ class SayIt {
     const banner = mine ? '' : `<div class="dm-onboard" style="border-bottom:1px solid var(--border)">
       <p>Publish your key so others can message you.</p>
       <button class="go-btn" id="dm-enable-btn">Enable encrypted DMs</button></div>`;
-    const newBtn = `<button class="settings-btn" id="dm-new-btn" style="margin:10px 12px">✎ New message</button>`;
+    const newBtn = `<div style="display:flex;gap:8px;margin:10px 12px">
+      <button class="settings-btn" id="dm-new-btn" style="flex:1">✎ New message</button>
+      <button class="settings-btn" id="dm-new-group-btn" style="flex:1">👥 New group</button></div>`;
+    const meLc = (this.state.signerAddr || '').toLowerCase();
     const rows = convos.map(c => {
-      const prof = this.state.profCache[c.addr];
-      const name = prof?.username ? utils.safe(prof.username) : this.trunc(c.addr);
-      const pic = utils.safe(utils.safeUrl(prof?.picUrl) || 'image1.jpeg');
       const last = c.messages[c.messages.length - 1];
-      const preview = utils.safe((last?.text || '').slice(0, 60));
       const time = last ? `<span class="ch-hist-time">${utils.safe(this.relTime(new Date(last.ts).toISOString()))}</span>` : '';
-      this.fetchOtherProfile(c.addr);
-      return `<div class="ch-history-item" role="button" tabindex="0" data-dm-open="${utils.safe(c.addr)}">
+      let name, pic, openId, prevName = '';
+      if (c.isGroup) {
+        openId = c.id; pic = 'image1.jpeg';
+        const others = (c.members || []).filter(m => m !== meLc);
+        others.forEach(a => this.fetchOtherProfile(a));
+        const names = others.map(a => this.state.profCache[a]?.username || this.trunc(a));
+        name = '👥 ' + utils.safe(names.slice(0, 3).join(', ') + (names.length > 3 ? ` +${names.length - 3}` : ''));
+        if (last) prevName = utils.safe((this.state.profCache[last.from]?.username || this.trunc(last.from)) + ': ');
+      } else {
+        openId = c.addr; const prof = this.state.profCache[c.addr];
+        name = prof?.username ? utils.safe(prof.username) : this.trunc(c.addr);
+        pic = utils.safe(utils.safeUrl(prof?.picUrl) || 'image1.jpeg');
+        this.fetchOtherProfile(c.addr);
+      }
+      const preview = utils.safe((last?.text || '').slice(0, 56));
+      return `<div class="ch-history-item" role="button" tabindex="0" data-dm-open="${utils.safe(openId)}">
         <img src="${pic}" class="ch-hist-avatar" alt="" data-fallback-src="image1.jpeg">
         <div class="ch-hist-body">
           <div class="ch-hist-top"><span class="ch-hist-name">${name}</span>${time}</div>
-          <div class="ch-hist-preview">${preview || 'Encrypted message'}</div>
+          <div class="ch-hist-preview">${prevName}${preview || 'Encrypted message'}</div>
         </div>
       </div>`;
-    }).join('') || `<div class="ch-pane-empty" style="padding:24px"><p>No conversations yet. Start one with “New message”.</p></div>`;
+    }).join('') || `<div class="ch-pane-empty" style="padding:24px"><p>No conversations yet. Start one with “New message” or “New group”.</p></div>`;
     list.innerHTML = note + banner + newBtn + rows;
     const en = this.g('dm-enable-btn');
     if (en) en.onclick = async () => {
@@ -9566,10 +9623,21 @@ class SayIt {
     };
     const nb = this.g('dm-new-btn');
     if (nb) nb.onclick = () => this._dmNewMessage();
+    const ngb = this.g('dm-new-group-btn');
+    if (ngb) ngb.onclick = () => this._dmNewGroup();
     list.querySelectorAll('[data-dm-open]').forEach(el => {
       el.onclick = () => this._openDmThread(el.dataset.dmOpen);
     });
     if (autoOpenPeer) this._openDmThread(autoOpenPeer);
+  }
+
+  /* "New group" → multi-select the same Following/Followers picker, then start a
+     group conversation with the chosen members. */
+  _dmNewGroup() {
+    this._dmRecipTab = this._dmRecipTab || 'following';
+    this._dmGroupPick = new Set();
+    this.g('ch-layout')?.classList.add('pane-open');
+    this._renderDmRecipientPicker(true);
   }
 
   /* "New message" → a recipient picker in the pane: pick someone you follow or
@@ -9580,19 +9648,26 @@ class SayIt {
     this._renderDmRecipientPicker();
   }
 
-  _renderDmRecipientPicker() {
+  _renderDmRecipientPicker(groupMode) {
     const host = this.g('ch-pane-content');
     if (!host) return;
+    if (groupMode !== undefined) this._dmPickGroup = !!groupMode;
+    const gm = this._dmPickGroup;
     const tab = this._dmRecipTab || 'following';
+    const startBar = gm ? `<div class="dm-pick-manual" style="border-bottom:none">
+        <span id="dm-group-count" style="flex:1;align-self:center;color:var(--muted);font-size:13px">${this._dmGroupPick.size} selected</span>
+        <button class="go-btn" id="dm-group-start" ${this._dmGroupPick.size < 2 ? 'disabled' : ''}>Start group</button>
+      </div>` : '';
     host.innerHTML = `
       <div class="ch-pane-header">
-        <div class="ch-pane-id"><div class="ch-pane-name">New message</div>
-          <div class="ch-pane-addr">Pick someone you follow or a follower — or paste an address</div></div>
+        <div class="ch-pane-id"><div class="ch-pane-name">${gm ? 'New group' : 'New message'}</div>
+          <div class="ch-pane-addr">${gm ? 'Select 2+ members, then Start group' : 'Pick someone you follow or a follower — or paste an address'}</div></div>
       </div>
       <div class="dm-pick-manual">
         <input id="dm-pick-addr" placeholder="0x… wallet address" autocomplete="off" spellcheck="false">
-        <button class="go-btn" id="dm-pick-go">Go</button>
+        <button class="go-btn" id="dm-pick-go">${gm ? 'Add' : 'Go'}</button>
       </div>
+      ${startBar}
       <div class="chat-toggle" role="tablist">
         <button class="chat-toggle-btn${tab === 'following' ? ' active' : ''}" data-recip-tab="following" role="tab">Following</button>
         <button class="chat-toggle-btn${tab === 'followers' ? ' active' : ''}" data-recip-tab="followers" role="tab">Followers</button>
@@ -9603,13 +9678,22 @@ class SayIt {
     const submit = () => {
       const a = (inp.value || '').trim().toLowerCase();
       if (!/^0x[0-9a-f]{40}$/.test(a)) { utils.toast('Enter a valid 0x address'); return; }
-      this._openDmThread(a);
+      if (gm) { this._dmGroupPick.add(a); inp.value = ''; this._renderDmRecipientPicker(); }
+      else this._openDmThread(a);
     };
     if (go) go.onclick = submit;
     if (inp) inp.onkeydown = e => { if (e.key === 'Enter') submit(); };
     host.querySelectorAll('[data-recip-tab]').forEach(btn => {
       btn.onclick = () => { this._dmRecipTab = btn.dataset.recipTab; this._renderDmRecipientPicker(); };
     });
+    const start = this.g('dm-group-start');
+    if (start) start.onclick = () => {
+      const me = (this.state.signerAddr || '').toLowerCase();
+      const members = [...new Set([...this._dmGroupPick, me])];
+      const gid = this._dmGroupId(members);
+      this._dmPendingGroup = { id: 'g:' + gid, members };
+      this._openDmThread('g:' + gid);
+    };
     const search = this.g('dm-pick-search');
     if (search) search.oninput = () => this._fillDmPickList(search.value.trim());
     this._fillDmPickList('');
@@ -9641,32 +9725,58 @@ class SayIt {
         const name = prof?.username ? utils.safe(prof.username) : this.trunc(a);
         const pic = utils.safe(utils.safeUrl(prof?.picUrl) || 'image1.jpeg');
         this.fetchOtherProfile(a);
-        return `<div class="ch-history-item" role="button" tabindex="0" data-dm-pick="${utils.safe(a)}">
+        const checked = this._dmPickGroup && this._dmGroupPick.has(a);
+        const check = this._dmPickGroup ? `<span class="dm-pick-check${checked ? ' on' : ''}">${checked ? '✓' : ''}</span>` : '';
+        return `<div class="ch-history-item${checked ? ' active' : ''}" role="button" tabindex="0" data-dm-pick="${utils.safe(a)}">
           <img src="${pic}" class="ch-hist-avatar" alt="" data-fallback-src="image1.jpeg">
           <div class="ch-hist-body"><div class="ch-hist-top"><span class="ch-hist-name">${name}</span></div>
-          <div class="ch-hist-preview">${utils.safe(this.trunc(a))}</div></div>
+          <div class="ch-hist-preview">${utils.safe(this.trunc(a))}</div></div>${check}
         </div>`;
       }).join('') || `<div class="ch-pane-empty" style="padding:24px"><p>${tab === 'following' ? 'Not following anyone yet.' : 'No followers found yet.'}</p></div>`;
     listEl.innerHTML = rows;
     listEl.querySelectorAll('[data-dm-pick]').forEach(el => {
-      el.onclick = () => this._openDmThread(el.dataset.dmPick);
+      el.onclick = () => {
+        const a = el.dataset.dmPick;
+        if (this._dmPickGroup) {            /* toggle selection, keep the picker open */
+          if (this._dmGroupPick.has(a)) this._dmGroupPick.delete(a); else this._dmGroupPick.add(a);
+          this._renderDmRecipientPicker();
+        } else this._openDmThread(a);
+      };
     });
   }
 
-  /* Render one conversation (decrypted bubbles + composer) into the right pane. */
-  _openDmThread(addr) {
-    addr = (addr || '').toLowerCase();
-    if (!/^0x[0-9a-f]{40}$/.test(addr)) return;
-    this._dmPeer = addr;
+  /* Render one conversation (1:1 or group) into the right pane. `id` is a peer
+     address for 1:1 or "g:<gid>" for a group. */
+  _openDmThread(id) {
+    id = (id || '').toLowerCase();
+    const isGroup = id.startsWith('g:');
+    if (!isGroup && !/^0x[0-9a-f]{40}$/.test(id)) return;
+    this._dmPeer = id;
     this.g('ch-layout')?.classList.add('pane-open');
     const host = this.g('ch-pane-content');
     if (!host) return;
-    const prof = this.state.profCache[addr];
-    const name = prof?.username ? utils.safe(prof.username) : this.trunc(addr);
-    const convo = (this._dmConvos || []).find(c => c.addr === addr);
-    const me = this.state.signerAddr;
-    /* Dedup by tx hash so a message never renders twice (e.g. optimistic +
-       scanned, or an explorer returning the tx on overlapping pages). */
+    const me = (this.state.signerAddr || '').toLowerCase();
+    const convo = (this._dmConvos || []).find(c => c.id === id || (!isGroup && c.addr === id));
+    let members = convo?.members;
+    if (isGroup && !members && this._dmPendingGroup && this._dmPendingGroup.id === id) members = this._dmPendingGroup.members;
+
+    let name, pic, subtitle;
+    if (isGroup) {
+      const others = (members || []).filter(m => m !== me);
+      others.forEach(a => this.fetchOtherProfile(a));
+      const names = others.map(a => this.state.profCache[a]?.username || this.trunc(a));
+      name = '👥 ' + utils.safe(names.join(', ') || 'Group');
+      pic = 'image1.jpeg';
+      subtitle = `${others.length + 1} members · 🔒 encrypted`;
+    } else {
+      const prof = this.state.profCache[id];
+      name = prof?.username ? utils.safe(prof.username) : this.trunc(id);
+      pic = utils.safe(utils.safeUrl(prof?.picUrl) || 'image1.jpeg');
+      subtitle = `${utils.safe(this.trunc(id))} · 🔒 encrypted`;
+      if (prof === undefined) this.fetchOtherProfile(id);
+    }
+
+    /* Dedup by tx hash so a message never renders twice. */
     const _seen = new Set();
     const msgs = (convo?.messages || []).filter(m => {
       const k = m.txHash || `${m.from}|${m.ts}|${m.text}`;
@@ -9674,18 +9784,20 @@ class SayIt {
     });
     const bubbles = msgs.map(m => {
       const mine = m.from === me;
-      return `<div class="dm-bubble ${mine ? 'mine' : 'theirs'}">${utils.safe(m.text).replace(/\n/g, '<br>')}
+      const sender = (isGroup && !mine)
+        ? `<div class="dm-bubble-sender">${utils.safe(this.state.profCache[m.from]?.username || this.trunc(m.from))}</div>` : '';
+      return `<div class="dm-bubble ${mine ? 'mine' : 'theirs'}">${sender}${utils.safe(m.text).replace(/\n/g, '<br>')}
         <div class="dm-bubble-time">${utils.safe(this.relTime(new Date(m.ts).toISOString()))}</div></div>`;
     }).join('') || `<div class="ch-pane-empty" style="padding:24px"><p>No messages yet — say hi. Messages are end-to-end encrypted.</p></div>`;
     host.innerHTML = `
       <div class="ch-pane-header">
-        <img src="${utils.safe(utils.safeUrl(prof?.picUrl) || 'image1.jpeg')}" class="ch-pane-avatar" alt="" data-fallback-src="image1.jpeg">
+        <img src="${pic}" class="ch-pane-avatar" alt="" data-fallback-src="image1.jpeg">
         <div class="ch-pane-id"><div class="ch-pane-name">${name}</div>
-          <div class="ch-pane-addr">${utils.safe(this.trunc(addr))} · 🔒 encrypted</div></div>
+          <div class="ch-pane-addr">${subtitle}</div></div>
       </div>
       <div class="dm-thread" id="dm-thread">${bubbles}</div>
       <div class="ch-pane-compose">
-        <textarea id="dm-compose" rows="2" placeholder="Encrypted message…"></textarea>
+        <textarea id="dm-compose" rows="2" placeholder="${isGroup ? 'Encrypted group message…' : 'Encrypted message…'}"></textarea>
         <div class="ch-pane-compose-actions">
           <button class="go-btn" id="dm-send" disabled>Send</button>
         </div>
@@ -9693,27 +9805,34 @@ class SayIt {
     const ta = this.g('dm-compose'), send = this.g('dm-send');
     if (ta && send) {
       ta.oninput = () => { send.disabled = !ta.value.trim(); };
-      send.onclick = () => this._sendDmFromPane(addr);
+      send.onclick = () => this._sendDmFromPane(id);
     }
     const th = this.g('dm-thread'); if (th) th.scrollTop = th.scrollHeight;
-    if (prof === undefined) this.fetchOtherProfile(addr);
   }
 
-  async _sendDmFromPane(addr) {
+  async _sendDmFromPane(id) {
     const ta = this.g('dm-compose'); const text = ta?.value.trim();
     if (!text) return;
     const send = this.g('dm-send'); if (send) send.disabled = true;
+    const isGroup = id.startsWith('g:');
+    const me = this.state.signerAddr;
+    let members = null;
+    if (isGroup) {
+      const c = (this._dmConvos || []).find(x => x.id === id);
+      members = c?.members || (this._dmPendingGroup && this._dmPendingGroup.id === id ? this._dmPendingGroup.members : null);
+      if (!members) { utils.toast('Group members unknown'); if (send) send.disabled = false; return; }
+    }
     let hash;
-    try { hash = await this.sendDm(addr, text); }
+    try { hash = isGroup ? (await this.sendGroupDm(members, text)).hash : await this.sendDm(id, text); }
     catch (e) { utils.toast(e.message || 'Send failed'); if (send) send.disabled = false; return; }
     if (!hash) { if (send) send.disabled = false; return; }
     if (ta) ta.value = '';
     /* Optimistically append + record so re-opening shows it without a rescan. */
-    const msg = { from: this.state.signerAddr, to: addr, text, ts: Date.now(), txHash: hash };
-    let convo = (this._dmConvos = this._dmConvos || []).find(c => c.addr === addr);
-    if (!convo) { convo = { addr, messages: [], last: 0 }; this._dmConvos.unshift(convo); }
+    const msg = { from: me, to: isGroup ? null : id, text, ts: Date.now(), txHash: hash };
+    let convo = (this._dmConvos = this._dmConvos || []).find(c => c.id === id);
+    if (!convo) { convo = { id, addr: isGroup ? null : id, isGroup, members: members || null, messages: [], last: 0 }; this._dmConvos.unshift(convo); }
     if (!convo.messages.some(m => m.txHash === hash)) { convo.messages.push(msg); convo.last = msg.ts; }
-    if (this._dmPeer === addr) {
+    if (this._dmPeer === id) {
       const th = this.g('dm-thread');
       if (th) {
         const empty = th.querySelector('.ch-pane-empty'); if (empty) th.innerHTML = '';
