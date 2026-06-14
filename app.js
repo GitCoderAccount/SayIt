@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260614-192';
+const SW_CACHE_VER = '20260614-193';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -413,8 +413,6 @@ class SayIt {
     /* The mobile #mn-more button is wired via the [data-mn="more"]
        delegation handler below. */
     g('more-settings').onclick = () => { this.hideMoreMenu(); this.goSettings(); };
-    const mmBtn = g('more-messages');
-    if (mmBtn) mmBtn.onclick = () => { this.hideMoreMenu(); this.goMessages(); };
     const mlBtn = g('more-lists');
     if (mlBtn) mlBtn.onclick = () => { this.hideMoreMenu(); this.goLists(); };
     const mcBtn = g('more-communities');
@@ -2848,9 +2846,10 @@ class SayIt {
     this._loadBookmarksFromCache(bkHeader, myToken);
   }
 
-  async goChannels() {
+  async goChannels(tab = 'channels') {
+    this._chatTab = tab === 'messages' ? 'messages' : 'channels';
     this._updateTitle('Chat');
-    this._setRoute('/channels');
+    this._setRoute(this._chatTab === 'messages' ? '/messages' : '/channels');
     this.setNav('nav-channels','channels');
     /* X behavior: the Chat page collapses the left nav to its icon rail and
        drops the right column so the two-pane area fills the width (CSS keys
@@ -3676,7 +3675,8 @@ class SayIt {
     if (this.state.mode === 'channels') {
       /* Refresh just the list body so the page header stays in place; if the
          page body isn't mounted yet, do a full render with a header. */
-      if (this.g('ch-page')) { this._renderChannelPage(); this._autoSelectFirstChannel(); }
+      if (this._chatTab === 'messages') { /* on the Messages tab — leave the DM list alone */ }
+      else if (this.g('ch-page')) { this._renderChannelPage(); this._autoSelectFirstChannel(); }
       else this.renderChannelHistory(this._applyPageHeader());
     }
     utils.toast('Channel history updated ✓');
@@ -3691,22 +3691,49 @@ class SayIt {
        column is the existing channel list (#ch-page); the right column loads
        the selected channel's posts in place — no navigation away. Mirrors the
        Settings two-pane + mobile-drill pattern. */
+    const tab = this._chatTab === 'messages' ? 'messages' : 'channels';
     this.g('feed').innerHTML = headerHTML + `
       <div class="ch-layout" id="ch-layout">
-        <div class="ch-col-list"><div id="ch-page"></div></div>
+        <div class="ch-col-list">
+          <div class="chat-toggle" role="tablist">
+            <button class="chat-toggle-btn${tab === 'channels' ? ' active' : ''}" data-chat-tab="channels" role="tab">Channels</button>
+            <button class="chat-toggle-btn${tab === 'messages' ? ' active' : ''}" data-chat-tab="messages" role="tab">Messages 🔒</button>
+          </div>
+          <div id="ch-page"></div>
+        </div>
         <div class="ch-col-pane">
-          <button class="ch-pane-back" id="ch-pane-back">← Channels</button>
+          <button class="ch-pane-back" id="ch-pane-back">← ${tab === 'messages' ? 'Messages' : 'Channels'}</button>
           <div id="ch-pane-content"></div>
         </div>
       </div>`;
     const back = this.g('ch-pane-back');
     if (back) back.onclick = () => this.g('ch-layout')?.classList.remove('pane-open');
+    this.g('feed').querySelectorAll('[data-chat-tab]').forEach(btn => {
+      btn.onclick = () => this._setChatTab(btn.dataset.chatTab);
+    });
+    if (tab === 'messages') {
+      this._renderDmPanePlaceholder();
+      this._loadConversations(this._dmPeer);
+      return;
+    }
     this._renderChannelPage();
     /* Mobile starts on the list (pane hidden by CSS until a row is tapped);
        show the placeholder until something is selected. On desktop,
        _autoSelectFirstChannel opens the first real (non-special) channel. */
     if (!this._chSelected) this._renderChannelPanePlaceholder();
     this._autoSelectFirstChannel();
+  }
+
+  /* Switch the Chat page between the Channels list and encrypted Messages,
+     keeping the same "Chat" header. */
+  _setChatTab(tab) {
+    tab = tab === 'messages' ? 'messages' : 'channels';
+    if (tab === (this._chatTab || 'channels')) return;
+    this._chatTab = tab;
+    this._chSelected = null; this._dmPeer = null;
+    this._setRoute(tab === 'messages' ? '/messages' : '/channels');
+    const headerEl = this.g('feed').querySelector('.page-header');
+    this.renderChannelHistory(headerEl ? headerEl.outerHTML : this._applyPageHeader());
   }
 
   /* Desktop: open the first NON-special channel (X opens the first conversation)
@@ -9396,44 +9423,15 @@ class SayIt {
   /* ── Messages UI (encrypted DMs) — X-style two-column, reusing the Channels
      ch-layout + rail-collapse. Content is E2E encrypted; the header note makes
      the public-metadata caveat explicit. ─────────────────────────────────── */
-  async goMessages(peerAddr = null) {
-    this._updateTitle('Messages');
-    this._setRoute(peerAddr ? '/messages/' + peerAddr : '/messages');
-    this.setNav(null, null);
-    this.state.mode = 'messages';
-    this.g('compose-area').style.display   = 'none';
-    this.g('channel-banner').style.display = 'none';
-    this.g('feed-tabs').style.display      = 'none';
-    this.g('loading-more').style.display   = 'none';
-    document.body.classList.add('mode-channels'); /* rail-collapse + two-col (cleared by setNav on next nav) */
-    this._pendingPageHeader = this._makePageHeader({ title: 'Messages', noBack: true });
-    const headerHTML = this._applyPageHeader();
-    const feed = this.g('feed');
-    if (!this.signer) {
-      feed.innerHTML = headerHTML + `<div class="prof-empty"><h3>Connect your wallet</h3>
-        <p style="color:var(--muted)">Encrypted direct messages need a connected wallet to derive your keys.</p></div>`;
-      return;
-    }
-    feed.innerHTML = headerHTML + `
-      <div class="ch-layout" id="dm-layout">
-        <div class="ch-col-list">
-          <div class="dm-meta-note">🔒 End-to-end encrypted (X25519 + ML-KEM post-quantum). The message text is private; <strong>who you message and when is public on-chain.</strong></div>
-          <div id="dm-list"></div>
-        </div>
-        <div class="ch-col-pane">
-          <button class="ch-pane-back" id="dm-pane-back">← Messages</button>
-          <div id="dm-pane-content"></div>
-        </div>
-      </div>`;
-    const back = this.g('dm-pane-back');
-    if (back) back.onclick = () => this.g('dm-layout')?.classList.remove('pane-open');
+  /* Messages now live inside the Chat page under the "Messages" toggle —
+     this just opens Chat on that tab (optionally deep-linked to a peer). */
+  goMessages(peerAddr = null) {
     this._dmPeer = peerAddr ? peerAddr.toLowerCase() : null;
-    this._renderDmPanePlaceholder();
-    this._loadConversations(this._dmPeer);
+    return this.goChannels('messages');
   }
 
   _renderDmPanePlaceholder() {
-    const host = this.g('dm-pane-content');
+    const host = this.g('ch-pane-content');
     if (host) host.innerHTML = `<div class="ch-pane-empty"><h3>Select a conversation</h3>
       <p>Choose a conversation, or start a new one from the list.</p></div>`;
   }
@@ -9442,10 +9440,11 @@ class SayIt {
      If keys aren't unlocked yet, show an explicit unlock button instead of
      silently prompting a wallet signature. */
   async _loadConversations(autoOpenPeer) {
-    const list = this.g('dm-list');
+    const list = this.g('ch-page');
     if (!list) return;
+    const note = `<div class="dm-meta-note">🔒 End-to-end encrypted (X25519 + ML-KEM post-quantum). The message text is private; <strong>who you message and when is public on-chain.</strong></div>`;
     if (!this._dmKeys) {
-      list.innerHTML = `<div class="dm-onboard">
+      list.innerHTML = note + `<div class="dm-onboard">
         <h3>Encrypted messages</h3>
         <p>Sign once to unlock your inbox (this signature stays in your browser and never sends a transaction).</p>
         <button class="go-btn" id="dm-unlock-btn">Unlock messages</button></div>`;
@@ -9460,11 +9459,11 @@ class SayIt {
     list.innerHTML = `<div class="ch-pane-loading"><div class="spinner" aria-hidden="true"></div></div>`;
     let convos = [];
     try { convos = await this._scanDms(); } catch (e) { utils.toast(e.message || 'Scan failed'); }
-    if (this.state.mode !== 'messages') return;
+    if (this.state.mode !== 'channels' || this._chatTab !== 'messages') return;
     this._dmConvos = convos;
     /* Banner if the user hasn't published their key yet (others can't reach them). */
     const mine = await this._getDmKeyFor(this.state.signerAddr);
-    if (this.state.mode !== 'messages') return;
+    if (this.state.mode !== 'channels' || this._chatTab !== 'messages') return;
     const banner = mine ? '' : `<div class="dm-onboard" style="border-bottom:1px solid var(--border)">
       <p>Publish your key so others can message you.</p>
       <button class="go-btn" id="dm-enable-btn">Enable encrypted DMs</button></div>`;
@@ -9485,7 +9484,7 @@ class SayIt {
         </div>
       </div>`;
     }).join('') || `<div class="ch-pane-empty" style="padding:24px"><p>No conversations yet. Start one with “New message”.</p></div>`;
-    list.innerHTML = banner + newBtn + rows;
+    list.innerHTML = note + banner + newBtn + rows;
     const en = this.g('dm-enable-btn');
     if (en) en.onclick = async () => {
       en.disabled = true; en.textContent = 'Check your wallet…';
@@ -9512,8 +9511,8 @@ class SayIt {
     addr = (addr || '').toLowerCase();
     if (!/^0x[0-9a-f]{40}$/.test(addr)) return;
     this._dmPeer = addr;
-    this.g('dm-layout')?.classList.add('pane-open');
-    const host = this.g('dm-pane-content');
+    this.g('ch-layout')?.classList.add('pane-open');
+    const host = this.g('ch-pane-content');
     if (!host) return;
     const prof = this.state.profCache[addr];
     const name = prof?.username ? utils.safe(prof.username) : this.trunc(addr);
