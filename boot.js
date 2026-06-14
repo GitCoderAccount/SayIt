@@ -1,3 +1,33 @@
+/* Tighten connect-src before anything fetches. The static meta keeps
+   `connect-src *` (so removing it can't fall back to default-src 'self' and
+   break the app); this injected policy INTERSECTS with it, narrowing connect-src
+   to the hosts we actually use + the user's configured endpoints. That removes
+   the arbitrary-host exfiltration path (important now that encrypted-DM key
+   material lives client-side) while leaving every legit endpoint working. If a
+   browser ignores a script-inserted meta CSP, the static `*` simply remains —
+   no breakage. */
+try {
+  const _cs = [
+    "'self'",
+    'https://*.pulsechain.com',                 /* explorer API + RPC (default) */
+    'https://ipfs.io', 'https://arweave.net',   /* NFT / token metadata fetches */
+    'https://dweb.link', 'https://cloudflare-ipfs.com', 'https://nftstorage.link',
+    'wss://tracker.openwebtorrent.com',         /* Spaces WebRTC signaling */
+    'wss://tracker.webtorrent.dev',
+    'wss://tracker.btorrent.xyz',
+  ];
+  try {
+    const _s2 = JSON.parse(localStorage.getItem('sayitSettings') || '{}');
+    [_s2.apiPrimary, _s2.apiBackup, _s2.rpcUrl].forEach(u => {
+      if (typeof u === 'string' && u) { try { _cs.push(new URL(u).origin); } catch (e) {} }
+    });
+  } catch (e) { /* settings unreadable — defaults only */ }
+  const _m = document.createElement('meta');
+  _m.httpEquiv = 'Content-Security-Policy';
+  _m.content = 'connect-src ' + [...new Set(_cs)].join(' ');
+  document.head.appendChild(_m);
+} catch (e) { /* CSP injection best-effort */ }
+
 /* Apply saved appearance prefs before first paint to avoid a flash of the wrong
    colors / size / motion. Theme, forced reduce-motion, display zoom, and the
    accent color. */
