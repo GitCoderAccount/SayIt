@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260614-197';
+const SW_CACHE_VER = '20260614-198';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -2883,8 +2883,10 @@ class SayIt {
     const chHeader = this._applyPageHeader();
     this.renderChannelHistory(chHeader);
 
-    /* If nothing cached, trigger a rescan from chain */
-    if (cached.length === 0 && this.state.signerAddr) {
+    /* If nothing cached, trigger a rescan from chain — but only when actually
+       viewing the Channels tab (the Messages tab doesn't need channel history,
+       and the scan toast there was confusing). */
+    if (this._chatTab !== 'messages' && cached.length === 0 && this.state.signerAddr) {
       this.rebuildChannelHistory();
     }
   }
@@ -6407,12 +6409,12 @@ class SayIt {
 
   /* Raw follower scan → returns the resolved follower address array, or null
      if it was aborted by navigation. Shared by the cached entry point above. */
-  async _scanFollowers(addr, navToken, prog) {
+  async _scanFollowers(addr, navToken, prog, maxPages = Infinity) {
     /* Track the LATEST action per follower (txs arrive newest-first; an
        unfollow→refollow must resolve to the most recent action). */
     const lastAction = new Map(); /* from → { action, order } */
     try {
-      const flimit2 = this._getMaxScanPages();
+      const flimit2 = Math.min(this._getMaxScanPages(), maxPages);
       for (let page = 1; (flimit2 === Infinity || page <= flimit2); page++) {
         if (prog) prog.textContent = `Scanning page ${page}…`;
         if (navToken !== this._navToken) return null; /* navigated away */
@@ -9596,7 +9598,7 @@ class SayIt {
     } else {
       if (!this._dmFollowers) {
         listEl.innerHTML = `<div class="ch-pane-loading"><div class="spinner" aria-hidden="true"></div></div>`;
-        this._dmFollowers = (await this._scanFollowers(this.state.signerAddr, this._navToken, null)) || [];
+        this._dmFollowers = (await this._scanFollowers(this.state.signerAddr, this._navToken, null, 8)) || [];
         if (!this.g('dm-pick-list')) return; /* navigated/re-rendered away */
       }
       addrs = this._dmFollowers;
