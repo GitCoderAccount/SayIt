@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260614-200';
+const SW_CACHE_VER = '20260614-201';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -13678,6 +13678,18 @@ class SayIt {
     addr = (addr || '').toLowerCase();
     if (!/^0x[0-9a-f]{40}$/.test(addr)) return null;
     this._followCountCache = this._followCountCache || {};
+    /* Hydrate once from localStorage (12h TTL) so counts survive reloads and we
+       don't re-scan the chain for accounts seen recently. */
+    if (!this._fcHydrated) {
+      this._fcHydrated = true;
+      try {
+        const stored = JSON.parse(utils.safeLS.get('sayitFollowCounts', '{}')) || {};
+        const cutoff = Date.now() - 12 * 3600 * 1000;
+        for (const [a, v] of Object.entries(stored)) {
+          if (v && v.ts > cutoff) this._followCountCache[a] = { following: v.following, followers: v.followers };
+        }
+      } catch { /* ignore corrupt cache */ }
+    }
     if (this._followCountCache[addr]) return this._followCountCache[addr];
     const isOwn = addr === this.state.signerAddr;
     const followingMap = new Map(), followerMap = new Map();
@@ -13705,7 +13717,20 @@ class SayIt {
     const following = isOwn ? this.state.following.size
       : [...followingMap.values()].filter(v => v.action === 'follow').length;
     const followers = [...followerMap.values()].filter(v => v.action === 'follow').length;
-    return (this._followCountCache[addr] = { following, followers });
+    const counts = { following, followers };
+    this._followCountCache[addr] = counts;
+    /* Persist (12h TTL, capped) so a future session skips the scan. */
+    try {
+      const stored = JSON.parse(utils.safeLS.get('sayitFollowCounts', '{}')) || {};
+      stored[addr] = { following, followers, ts: Date.now() };
+      const keys = Object.keys(stored);
+      if (keys.length > 300) {
+        keys.sort((a, b) => (stored[a].ts || 0) - (stored[b].ts || 0))
+          .slice(0, keys.length - 300).forEach(k => delete stored[k]);
+      }
+      utils.safeLS.set('sayitFollowCounts', JSON.stringify(stored));
+    } catch { /* storage full/unavailable */ }
+    return counts;
   }
 
   _positionPopup(popup, anchor) {
