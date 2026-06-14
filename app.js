@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260614-189';
+const SW_CACHE_VER = '20260614-190';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -1814,6 +1814,11 @@ class SayIt {
             if (text.startsWith(PROFILE_PREFIX)) return;
             if (text.startsWith(BOOKMARK_PREFIX) || text.startsWith(UNBOOKMARK_PREFIX)) return;
             if (text.startsWith(UNLIKE_PREFIX)) return;
+            if (text.startsWith(DMKEY_PREFIX)) return; /* key publication — not a notification */
+            /* Encrypted DMs are handled by the Messages surface (and will get a
+               dedicated notification when that UI lands); never show the raw
+               ciphertext as a plaintext "message" notification. */
+            if (text.startsWith(DM_PREFIX)) return;
             const ts = tx.timeStamp ? new Date(Number(tx.timeStamp)*1000).toISOString() : new Date().toISOString();
             let type = 'message', target = null, preview = '';
             if (text.startsWith(LIKE_PREFIX)) {
@@ -7404,6 +7409,9 @@ class SayIt {
     if (!text) return null;
     /* Non-post payloads that never render as feed items. */
     if (text.startsWith(PROFILE_PREFIX)) return null;
+    /* Encrypted DMs + published DM key bundles — never render as posts; they're
+       handled by the Messages surface (DMCrypto) and the inbound DM scan. */
+    if (text.startsWith(DM_PREFIX) || text.startsWith(DMKEY_PREFIX)) return null;
     if (text.startsWith(VOTE_PREFIX)) { this._captureVote(text, tx); return null; }
     if (text.startsWith(TOKEN_PROFILE_PREFIX)) return null; /* token-profile metadata, not a feed post */
     if (text.startsWith(TIP_PREFIX)) return null; /* tips surface via notifications, never as posts */
@@ -9276,6 +9284,102 @@ class SayIt {
       console.warn('estimateGas failed — using heuristic fallback', err);
       return BigInt(21000 + Math.ceil(byteLen * 32));
     }
+  }
+
+  /* ── Encrypted DMs ──────────────────────────────────────────────────────
+     Plumbing for hybrid PQ direct messages (see DMCrypto in core.js). Keys are
+     derived from a one-off wallet signature and cached in memory for the
+     session. Content is encrypted end-to-end; on-chain metadata stays public. */
+
+  /* Derive + cache this session's DM identity keys (prompts one wallet signature
+     the first time). Throws if no wallet or the crypto lib isn't loaded. */
+  async _ensureDmKeys() {
+    if (this._dmKeys) return this._dmKeys;
+    if (!this.signer) throw new Error('Connect your wallet to use encrypted DMs');
+    if (!DMCrypto.ready()) throw new Error('Encryption library still loading — try again in a moment');
+    const sig = await this.signer.signMessage(DM_SIGN_MESSAGE);
+    this._dmKeys = DMCrypto.deriveKeys(sig);
+    return this._dmKeys;
+  }
+
+  /* Publish this user's public DM key bundle on-chain (one tx to self) so others
+     can message them — the "Enable encrypted DMs" action. */
+  async enableDms() {
+    const keys = await this._ensureDmKeys();
+    const payload = DMCrypto.packIdentityKey(keys);
+    const hash = await this.publish(payload, null, this.state.signerAddr);
+    if (hash) {
+      this._dmKeyCache = this._dmKeyCache || {};
+      this._dmKeyCache[this.state.signerAddr.toLowerCase()] = { xPublic: keys.xPublic, mlPublic: keys.mlPublic };
+    }
+    return hash;
+  }
+
+  /* Discover a recipient's published DM public-key bundle by scanning their
+     address for the most recent DMKEY1: tx. Caches results (incl. negatives). */
+  async _getDmKeyFor(addr) {
+    addr = (addr || '').toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(addr)) return null;
+    this._dmKeyCache = this._dmKeyCache || {};
+    if (addr in this._dmKeyCache) return this._dmKeyCache[addr];
+    let found = null;
+    const pages = Math.min(this._getMaxScanPages(), 10);
+    for (let page = 1; page <= pages && !found; page++) {
+      let raw;
+      try { raw = await this.apiFetch(addr, page); } catch { break; }
+      for (const tx of raw) {
+        if (tx.from?.toLowerCase() !== addr || !tx.input || tx.input === '0x') continue;
+        let text; try { text = ethers.toUtf8String(tx.input).trim(); } catch { continue; }
+        if (text.startsWith(DMKEY_PREFIX)) { const k = DMCrypto.parseIdentityKey(text); if (k) { found = k; break; } }
+      }
+      if (raw.length < 50) break;
+    }
+    this._dmKeyCache[addr] = found;
+    return found;
+  }
+
+  /* Encrypt `text` for `toAddr` and publish it as a DM1: tx. Throws with a
+     clear message if the recipient hasn't enabled DMs. */
+  async sendDm(toAddr, text) {
+    if (!text || !text.trim()) throw new Error('Message cannot be empty');
+    const keys = await this._ensureDmKeys();
+    const recip = await this._getDmKeyFor(toAddr);
+    if (!recip) throw new Error('This account hasn’t enabled encrypted DMs yet');
+    const payload = DMCrypto.encrypt(text.trim(), recip, this.state.signerAddr, toAddr);
+    return await this.publish(payload, null, toAddr);
+  }
+
+  /* Scan inbound txs for encrypted DMs, decrypt the ones we can, and group them
+     by counterparty. Returns [{ addr, messages:[{from,to,text,ts,txHash}], last }]
+     newest-first. Requires DM keys (prompts a signature on first use). */
+  async _scanDms() {
+    const me = (this.state.signerAddr || '').toLowerCase();
+    if (!me) return [];
+    const keys = await this._ensureDmKeys();
+    const byPeer = new Map();
+    const pages = Math.min(this._getMaxScanPages(), 10);
+    for (let page = 1; page <= pages; page++) {
+      let raw;
+      try { raw = await this.apiFetch(me, page); } catch { break; }
+      for (const tx of raw) {
+        const from = tx.from?.toLowerCase(), to = tx.to?.toLowerCase();
+        if (to !== me || !tx.input || tx.input === '0x') continue;
+        let text; try { text = ethers.toUtf8String(tx.input).trim(); } catch { continue; }
+        if (!text.startsWith(DM_PREFIX)) continue;
+        let msg;
+        try { msg = DMCrypto.decrypt(text, keys, from, me); } catch { continue; } /* not for us / tampered */
+        const ts = tx.timeStamp ? Number(tx.timeStamp) * 1000 : (msg.ts || Date.now());
+        if (!byPeer.has(from)) byPeer.set(from, []);
+        byPeer.get(from).push({ from, to: me, text: msg.text, ts, txHash: tx.hash?.toLowerCase() });
+      }
+      if (raw.length < 50) break;
+    }
+    return [...byPeer.entries()]
+      .map(([addr, messages]) => {
+        messages.sort((a, b) => a.ts - b.ts);
+        return { addr, messages, last: messages[messages.length - 1]?.ts || 0 };
+      })
+      .sort((a, b) => b.last - a.last);
   }
 
   async publish(content, parentTx = null, toAddress = null) {
