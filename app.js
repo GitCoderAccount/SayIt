@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260614-194';
+const SW_CACHE_VER = '20260614-195';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -9383,11 +9383,12 @@ class SayIt {
     const keys = await this._ensureDmKeys();
     const recip = await this._getDmKeyFor(toAddr);
     if (!recip) throw new Error('This account hasn’t enabled encrypted DMs yet');
-    const payload = DMCrypto.encrypt(text.trim(), recip, this.state.signerAddr, toAddr);
+    const payload = DMCrypto.encrypt(text.trim(), recip, keys, this.state.signerAddr, toAddr);
     return await this.publish(payload, null, toAddr);
   }
 
-  /* Scan inbound txs for encrypted DMs, decrypt the ones we can, and group them
+  /* Scan the user's txs (BOTH directions) for encrypted DMs, decrypt the ones
+     we can (received via the recipient wrap, sent via the self wrap), and group
      by counterparty. Returns [{ addr, messages:[{from,to,text,ts,txHash}], last }]
      newest-first. Requires DM keys (prompts a signature on first use). */
   async _scanDms() {
@@ -9395,20 +9396,25 @@ class SayIt {
     if (!me) return [];
     const keys = await this._ensureDmKeys();
     const byPeer = new Map();
+    const seen = new Set();
     const pages = Math.min(this._getMaxScanPages(), 10);
     for (let page = 1; page <= pages; page++) {
       let raw;
       try { raw = await this.apiFetch(me, page); } catch { break; }
       for (const tx of raw) {
         const from = tx.from?.toLowerCase(), to = tx.to?.toLowerCase();
-        if (to !== me || !tx.input || tx.input === '0x') continue;
+        if (!tx.input || tx.input === '0x') continue;
+        if (from !== me && to !== me) continue;            /* either side must be me */
         let text; try { text = ethers.toUtf8String(tx.input).trim(); } catch { continue; }
         if (!text.startsWith(DM_PREFIX)) continue;
+        const h = tx.hash?.toLowerCase();
+        if (h && seen.has(h)) continue; if (h) seen.add(h);
         let msg;
-        try { msg = DMCrypto.decrypt(text, keys, from, me); } catch { continue; } /* not for us / tampered */
+        try { msg = DMCrypto.decrypt(text, keys, from, to); } catch { continue; } /* not for us / tampered */
+        const peer = from === me ? to : from;             /* group by the OTHER party */
         const ts = tx.timeStamp ? Number(tx.timeStamp) * 1000 : (msg.ts || Date.now());
-        if (!byPeer.has(from)) byPeer.set(from, []);
-        byPeer.get(from).push({ from, to: me, text: msg.text, ts, txHash: tx.hash?.toLowerCase() });
+        if (!byPeer.has(peer)) byPeer.set(peer, []);
+        byPeer.get(peer).push({ from, to, text: msg.text, ts, txHash: h });
       }
       if (raw.length < 50) break;
     }
