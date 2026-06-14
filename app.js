@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260614-185';
+const SW_CACHE_VER = '20260614-186';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {

@@ -2380,8 +2380,8 @@ body.mode-explore .sb-search { display:none; }
 .explore-showall .explore-name { font-weight:600; }
 
 /* Profile media grid: video/yt cells get a play badge overlay. */
-.prof-media-cell { position:relative; display:block; }
-.prof-media-cell .prof-media-thumb { width:100%; height:100%; object-fit:cover; display:block; }
+.prof-media-cell { position:relative; display:block; aspect-ratio:1; overflow:hidden; }
+.prof-media-cell .prof-media-thumb { width:100%; height:100%; object-fit:cover; display:block; aspect-ratio:auto; }
 .prof-media-play {
   position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
   font-size:26px; color:#fff; text-shadow:0 1px 8px rgba(0,0,0,0.8);
