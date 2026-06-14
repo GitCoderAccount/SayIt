@@ -86,3 +86,23 @@ test('explorerTxlistUrl: Etherscan-v2 omits apikey when none supplied', () => {
   assert.ok(url.startsWith('https://api.etherscan.io/v2/api?chainid=8453&module=account'));
   assert.ok(!/apikey/.test(url));
 });
+
+test('txUrl: PulseChain keeps OtterScan; other chains use their explorer', () => {
+  assert.strictEqual(eval_(`txUrl(369, '0xHASH')`), 'https://otter.pulsechain.com/tx/0xHASH');
+  assert.strictEqual(eval_(`txUrl(1, '0xHASH')`), 'https://etherscan.io/tx/0xHASH');
+  assert.strictEqual(eval_(`txUrl(8453, '0xHASH')`), 'https://basescan.org/tx/0xHASH');
+  /* unknown chain falls back to canonical so a link is always produced */
+  assert.strictEqual(eval_(`txUrl(999999, '0xHASH')`), 'https://otter.pulsechain.com/tx/0xHASH');
+});
+
+test('_chainBadge: dormant for canonical-only single-chain, shown otherwise', () => {
+  const pulse = eval_('pulse');
+  /* Only PulseChain enabled → a canonical post shows no pill. */
+  assert.strictEqual(pulse._chainBadge({ chainId: 369 }), '');
+  assert.strictEqual(pulse._chainBadge({}), ''); /* missing chainId → canonical */
+  /* A non-canonical post is always badged, even with the feed still off. */
+  const eth = pulse._chainBadge({ chainId: 1 });
+  assert.match(eth, /chain-badge/);
+  assert.match(eth, />ETH</);
+  assert.match(eth, /Posted on Ethereum/);
+});

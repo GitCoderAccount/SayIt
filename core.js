@@ -95,7 +95,9 @@ const CHAINS = {
     id: 369, hex: '0x171', name: 'PulseChain', short: 'PLS', badge: 'PLS',
     color: '#7c4dff',
     nativeCurrency: { name: 'Pulse', symbol: 'PLS', decimals: 18 },
-    explorer: { type: 'blockscout', api: 'https://api.scan.pulsechain.com/api', web: 'https://scan.pulsechain.com' },
+    /* `tx` overrides the per-tx link base (default web + '/tx/'). PulseChain
+       keeps OtterScan for tx links — the long-standing choice for SayIt. */
+    explorer: { type: 'blockscout', name: 'OtterScan', api: 'https://api.scan.pulsechain.com/api', web: 'https://scan.pulsechain.com', tx: 'https://otter.pulsechain.com/tx/' },
     rpcUrls: ['https://rpc.pulsechain.com'],
     canonical: true, social: true, enabled: true,
   },
@@ -103,7 +105,7 @@ const CHAINS = {
     id: 1, hex: '0x1', name: 'Ethereum', short: 'ETH', badge: 'ETH',
     color: '#627eea',
     nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-    explorer: { type: 'etherscan-v2', api: 'https://api.etherscan.io/v2/api', web: 'https://etherscan.io' },
+    explorer: { type: 'etherscan-v2', name: 'Etherscan', api: 'https://api.etherscan.io/v2/api', web: 'https://etherscan.io' },
     rpcUrls: ['https://eth.llamarpc.com'],
     /* L1 gas is too high for cheap engagement — port likes/follows off it to
        the user's chosen social chain (see engagement routing). */
@@ -113,7 +115,7 @@ const CHAINS = {
     id: 8453, hex: '0x2105', name: 'Base', short: 'BASE', badge: 'BASE',
     color: '#0052ff',
     nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-    explorer: { type: 'etherscan-v2', api: 'https://api.etherscan.io/v2/api', web: 'https://basescan.org' },
+    explorer: { type: 'etherscan-v2', name: 'BaseScan', api: 'https://api.etherscan.io/v2/api', web: 'https://basescan.org' },
     rpcUrls: ['https://mainnet.base.org'],
     social: true, enabled: false, /* cheap L2 — a good social/engagement chain */
   },
@@ -121,7 +123,7 @@ const CHAINS = {
     id: 56, hex: '0x38', name: 'BNB Smart Chain', short: 'BSC', badge: 'BSC',
     color: '#f0b90b',
     nativeCurrency: { name: 'BNB', symbol: 'BNB', decimals: 18 },
-    explorer: { type: 'etherscan-v2', api: 'https://api.etherscan.io/v2/api', web: 'https://bscscan.com' },
+    explorer: { type: 'etherscan-v2', name: 'BscScan', api: 'https://api.etherscan.io/v2/api', web: 'https://bscscan.com' },
     rpcUrls: ['https://bsc-dataseed.binance.org'],
     social: true, enabled: false,
   },
@@ -148,6 +150,15 @@ function chainList(opts = {}) {
 function chainName(id)  { return chainCfg(id)?.name  || `Chain ${Number(id)}`; }
 function chainBadge(id) { return chainCfg(id)?.badge || `#${Number(id)}`; }
 function chainColor(id) { return chainCfg(id)?.color || '#71767b'; }
+
+/* txUrl(chainId, hash): the explorer "view transaction" link for a post's
+   chain. Uses the chain's explorer.tx base if set, else web + '/tx/'. Unknown
+   chains fall back to the canonical chain so a link is always produced. */
+function txUrl(chainId, hash) {
+  const cfg = chainCfg(chainId) || CHAINS[CANONICAL_CHAIN_ID];
+  const base = cfg.explorer.tx || (cfg.explorer.web + '/tx/');
+  return base + hash;
+}
 
 /* explorerTxlistUrl(cfg, address, page, opts): build the account-txlist URL for
    one chain, applying its explorer adapter. Blockscout (PulseScan) and the

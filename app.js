@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260614-205';
+const SW_CACHE_VER = '20260614-206';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -857,11 +857,11 @@ class SayIt {
              profile popup via their own delegate; let those through. */
           if (e.target.closest('.notif-pop')) return;
           if (arg2 === 'tx') {
-            if (isHash) window.open('https://otter.pulsechain.com/tx/' + arg.toLowerCase(), '_blank', 'noopener,noreferrer');
+            if (isHash) window.open(txUrl(CANONICAL_CHAIN_ID, arg.toLowerCase()), '_blank', 'noopener,noreferrer');
           } else if (isHash) this.openThreadByHash(arg.toLowerCase());
           break;
         case 'open-tx':
-          if (isHash) window.open('https://otter.pulsechain.com/tx/' + arg.toLowerCase(), '_blank', 'noopener,noreferrer');
+          if (isHash) window.open(txUrl(CANONICAL_CHAIN_ID, arg.toLowerCase()), '_blank', 'noopener,noreferrer');
           break;
         case 'share-profile':
           e.stopPropagation();
@@ -998,7 +998,7 @@ class SayIt {
         }
         if (e.key === 'u' || e.key === 'U') {
           e.preventDefault();
-          utils.copyToClipboard(`https://otter.pulsechain.com/tx/${post.txHash}`, 'Link copied!');
+          utils.copyToClipboard(txUrl(post.chainId, post.txHash), 'Link copied!');
           return;
         }
       }
@@ -7526,6 +7526,7 @@ class SayIt {
             : new Date().toISOString(),
           txHash: hash,
           blockNumber: tx.blockNumber ? Number(tx.blockNumber) : null,
+          chainId: Number(opts.chainId) || CANONICAL_CHAIN_ID,
           mode: opts.mode || 'main',
           ...opts.extra,
         };
@@ -7573,12 +7574,16 @@ class SayIt {
         : new Date().toISOString(),
       txHash: hash,
       blockNumber: tx.blockNumber ? Number(tx.blockNumber) : null,
+      /* Post identity is (chainId, txHash). Defaults to the canonical chain so
+         every existing single-chain call site keeps working unchanged; callers
+         scanning another chain pass opts.chainId (see parseTxs). */
+      chainId: Number(opts.chainId) || CANONICAL_CHAIN_ID,
       mode: opts.mode || 'main',
       ...opts.extra,
     };
   }
 
-  parseTxs(txs) {
+  parseTxs(txs, chainId = CANONICAL_CHAIN_ID) {
     const { mode, channel, signerAddr } = this.state;
     const lastCheck = parseInt(utils.safeLS.get(LAST_CHECK_KEY, '0'), 10);
     return txs.reduce((acc, tx) => {
@@ -7641,6 +7646,7 @@ class SayIt {
             ? new Date(Number(tx.timeStamp) * 1000).toISOString()
             : new Date().toISOString(),
           txHash: tx.hash.toLowerCase(), channel, mode,
+          chainId: Number(chainId) || CANONICAL_CHAIN_ID,
           blockNumber: tx.blockNumber ? Number(tx.blockNumber) : null,
         });
         return acc;
@@ -7650,7 +7656,7 @@ class SayIt {
          VOTE txs — all happen inside the single canonical parser.
          (This also drops non-self bookmark/profile control txs that the
          old inline logic let through as raw-text posts.) */
-      const base = this._parsePostTx(tx, { mode, _text: raw });
+      const base = this._parsePostTx(tx, { mode, _text: raw, chainId });
       if (!base) return acc;
 
       /* Engagement piggyback for replies and reposts (see note above). */
@@ -8745,6 +8751,19 @@ class SayIt {
           </div><!-- /.post-actions -->`;
   }
 
+  /* A small chain-origin pill for a post (e.g. "ETH", "BASE"). Dormant in the
+     common single-chain case: returns '' unless the post is from a non-canonical
+     chain OR more than one chain is enabled — so nothing changes visually until
+     multichain reads are turned on. The pill is color-coded per the registry and
+     links to the post's chain explorer page for its tx. */
+  _chainBadge(post) {
+    const cid = Number(post?.chainId) || CANONICAL_CHAIN_ID;
+    const multi = chainList({ enabledOnly: true }).length > 1;
+    if (!multi && cid === CANONICAL_CHAIN_ID) return '';
+    return `<span class="chain-badge" style="--chain-color:${chainColor(cid)}"
+      title="Posted on ${utils.safe(chainName(cid))}">${utils.safe(chainBadge(cid))}</span>`;
+  }
+
   postHTML(post, inModal, replyMap, likeMap, repostMap, engagerMap = null) {
     this._reviveSpace(post);
     const expanded = this.state.expanded.has(post.txHash);
@@ -8817,10 +8836,11 @@ class SayIt {
               data-addr="${utils.safe(post.reporter)}"
               title="Click to copy address">@${this.trunc(post.reporter)}</span>` : ''}
             <span class="post-time-dot">·</span>
-            <a href="https://otter.pulsechain.com/tx/${utils.safe(post.txHash)}"
+            <a href="${utils.safe(txUrl(post.chainId, post.txHash))}"
               target="_blank" rel="noopener noreferrer" class="post-time" title="${utils.safe(fullDate)}"
               data-ts="${utils.safe(post.timestamp)}"
              >${utils.safe(relT)}</a>
+            ${this._chainBadge(post)}
             ${dirBadge}
           </div>
           ${toLabel}${(showParent || suppressReplyBadge) ? '' : replyBadge}
@@ -11409,7 +11429,7 @@ class SayIt {
           aria-label="View profile" tabindex="-1"><img src="${utils.safe(picUrl)}" class="post-avatar" alt=""
           loading="lazy" data-fallback-src="image1.jpeg"></a>
         <div class="hero-id">
-          <span class="hero-name-row"><a class="post-name" href="#/profile/${utils.safe(post.reporter)}">${displayName}</a>${verifiedBadge}</span>
+          <span class="hero-name-row"><a class="post-name" href="#/profile/${utils.safe(post.reporter)}">${displayName}</a>${verifiedBadge}${this._chainBadge(post)}</span>
           <span class="hero-handle" role="button" tabindex="0" data-addr="${utils.safe(post.reporter)}"
             title="Click to copy address">@${this.trunc(post.reporter)}</span>
         </div>
@@ -11425,7 +11445,7 @@ class SayIt {
       ${embedHtml || ''}
       ${imgHtml ? `<div class="post-images">${imgHtml}</div>` : ''}
       <div class="note-slot" data-note-host="${utils.safe(post.txHash)}">${this._noteHTML(post)}</div>
-      <a class="hero-time" href="https://otter.pulsechain.com/tx/${utils.safe(post.txHash)}"
+      <a class="hero-time" href="${utils.safe(txUrl(post.chainId, post.txHash))}"
         target="_blank" rel="noopener noreferrer" title="View transaction on explorer"
        >${utils.safe(timeLine)}</a>
       ${this._postActionsHTML(post, replyMap, null, null, null)}`;
@@ -11781,7 +11801,7 @@ class SayIt {
     if (post.blockNumber) body += row('Block',     '#' + esc(String(post.blockNumber)));
     if (post.parentTx)    body += row('Reply to',  esc(this.trunc(post.parentTx)));
     if (post.repostOf)    body += row('Repost of', esc(this.trunc(post.repostOf)));
-    body += row('Transaction', `<a href="https://otter.pulsechain.com/tx/${esc(post.txHash)}" target="_blank" rel="noopener noreferrer" style="color:var(--primary-lt)">${esc(this.trunc(post.txHash))} ↗</a>`);
+    body += row('Transaction', `<a href="${esc(txUrl(post.chainId, post.txHash))}" target="_blank" rel="noopener noreferrer" style="color:var(--primary-lt)">${esc(this.trunc(post.txHash))} ↗</a>`);
     body += `</div>`;
     this._showGenericModal('About this post', body);
   }
@@ -12473,10 +12493,10 @@ class SayIt {
     const aboutItem = {
       icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M11 7h2v2h-2V7zm0 4h2v6h-2v-6zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>',
       label: 'About this post', action: () => this._showAboutPost(post), danger: false };
-    /* View on OtterScan */
+    /* View on the post chain's block explorer (OtterScan for PulseChain). */
     const otterItem = {
       icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18.36 5.64c-1.95-1.96-5.11-1.96-7.07 0L9.88 7.05 8.46 5.64l1.42-1.42c2.73-2.73 7.16-2.73 9.9 0 2.73 2.74 2.73 7.17 0 9.9l-1.42 1.42-1.41-1.42 1.41-1.41c1.96-1.96 1.96-5.12 0-7.07zm-2.12 3.53l-7.07 7.07-1.41-1.41 7.07-7.07 1.41 1.41zm-12.02.71l1.42-1.42 1.41 1.42-1.41 1.41c-1.96 1.96-1.96 5.12 0 7.07 1.95 1.96 5.11 1.96 7.07 0l1.41-1.41 1.42 1.41-1.42 1.42c-2.73 2.73-7.16 2.73-9.9 0-2.73-2.74-2.73-7.17 0-9.9z"/></svg>',
-      label: 'View on OtterScan', action: () => window.open(`https://otter.pulsechain.com/tx/${post.txHash}`, '_blank', 'noopener,noreferrer'), danger: false };
+      label: 'View on ' + (chainCfg(post.chainId)?.explorer.name || 'block explorer'), action: () => window.open(txUrl(post.chainId, post.txHash), '_blank', 'noopener,noreferrer'), danger: false };
     const permanentItem = {
       icon: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>',
       label: 'Posts are permanent on-chain', action: () => utils.toast('On-chain posts are permanent by design.'), danger: false };
@@ -13628,7 +13648,7 @@ class SayIt {
     const linkBtn = this.g('share-copy-link-btn');
     const nativeBtn = this.g('share-native-btn');
     if (!canvas || !modal) {
-      utils.copyToClipboard(`https://otter.pulsechain.com/tx/${post.txHash}`, 'Link copied!');
+      utils.copyToClipboard(txUrl(post.chainId, post.txHash), 'Link copied!');
       return;
     }
     const dpr = window.devicePixelRatio || 1;
@@ -13689,16 +13709,16 @@ class SayIt {
           const file = new File([blob], 'post.png', { type:'image/png' });
           if (navigator.canShare({ files:[file] })) {
             await navigator.share({ files:[file], title:'Post on Say It DeFi',
-              text: text.slice(0,100), url:`https://otter.pulsechain.com/tx/${post.txHash}` });
+              text: text.slice(0,100), url:txUrl(post.chainId, post.txHash) });
           } else {
             await navigator.share({ title:'Post on Say It DeFi',
-              url:`https://otter.pulsechain.com/tx/${post.txHash}` });
+              url:txUrl(post.chainId, post.txHash) });
           }
         } catch(err) { if(err.name!=='AbortError') utils.toast('Share failed: '+err.message); }
       };
     }
     linkBtn.onclick = () => utils.copyToClipboard(
-      `https://otter.pulsechain.com/tx/${post.txHash}`, 'Link copied!');
+      txUrl(post.chainId, post.txHash), 'Link copied!');
   }
 
   /* ── Mute / unmute ──────────────────────────────────────────────── */
