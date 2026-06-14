@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260614-204';
+const SW_CACHE_VER = '20260614-205';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -7199,11 +7199,20 @@ class SayIt {
     } catch (err) { status.textContent = '✗ ' + (err.message || err); }
   }
 
-  async apiFetch(address, page) {
-    const s       = this._getSettings();
-    const primary = s.apiUrl      || 'https://api.scan.pulsechain.com/api';
-    const backup  = s.backupApiUrl || '';
-    const qs = `?module=account&action=txlist&address=${address}&offset=50&page=${page}&sort=desc`;
+  async apiFetch(address, page, chainId = CANONICAL_CHAIN_ID) {
+    const s   = this._getSettings();
+    const cfg = chainCfg(chainId) || CHAINS[CANONICAL_CHAIN_ID];
+    /* The canonical chain honors user-configured endpoints (apiUrl + optional
+       backupApiUrl); every other chain uses the registry endpoint plus the
+       shared Etherscan-v2 key. The query string is built by the explorer
+       adapter, so a Blockscout (PulseChain) request stays byte-for-byte the
+       legacy one — this is a behavior-preserving refactor for chain 369. */
+    const isCanon     = cfg.id === CANONICAL_CHAIN_ID;
+    const apiKey      = s.etherscanKey || '';
+    const primaryBase = isCanon ? (s.apiUrl || cfg.explorer.api) : cfg.explorer.api;
+    const backupBase  = isCanon ? (s.backupApiUrl || '')         : '';
+    const primary = explorerTxlistUrl(cfg, address, page, { apiBase: primaryBase, apiKey });
+    const backup  = backupBase ? explorerTxlistUrl(cfg, address, page, { apiBase: backupBase, apiKey }) : '';
 
     /* fetchWithRetry: up to 3 attempts with exponential backoff (1s, 2s).
        Retries on network errors, timeouts, 429 (rate limit), and 5xx.
@@ -7221,7 +7230,8 @@ class SayIt {
         const timer = setTimeout(() => ctrl.abort(), 15000);
         let res;
         try {
-          res = await fetch(url + qs, { signal: ctrl.signal });
+          /* url is the complete request (endpoint + adapter query string). */
+          res = await fetch(url, { signal: ctrl.signal });
         } catch (err) {
           /* Network error or timeout (AbortError) — retry. */
           lastErr = err;
