@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260614-184';
+const SW_CACHE_VER = '20260614-185';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -2162,6 +2162,7 @@ class SayIt {
         <div class="explore-tabs" role="tablist">
           ${tabBtn('trending', 'Trending')}
           ${tabBtn('news', 'News')}
+          ${tabBtn('media', 'Media')}
           ${tabBtn('people', 'People')}
           ${tabBtn('channels', 'Channels')}
           ${tabBtn('latest', 'Latest')}
@@ -2216,6 +2217,7 @@ class SayIt {
     const host = this.g('explore-tab-content');
     if (!host) return;
     if (tab === 'news')          host.innerHTML = this._exploreNewsHTML();
+    else if (tab === 'media')     host.innerHTML = this._exploreMediaHTML();
     else if (tab === 'people')   host.innerHTML = this._explorePeopleHTML();
     else if (tab === 'channels') host.innerHTML = this._exploreChannelsHTML();
     else if (tab === 'latest')   this._exploreRenderLatest(host);
@@ -2618,6 +2620,28 @@ class SayIt {
         <div class="explore-arrow">→</div>
       </div>`;
     }).join('');
+  }
+
+  /* ── Media: an X-style grid of every image/video/YouTube thumbnail in the
+       loaded feed. Reuses the profile Media-grid cell + CSS; cells open the
+       post's thread via the feed's delegated open-thread handler. ─────────── */
+  _exploreMediaHTML() {
+    const items = [];
+    const seen = new Set();
+    for (const p of this.state.posts) {
+      if (p.postType && p.postType !== 'post') continue;
+      for (const it of this._postMediaItems(p.display)) {
+        if (seen.has(it.thumb)) continue;          /* dedup repeated media URLs */
+        seen.add(it.thumb);
+        items.push({ ...it, txHash: p.txHash });
+        if (items.length >= 60) break;
+      }
+      if (items.length >= 60) break;
+    }
+    if (!items.length) {
+      return `<div class="explore-empty">No media in the feed yet — scroll Home to load posts with images or video.</div>`;
+    }
+    return `<div class="prof-media-grid">${items.map(it => this._mediaGridCellHTML(it)).join('')}</div>`;
   }
 
   /* ── Latest: most recent posts, rendered as real post cards. They live
@@ -4109,6 +4133,25 @@ class SayIt {
         </div>
       </div>
 
+      <!-- Accessibility -->
+      <div class="settings-section">
+        <div class="settings-section-title">Accessibility</div>
+        <div class="settings-row">
+          <div class="settings-row-label"><strong>High contrast</strong><span>Brighten secondary text &amp; borders for better legibility</span></div>
+          <label class="settings-switch">
+            <input type="checkbox" id="set-high-contrast" ${s.highContrast ? 'checked' : ''}>
+            <span class="settings-switch-slider"></span>
+          </label>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label"><strong>Underline links</strong><span>Always underline links, hashtags &amp; mentions in posts (not just on hover)</span></div>
+          <label class="settings-switch">
+            <input type="checkbox" id="set-underline-links" ${s.underlineLinks ? 'checked' : ''}>
+            <span class="settings-switch-slider"></span>
+          </label>
+        </div>
+      </div>
+
       <!-- API -->
       <div class="settings-section">
         <div class="settings-section-title">API Configuration</div>
@@ -4555,6 +4598,20 @@ class SayIt {
       s.reduceMotion = g('set-reduce-motion').checked;
       this._saveSettings(s);
       document.documentElement.classList.toggle('force-reduce-motion', s.reduceMotion);
+    });
+    /* Accessibility — high contrast + underline links apply immediately (boot.js
+       re-applies them pre-paint on the next load). */
+    g('set-high-contrast')?.addEventListener('change', () => {
+      const s = this._getSettings();
+      s.highContrast = g('set-high-contrast').checked;
+      this._saveSettings(s);
+      document.documentElement.classList.toggle('hc', s.highContrast);
+    });
+    g('set-underline-links')?.addEventListener('change', () => {
+      const s = this._getSettings();
+      s.underlineLinks = g('set-underline-links').checked;
+      this._saveSettings(s);
+      document.documentElement.classList.toggle('ul-links', s.underlineLinks);
     });
     /* Content & Feed filter toggles — save on change; the feed picks them up
        on the next renderFeed (when the user navigates back to it). */

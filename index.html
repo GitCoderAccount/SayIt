@@ -2996,6 +2996,14 @@ html.force-reduce-motion *, html.force-reduce-motion *::before, html.force-reduc
   transition-duration: 0.001ms !important;
   scroll-behavior: auto !important;
 }
+/* Accessibility: high contrast — brighten secondary text + borders so
+   low-contrast UI becomes legible (per-theme so light mode darkens instead). */
+html.hc { --muted:#c8cdd3; --border:#565b62; }
+html.hc[data-theme="light"] { --muted:#33373d; --border:#9098a1; }
+/* Accessibility: always underline in-post links/hashtags/mentions. */
+html.ul-links .post-link,
+html.ul-links .post-tag,
+html.ul-links .post-mention { text-decoration:underline; }
 /* Visually hidden but exposed to screen readers (page title landmark) */
 .visually-hidden {
   position:absolute !important; width:1px; height:1px;

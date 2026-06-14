@@ -6,6 +6,8 @@ try {
   const _de = document.documentElement;
   if (_s.theme === 'dim' || _s.theme === 'light') _de.setAttribute('data-theme', _s.theme);
   if (_s.reduceMotion) _de.classList.add('force-reduce-motion');
+  if (_s.highContrast) _de.classList.add('hc');
+  if (_s.underlineLinks) _de.classList.add('ul-links');
   if (_s.displayZoom && String(_s.displayZoom) !== '1') _de.style.zoom = _s.displayZoom;
   /* Accent color — a copy of core.js ACCENT_COLORS (boot.js runs before any
      script and can't import). SOURCE OF TRUTH: ACCENT_COLORS in core.js — keep
