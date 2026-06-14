@@ -77,10 +77,11 @@ As with any website, your IP is technically visible to whoever serves you bytes:
 - **Auto-ending.** Empty rooms end themselves (a passive tracker probe sees zero people for 10+ minutes), and every Space has a 24-hour hard cap.
 - **IP-masking option (Settings → Privacy).** Optionally route your connection through a **TURN relay you supply**, so other participants see the relay's address instead of yours; audio stays end-to-end encrypted (DTLS-SRTP) regardless. It's **off by default** (no reliable free public TURN exists), and if you turn it on without configuring a relay, joining is **blocked** with an explicit "Join without masking" choice — never a silent fallback. The room UI carries role-aware privacy notes. (More → 🎙 Start a Space.)
 
-### Channels, lists & organization
+### Chat — channels & encrypted DMs
+- The **Chat** page has two sides: **Channels** (public per-address conversations) and **Messages** — **end-to-end encrypted, post-quantum direct messages** (X25519 + ML-KEM-768; see [Encrypted direct messages](#encrypted-direct-messages)). Content is private; on-chain metadata stays public.
 - A **channel** is any address you post *to* — the main timeline, any wallet, or any **token contract** (which auto-shows the token's logo/name/socials, and lets the deployer/owner publish a verified profile).
 - **Lists** and **Communities**, optionally **published on-chain** as a portable snapshot.
-- **Bookmarks**, **mutes**, and a tabbed **Channels** inbox with unread indicators and post counts.
+- **Bookmarks**, **mutes**, and a tabbed Chat inbox with unread indicators and post counts.
 
 ### Notifications & profiles
 - Unified **All / Mentions / Likes** notifications, including likes, replies, reposts, follows, poll activity, and **tips**.
@@ -135,8 +136,27 @@ Everything is a transaction sent **to a channel/recipient address** with a UTF-8
 | `NOTERATE:0x<notehash>:h\|n` | Rate a note helpful / not (last rating wins) |
 | `SPACE:{json}\n\n<title>` | A live audio Space announcement |
 | `SPACE_END:0x<spacehash>` | End a Space — honored only from the Space's author |
+| `DMKEY1:<base64>` | Publish your public **encrypted-DM** key bundle (X25519 + ML-KEM-768), sent to self |
+| `DM1:<base64>` | One end-to-end **encrypted** direct message (see below) |
 
 Likes, follows, votes, tips, etc. are derived by scanning and applying these in chain order, so any client computes the same state.
+
+---
+
+## Encrypted direct messages
+
+DMs are **end-to-end encrypted** and **post-quantum**. Only the message *content* is protected — like any on-chain action, the *metadata* (who messaged whom, and when) is permanent and public. The app says so plainly in the UI; treat it as "private contents, public envelope."
+
+**Scheme.** Each message body is sealed with a random key `K` using **XChaCha20-Poly1305**; `K` is then wrapped for the people who may read it:
+
+- **Key agreement is hybrid:** **X25519** (elliptic-curve) **combined with ML-KEM-768** (NIST FIPS 203 lattice KEM), mixed through **HKDF-SHA256**. A message stays secret unless *both* are broken — so it survives a future quantum computer (defeating "harvest-now-decrypt-later," which matters because the ciphertext lives on-chain forever).
+- **Dual-wrap envelope:** `K` is wrapped twice — once to the **recipient** (hybrid KEM) and once to the **sender** (a symmetric key derived from the sender's own X25519 secret). That's why you can read your *own* sent messages on any device, while still being end-to-end.
+- **Identity keys** are derived **deterministically from a one-off wallet signature** (`DM_SIGN_MESSAGE`) — they're never stored and never leave the browser; sign once per session to unlock. Your public bundle is published once via `DMKEY1:` so others can reach you.
+- **Authenticity & anti-replay:** the transaction's `from` already proves the sender; the sender and recipient addresses are bound into the AEAD so a copied ciphertext can't be replayed from another account. A version byte (`DM1:` payload v2) lets the format evolve.
+
+**Crypto library.** The primitives are [`@noble/curves`](https://github.com/paulmillr/noble-curves), [`@noble/post-quantum`](https://github.com/paulmillr/noble-post-quantum), `@noble/hashes`, and `@noble/ciphers` — **vendored** as a single self-contained, **SRI-pinned** file (`sayit-crypto.js`), built reproducibly (see `CRYPTO_BUILD.md`). No `eval`/WASM, no network calls.
+
+**Limits (by design).** Lose the wallet, lose the history (keys derive from it; no recovery). Metadata is public. Group DMs aren't supported yet.
 
 ---
 
