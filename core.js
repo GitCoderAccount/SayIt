@@ -1137,7 +1137,7 @@ class SpaceRTC {
    CRYPTO_BUILD.md). Content is encrypted; on-chain METADATA (who↔who, when)
    is inherently public — callers must surface that to users. */
 const DMCrypto = {
-  X_PUB_LEN: 32, ML_PUB_LEN: 1184, KEM_CT_LEN: 1088, NONCE_LEN: 24, VER: 1,
+  X_PUB_LEN: 32, ML_PUB_LEN: 1184, KEM_CT_LEN: 1088, NONCE_LEN: 24, WRAP_LEN: 48, VER: 1,
 
   ready() { return typeof window !== 'undefined' && !!window.SAYIT_CRYPTO; },
   _c() {
@@ -1176,46 +1176,96 @@ const DMCrypto = {
     return { xPublic: raw.slice(1, 1 + this.X_PUB_LEN), mlPublic: raw.slice(1 + this.X_PUB_LEN) };
   },
 
-  _kdf(ssEC, ssPQ, ephPub, recipXPub, kemCt) {
+  /* KEK for the recipient: hybrid X25519+ML-KEM shared secrets → HKDF. */
+  _hybridKek(ssEC, ssPQ, ephPub, recipXPub, kemCt) {
     const C = this._c();
     const salt = C.sha256(this._cat(ephPub, recipXPub, kemCt));
-    return C.hkdf(C.sha256, this._cat(ssEC, ssPQ), salt, new TextEncoder().encode('SAYIT-DM-v1'), 32);
+    return C.hkdf(C.sha256, this._cat(ssEC, ssPQ), salt, new TextEncoder().encode('SAYIT-DM-kek-v2'), 32);
+  },
+  /* KEK for the SENDER's own copy: derived only from the sender's X25519 secret,
+     so you (and only you) can re-read your own sent messages on any device.
+     Symmetric → quantum-safe; no ECDH/KEM needed. */
+  _selfKek(xSecret) {
+    const C = this._c(); const te = new TextEncoder();
+    return C.hkdf(C.sha256, xSecret, C.sha256(te.encode('SAYIT-DM-self')), te.encode('SAYIT-DM-self-v2'), 32);
   },
 
-  /* Encrypt plaintext for `recip` ({ xPublic, mlPublic }). Returns a DM1: string. */
-  encrypt(text, recip, fromAddr, toAddr) {
+  /* Encrypt `text` so BOTH the recipient and the sender can read it later: the
+     body is sealed with a random key K, and K is wrapped twice — once to the
+     recipient via the hybrid PQ KEM, once symmetrically to the sender. me = the
+     sender's keys ({ xSecret, … }); recip = { xPublic, mlPublic }. → DM1: string. */
+  encrypt(text, recip, me, fromAddr, toAddr) {
     const C = this._c(); const te = new TextEncoder();
+    const K = C.randomBytes(32);
+    const from = (fromAddr || '').toLowerCase(), to = (toAddr || '').toLowerCase();
+    const aad = te.encode(from + '|' + to);
+    const nonceBody = C.randomBytes(this.NONCE_LEN);
+    const inner = JSON.stringify({ v: 2, from, to, ts: Date.now(), text: String(text) });
+    const bodyCt = C.xchacha20poly1305(K, nonceBody, aad).encrypt(te.encode(inner));
+    /* Recipient wrap (hybrid PQ). */
     const ephSecret = C.randomBytes(32);
     const ephPub = C.x25519.getPublicKey(ephSecret);
     const ssEC = C.x25519.getSharedSecret(ephSecret, recip.xPublic);
     const { cipherText: kemCt, sharedSecret: ssPQ } = C.ml_kem768.encapsulate(recip.mlPublic);
-    const key = this._kdf(ssEC, ssPQ, ephPub, recip.xPublic, kemCt);
-    const nonce = C.randomBytes(this.NONCE_LEN);
-    const from = (fromAddr || '').toLowerCase(), to = (toAddr || '').toLowerCase();
-    const aad = te.encode(from + '|' + to);
-    const inner = JSON.stringify({ v: this.VER, from, to, ts: Date.now(), text: String(text) });
-    const ct = C.xchacha20poly1305(key, nonce, aad).encrypt(te.encode(inner));
-    return DM_PREFIX + this._b64(this._cat(new Uint8Array([this.VER]), nonce, ephPub, kemCt, ct));
+    const kekR = this._hybridKek(ssEC, ssPQ, ephPub, recip.xPublic, kemCt);
+    const wnR = C.randomBytes(this.NONCE_LEN);
+    const wrapR = C.xchacha20poly1305(kekR, wnR).encrypt(K);
+    /* Self wrap (symmetric — only the sender's xSecret unlocks it). */
+    const wnS = C.randomBytes(this.NONCE_LEN);
+    const wrapS = C.xchacha20poly1305(this._selfKek(me.xSecret), wnS).encrypt(K);
+    return DM_PREFIX + this._b64(this._cat(
+      new Uint8Array([2]), nonceBody, ephPub, kemCt, wnR, wrapR, wnS, wrapS, bodyCt));
   },
 
-  /* Decrypt a DM1: payload with `me` ({ xSecret, xPublic, mlSecret }). fromAddr
-     is the tx sender, toAddr is the recipient (you). Throws on any failure
-     (tamper, wrong key, sender/recipient binding mismatch). */
+  /* Decrypt a DM1: payload with `me` ({ xSecret, xPublic, mlSecret }). Works
+     whether you SENT it (self wrap) or RECEIVED it (recipient wrap). fromAddr/
+     toAddr are the tx's from/to. Throws on tamper / wrong key / binding mismatch. */
   decrypt(payload, me, fromAddr, toAddr) {
     const C = this._c(); const td = new TextDecoder(); const te = new TextEncoder();
     if (typeof payload !== 'string' || !payload.startsWith(DM_PREFIX)) throw new Error('not a DM');
     const raw = this._unb64(payload.slice(DM_PREFIX.length));
-    let o = 0;
-    if (raw[o++] !== this.VER) throw new Error('unsupported DM version');
+    const from = (fromAddr || '').toLowerCase(), to = (toAddr || '').toLowerCase();
+    const aad = te.encode(from + '|' + to);
+    const ver = raw[0];
+    if (ver === 1) return this._decryptV1(raw, me, aad, from, to);
+    if (ver !== 2) throw new Error('unsupported DM version');
+    let o = 1;
+    const nonceBody = raw.slice(o, o += this.NONCE_LEN);
+    const ephPub    = raw.slice(o, o += this.X_PUB_LEN);
+    const kemCt     = raw.slice(o, o += this.KEM_CT_LEN);
+    const wnR       = raw.slice(o, o += this.NONCE_LEN);
+    const wrapR     = raw.slice(o, o += this.WRAP_LEN);
+    const wnS       = raw.slice(o, o += this.NONCE_LEN);
+    const wrapS     = raw.slice(o, o += this.WRAP_LEN);
+    const bodyCt    = raw.slice(o);
+    /* Recover K from whichever wrap is ours: try the recipient hybrid first,
+       fall back to the self wrap (so the sender reads their own message). */
+    let K = null;
+    try {
+      const ssEC = C.x25519.getSharedSecret(me.xSecret, ephPub);
+      const ssPQ = C.ml_kem768.decapsulate(kemCt, me.mlSecret);
+      K = C.xchacha20poly1305(this._hybridKek(ssEC, ssPQ, ephPub, me.xPublic, kemCt), wnR).decrypt(wrapR);
+    } catch { /* not the recipient — try the self wrap below */ }
+    if (!K) K = C.xchacha20poly1305(this._selfKek(me.xSecret), wnS).decrypt(wrapS); /* throws if neither */
+    const pt = C.xchacha20poly1305(K, nonceBody, aad).decrypt(bodyCt);
+    const inner = JSON.parse(td.decode(pt));
+    if (inner.from !== from || inner.to !== to) throw new Error('binding mismatch');
+    return { text: inner.text, ts: inner.ts };
+  },
+
+  /* Legacy v1 (recipient-only sealed box) — kept so already-received messages
+     still decrypt. New messages are always v2. */
+  _decryptV1(raw, me, aad, from, to) {
+    const C = this._c(); const td = new TextDecoder();
+    let o = 1;
     const nonce  = raw.slice(o, o += this.NONCE_LEN);
     const ephPub = raw.slice(o, o += this.X_PUB_LEN);
     const kemCt  = raw.slice(o, o += this.KEM_CT_LEN);
     const ct     = raw.slice(o);
     const ssEC = C.x25519.getSharedSecret(me.xSecret, ephPub);
     const ssPQ = C.ml_kem768.decapsulate(kemCt, me.mlSecret);
-    const key = this._kdf(ssEC, ssPQ, ephPub, me.xPublic, kemCt);
-    const from = (fromAddr || '').toLowerCase(), to = (toAddr || '').toLowerCase();
-    const aad = te.encode(from + '|' + to);
+    const salt = C.sha256(this._cat(ephPub, me.xPublic, kemCt));
+    const key  = C.hkdf(C.sha256, this._cat(ssEC, ssPQ), salt, new TextEncoder().encode('SAYIT-DM-v1'), 32);
     const pt = C.xchacha20poly1305(key, nonce, aad).decrypt(ct);
     const inner = JSON.parse(td.decode(pt));
     if (inner.from !== from || inner.to !== to) throw new Error('binding mismatch');
