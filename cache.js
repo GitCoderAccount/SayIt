@@ -79,6 +79,19 @@ class Cache {
       req.onerror = () => res(out);
     });
   }
+  /* Raw archive rows ({ txHash, target, … }) — lets callers merge the deep-sync
+     archive with LIKE txs already in the post cache and dedupe by tx hash, so
+     engagement numbers populate without requiring a manual Deep sync. */
+  async likeRows() {
+    await this._ready;
+    return new Promise(res => {
+      let req;
+      try { req = this._db.transaction('likes', 'readonly').objectStore('likes').getAll(); }
+      catch { res([]); return; }
+      req.onsuccess = () => res(req.result || []);
+      req.onerror = () => res([]);
+    });
+  }
 
   /* Row counts per store — powers the Settings storage overview. */
   async storeCounts() {
