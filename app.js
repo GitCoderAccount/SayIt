@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260614-187';
+const SW_CACHE_VER = '20260614-188';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -4195,6 +4195,11 @@ class SayIt {
               <span class="settings-switch-slider"></span>
             </label>
           </div>`).join('')}
+        <div class="settings-row" style="flex-direction:column;align-items:stretch;gap:8px">
+          <div class="settings-row-label"><strong>Muted words</strong><span>Hide posts from others that contain any of these words or phrases — one per line, case-insensitive. Whole-word match; your own posts are never hidden. Applies on the next feed refresh.</span></div>
+          <textarea id="set-muted-words" rows="4" placeholder="e.g.&#10;giveaway&#10;rug&#10;not financial advice"
+            style="width:100%;background:var(--bg-mid);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:14px;font-family:inherit;resize:vertical">${utils.safe((s.mutedWords || []).join('\n'))}</textarea>
+        </div>
         <div class="settings-row">
           <div class="settings-row-label"><strong>Default tab on launch</strong><span>Where the app opens (when not following a shared link)</span></div>
           <select class="settings-btn" id="set-default-view" style="padding:9px 12px">
@@ -4623,6 +4628,15 @@ class SayIt {
         s[filterKeys[cb.id]] = cb.checked;
         this._saveSettings(s);
       });
+    });
+    /* Muted words — save the list (one per line), invalidate the compiled
+       matcher cache, and re-render the feed so the change applies right away. */
+    g('set-muted-words')?.addEventListener('change', () => {
+      const s = this._getSettings();
+      s.mutedWords = g('set-muted-words').value.split('\n').map(w => w.trim()).filter(Boolean).slice(0, 200);
+      this._saveSettings(s);
+      this._mwCacheKey = undefined;   /* force _mutedWordsRe to recompile */
+      if (!this._selfManagedModes.has(this.state.mode)) this.renderFeed();
     });
     /* Autoplay videos — applies on the next render; re-wire the current feed
        so the change takes effect immediately. */
@@ -7873,6 +7887,8 @@ class SayIt {
        also drop any stray VOTE tx (e.g. cached before the drop logic
        existed) so raw VOTE data can never surface in the feed. */
     const cf = this._getSettings();
+    const mwRe = this._mutedWordsRe();   /* Muted words matcher (null if none) */
+    const me = this.state.signerAddr;
     const displayList = list.filter(p => {
       if (this._notInterested?.has(p.txHash)) return false; /* locally hidden */
       if (p.content && p.content.startsWith(VOTE_PREFIX)) return false;
@@ -7882,6 +7898,9 @@ class SayIt {
       if (cf.hidePolls   && p.postType === 'poll')   return false;
       if (cf.hideReplies && p.parentTx)              return false;
       if (cf.hideBinary  && this._isLikelyBinary(p.display)) return false;
+      /* Muted words — hide others' posts containing a muted word/phrase (your
+         own posts are never hidden from you). */
+      if (mwRe && p.reporter !== me && p.display && mwRe.test(p.display)) return false;
       return true;
     });
 
@@ -8400,6 +8419,22 @@ class SayIt {
       if (c === 0xFFFD || (c < 0x20 && c !== 9 && c !== 10 && c !== 13)) ctrl++;
     }
     return ctrl / s.length > 0.03;
+  }
+
+  /* Compiled, cached matcher for the user's Muted words (Settings → Content &
+     Feed). Returns a word-boundary RegExp that matches any muted word/phrase,
+     or null when none are set. Cached by the word list so it compiles once. */
+  _mutedWordsRe() {
+    const words = (this._getSettings().mutedWords || [])
+      .map(w => String(w).trim()).filter(Boolean);
+    const key = words.join('');
+    if (this._mwCacheKey === key) return this._mwRe;
+    this._mwCacheKey = key;
+    if (!words.length) { this._mwRe = null; return null; }
+    const esc = words.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    try { this._mwRe = new RegExp('(?:^|\\W)(?:' + esc.join('|') + ')(?:\\W|$)', 'i'); }
+    catch { this._mwRe = null; }
+    return this._mwRe;
   }
 
   /* Build the embedded repost/quote card showing the original post.
