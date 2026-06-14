@@ -60,6 +60,10 @@ const UNPIN_PREFIX = 'UNPIN:';
    message/notification parsers so the raw blobs never render as plaintext. */
 const DMKEY_PREFIX = 'DMKEY1:';
 const DM_PREFIX    = 'DM1:';
+/* Fixed, deterministic message the wallet signs to derive the user's DM
+   identity keys. The signature never leaves the browser; keys are derived from
+   it (DMCrypto.deriveKeys) and re-derived each session. */
+const DM_SIGN_MESSAGE = 'Say It DeFi — derive my encrypted-DM keys (v1).\n\nThis signature stays in your browser and never authorizes a transaction. Only sign it on sayitdefi.com.';
 const CHANNELS_KEY    = 'sayitChannelsScan';
 const SPACE_ENDS_KEY  = 'sayitSpaceEnds';   /* JSON { "<spaceTxHash>": "<senderAddr>" } — persisted SPACE_END markers (capped ~200) */
 const ACTIVE_SPACE_KEY = 'sayitActiveSpace'; /* JSON {txHash,roomId,title,startsMs,channel,ts} — host's own live Space, for the rejoin banner */
