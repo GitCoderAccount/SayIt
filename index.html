@@ -1982,6 +1982,15 @@ body.mode-explore .sb-search { display:none; }
 .dm-bubble.mine   { align-self:flex-end; background:var(--primary); color:#fff; border-bottom-right-radius:5px; }
 .dm-bubble.theirs { align-self:flex-start; background:var(--bg-mid); color:var(--text); border-bottom-left-radius:5px; }
 .dm-bubble-time { font-size:11px; opacity:0.7; margin-top:3px; }
+.dm-bubble-sender { font-size:12px; font-weight:700; color:var(--primary-lt); margin-bottom:2px; }
+.dm-bubble.mine .dm-bubble-sender { color:rgba(255,255,255,0.85); }
+/* Group recipient multi-select check */
+.dm-pick-check {
+  margin-left:auto; align-self:center; flex-shrink:0; width:22px; height:22px; border-radius:50%;
+  border:1.5px solid var(--border); display:flex; align-items:center; justify-content:center;
+  font-size:13px; color:#fff;
+}
+.dm-pick-check.on { background:var(--primary); border-color:var(--primary); }
 /* New-message recipient picker */
 .dm-pick-manual { display:flex; gap:8px; padding:12px 14px; border-bottom:1px solid var(--border); flex:0 0 auto; }
 .dm-pick-manual input, .dm-pick-search {
