@@ -598,6 +598,16 @@ nav { flex:1; padding:4px 0; }
 }
 .dir-sent     { background:rgba(124,77,255,0.15); color:var(--primary-lt); }
 .dir-received { background:rgba(0,186,124,0.12);  color:var(--green); }
+/* Chain-origin pill (multichain): color-coded per the chain registry. Only
+   rendered for non-canonical posts or when >1 chain is enabled. */
+.chain-badge {
+  display:inline-flex; align-items:center;
+  font-size:10px; font-weight:700; letter-spacing:.02em;
+  padding:1px 6px; border-radius:9999px; margin-left:6px; flex-shrink:0;
+  color:var(--chain-color, var(--muted));
+  background:color-mix(in srgb, var(--chain-color, var(--muted)) 15%, transparent);
+  border:1px solid color-mix(in srgb, var(--chain-color, var(--muted)) 35%, transparent);
+}
 .to-label    { font-size:13px; color:var(--muted); margin-bottom:3px; display:block; }
 .reply-badge {
   font-size:13px; color:var(--muted); margin-bottom:2px;
