@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260614-196';
+const SW_CACHE_VER = '20260614-197';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -619,6 +619,16 @@ class SayIt {
                 (addr === this.state.signerAddr ? this.state.profile : {}), postCount);
             }
           }, 500);
+          return;
+        }
+        /* Following / Followers counts -> open that list (X behavior). */
+        const listBtn = e.target.closest('[data-pp-list]');
+        if (listBtn) {
+          e.stopPropagation();
+          const addr = popup.dataset.addr;
+          this.hideProfilePopup();
+          if (listBtn.dataset.ppList === 'following') this._showFollowingList(addr, addr === this.state.signerAddr);
+          else this._showFollowerList(addr);
           return;
         }
         /* Click on popup body -> open profile page */
@@ -13544,6 +13554,14 @@ class SayIt {
 
     popup.innerHTML = this._profilePopupHTML(address, prof || {}, postCount);
 
+    /* Lazy-fill Following/Followers counts (cached), then refresh the card. */
+    this._lazyFollowCounts(address).then(() => {
+      if (popup.classList.contains('open') && popup.dataset.addr === address) {
+        const p = this.state.profCache[address] || (address === this.state.signerAddr ? this.state.profile : {}) || {};
+        popup.innerHTML = this._profilePopupHTML(address, p, postCount);
+      }
+    });
+
     /* Position popup near anchor — clamped to viewport. */
     this._positionPopup(popup, anchorEl);
     clearTimeout(popup._openRemoveTimer); /* cancel any pending hide */
@@ -13598,11 +13616,58 @@ class SayIt {
       <div class="pp-name">${name}${verifiedSvg ? `<span class="verified-icon">${verifiedSvg}</span>` : ''}</div>
       <div class="pp-handle">${handle}</div>
       ${bio ? `<div class="pp-bio">${bio}</div>` : ''}
-      ${postCount !== null
-        ? `<div class="pp-stats"><span><strong>${postCount}</strong> ${postCount === 1 ? 'post' : 'posts'} in view</span></div>`
-        : ''}
-      <div class="pp-view-hint">Click card to view profile →</div>
+      <div class="pp-stats">${this._ppStatsInner(address, isOwn)}</div>
     `;
+  }
+
+  /* The Following / Followers line for the profile popup (X-style). Reads the
+     cached counts; shows a dot until the lazy scan fills them in. */
+  _ppStatsInner(address, isOwn) {
+    const c = (this._followCountCache || {})[(address || '').toLowerCase()];
+    const fmt = n => (n === null || n === undefined) ? '·'
+      : (n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(/\.0$/, '') + 'K' : n);
+    const following = c ? c.following : (isOwn ? this.state.following.size : null);
+    const followers = c ? c.followers : null;
+    return `<span class="pp-stat" role="button" tabindex="0" data-pp-list="following"><strong>${fmt(following)}</strong> Following</span>
+      <span class="pp-stat" role="button" tabindex="0" data-pp-list="followers"><strong>${fmt(followers)}</strong> Followers</span>`;
+  }
+
+  /* Cached, capped follow-count scan for the popup: one pass over the address's
+     txs yields BOTH following (their outgoing FOLLOW) and followers (incoming),
+     latest-action-per-peer wins. Capped to keep hovers snappy; the full profile
+     page shows exact counts. */
+  async _lazyFollowCounts(addr) {
+    addr = (addr || '').toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(addr)) return null;
+    this._followCountCache = this._followCountCache || {};
+    if (this._followCountCache[addr]) return this._followCountCache[addr];
+    const isOwn = addr === this.state.signerAddr;
+    const followingMap = new Map(), followerMap = new Map();
+    const upd = (m, k, action, order) => { const p = m.get(k); if (!p || order >= p.order) m.set(k, { action, order }); };
+    try {
+      const limit = Math.min(this._getMaxScanPages(), 8);
+      for (let page = 1; page <= limit; page++) {
+        let raw = [];
+        try { raw = await this.apiFetch(addr, page); } catch { break; }
+        for (const tx of raw) {
+          if (!tx.input || tx.input === '0x') continue;
+          const from = tx.from?.toLowerCase();
+          let text; try { text = ethers.toUtf8String(tx.input).trim(); } catch { continue; }
+          const isF = text.startsWith(FOLLOW_PREFIX), isU = text.startsWith(UNFOLLOW_PREFIX);
+          if (!isF && !isU) continue;
+          const action = isF ? 'follow' : 'unfollow';
+          const tgt = text.slice((isF ? FOLLOW_PREFIX : UNFOLLOW_PREFIX).length).trim().toLowerCase();
+          const order = (Number(tx.blockNumber) || 0) * 100000 + (Number(tx.transactionIndex) || 0);
+          if (from === addr && tgt) upd(followingMap, tgt, action, order);
+          if (tgt === addr && from && from !== addr) upd(followerMap, from, action, order);
+        }
+        if (raw.length < 50) break;
+      }
+    } catch { /* leave counts as best-effort */ }
+    const following = isOwn ? this.state.following.size
+      : [...followingMap.values()].filter(v => v.action === 'follow').length;
+    const followers = [...followerMap.values()].filter(v => v.action === 'follow').length;
+    return (this._followCountCache[addr] = { following, followers });
   }
 
   _positionPopup(popup, anchor) {
