@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260614-199';
+const SW_CACHE_VER = '20260614-200';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -3875,28 +3875,42 @@ class SayIt {
       return;
     }
     if (this._chSelected !== addr || this.state.mode !== 'channels') return;
+    /* New posts on this page (TO the chat, not already loaded). */
+    const newPosts = [];
     for (const tx of raw) {
-      if (tx.to?.toLowerCase() !== addr) continue; /* posts TO this chat only */
+      if (tx.to?.toLowerCase() !== addr) continue;
       const p = this._parsePostTx(tx, { mode: 'custom', extra: { channel: addr } });
-      if (p && !this._chPanePosts.some(x => x.txHash === p.txHash)) this._chPanePosts.push(p);
+      if (p && !this._chPanePosts.some(x => x.txHash === p.txHash)) { this._chPanePosts.push(p); newPosts.push(p); }
     }
-    const posts = this._chPanePosts;
-    if (!posts.length) {
+    this.g('ch-pane-sentinel')?.remove();
+    if (!this._chPanePosts.length) {
       ph.innerHTML = `<div class="ch-pane-empty"><p>No posts in this chat yet — be the first.</p></div>`;
       return;
     }
     const replyMap = new Map();
-    posts.forEach(p => { if (p.parentTx) replyMap.set(p.parentTx, (replyMap.get(p.parentTx) || 0) + 1); });
-    posts.forEach(p => this._postMap.set(p.txHash, p));
-    const moreBtn = raw.length >= 50
-      ? `<button class="settings-btn" id="ch-pane-more" style="display:block;margin:14px auto">Load older posts</button>` : '';
-    ph.innerHTML = posts.map(p =>
+    this._chPanePosts.forEach(p => { if (p.parentTx) replyMap.set(p.parentTx, (replyMap.get(p.parentTx) || 0) + 1); });
+    newPosts.forEach(p => this._postMap.set(p.txHash, p));
+    /* Append this page's posts (page 1 replaces; later pages append → no scroll
+       jump). A sentinel at the bottom auto-loads the next page on scroll. */
+    const frag = newPosts.map(p =>
       `<div class="post-item" data-txhash="${utils.safe(p.txHash)}">${this.postHTML(p, false, replyMap, null)}</div>`
-    ).join('') + moreBtn;
-    const mb = this.g('ch-pane-more');
-    if (mb) mb.onclick = () => { mb.disabled = true; mb.textContent = 'Loading…'; this._chPaneLoadPage(addr, page + 1); };
-    posts.forEach(p => { if (p.reporter !== this.state.signerAddr) this.fetchOtherProfile(p.reporter); });
-    if (posts.some(pp => pp.poll)) setTimeout(() => this._tallyVisiblePolls(), 100);
+    ).join('');
+    if (page === 1) ph.innerHTML = frag; else ph.insertAdjacentHTML('beforeend', frag);
+    if (raw.length >= 50) {
+      ph.insertAdjacentHTML('beforeend', '<div id="ch-pane-sentinel" style="height:1px"></div>');
+      const sentinel = this.g('ch-pane-sentinel');
+      if (sentinel) {
+        const obs = new IntersectionObserver(es => {
+          if (es[0].isIntersecting) { obs.disconnect(); this._chPaneLoadPage(addr, page + 1); }
+        }, { root: ph, rootMargin: '500px' });
+        obs.observe(sentinel);
+      }
+    }
+    /* Auto-load X/YouTube embeds on scroll (same as the profile/feed) and lazy
+       author profiles + poll tallies, for the posts just added. */
+    this._wireVideoObserver(ph);
+    newPosts.forEach(p => { if (p.reporter !== this.state.signerAddr) this.fetchOtherProfile(p.reporter); });
+    if (newPosts.some(pp => pp.poll)) setTimeout(() => this._tallyVisiblePolls(), 100);
   }
 
   /* Post to the channel currently shown in the pane. Optimistically prepends
@@ -3974,10 +3988,15 @@ class SayIt {
         pic: prof?.picUrl || 'image1.jpeg', preview:'', time:'', unread:false, following:true });
     }
 
+    /* Drop the user's own address — it's shown once as the pinned "My Chat" row,
+       so it must not also appear as a regular entry (was showing twice). */
+    const meLc = (this.state.signerAddr || '').toLowerCase();
+    const entriesNoMe = meLc ? entries.filter(e => (e.addr || '').toLowerCase() !== meLc) : entries;
+
     /* Filter by active tab. */
-    let pins = pinned, list = entries;
-    if (tab === 'unread')        { pins = pinned.filter(p => p.unread); list = entries.filter(e => e.unread); }
-    else if (tab === 'following'){ pins = []; list = entries.filter(e => e.following); }
+    let pins = pinned, list = entriesNoMe;
+    if (tab === 'unread')        { pins = pinned.filter(p => p.unread); list = entriesNoMe.filter(e => e.unread); }
+    else if (tab === 'following'){ pins = []; list = entriesNoMe.filter(e => e.following); }
 
     const TABS = { all:'All', unread:'Unread', following:'Following' };
     const row = e => {
@@ -7964,6 +7983,7 @@ class SayIt {
     const displayList = list.filter(p => {
       if (this._notInterested?.has(p.txHash)) return false; /* locally hidden */
       if (p.content && p.content.startsWith(VOTE_PREFIX)) return false;
+      if (p.content && (p.content.startsWith(DM_PREFIX) || p.content.startsWith(DMKEY_PREFIX))) return false; /* never show DM ciphertext as a feed post */
       if (!(!p.postType || p.postType === 'post' || p.postType === 'repost' || p.postType === 'poll' || p.postType === 'space')) return false;
       /* User content filters (Settings → Content & Feed). */
       if (cf.hideReposts && p.postType === 'repost') return false;
@@ -9746,6 +9766,8 @@ class SayIt {
           !body.startsWith(SPACE_END_PREFIX) &&
           !body.startsWith(PIN_PREFIX) &&
           !body.startsWith(UNPIN_PREFIX) &&
+          !body.startsWith(DM_PREFIX) &&       /* encrypted DM — never a feed post */
+          !body.startsWith(DMKEY_PREFIX) &&    /* DM key publication — never a feed post */
           !body.startsWith(LC_SYNC_PREFIX)) {
         /* If this is a poll, parse it so the feed renders the poll UI
            rather than the raw POLL:{json} text. */
