@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260614-190';
+const SW_CACHE_VER = '20260614-191';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -413,6 +413,8 @@ class SayIt {
     /* The mobile #mn-more button is wired via the [data-mn="more"]
        delegation handler below. */
     g('more-settings').onclick = () => { this.hideMoreMenu(); this.goSettings(); };
+    const mmBtn = g('more-messages');
+    if (mmBtn) mmBtn.onclick = () => { this.hideMoreMenu(); this.goMessages(); };
     const mlBtn = g('more-lists');
     if (mlBtn) mlBtn.onclick = () => { this.hideMoreMenu(); this.goLists(); };
     const mcBtn = g('more-communities');
@@ -838,6 +840,9 @@ class SayIt {
       switch (el.dataset.act) {
         case 'open-thread':
           if (isHash) this.openThreadByHash(arg.toLowerCase());
+          break;
+        case 'open-dm':
+          if (isAddr) this.goMessages(arg.toLowerCase());
           break;
         case 'notif-open':
           /* Whole notification row — but the avatar/name inside open the
@@ -1815,11 +1820,13 @@ class SayIt {
             if (text.startsWith(BOOKMARK_PREFIX) || text.startsWith(UNBOOKMARK_PREFIX)) return;
             if (text.startsWith(UNLIKE_PREFIX)) return;
             if (text.startsWith(DMKEY_PREFIX)) return; /* key publication — not a notification */
-            /* Encrypted DMs are handled by the Messages surface (and will get a
-               dedicated notification when that UI lands); never show the raw
-               ciphertext as a plaintext "message" notification. */
-            if (text.startsWith(DM_PREFIX)) return;
             const ts = tx.timeStamp ? new Date(Number(tx.timeStamp)*1000).toISOString() : new Date().toISOString();
+            /* Encrypted DM — notify without decrypting the ciphertext (the
+               Messages view decrypts on open); click opens that conversation. */
+            if (text.startsWith(DM_PREFIX)) {
+              allNotifs.push({ type: 'dm', from, target: from, preview: '', timestamp: ts, txHash: tx.hash.toLowerCase() });
+              return;
+            }
             let type = 'message', target = null, preview = '';
             if (text.startsWith(LIKE_PREFIX)) {
               type = 'like'; target = text.slice(LIKE_PREFIX.length).trim().toLowerCase();
@@ -1932,11 +1939,12 @@ class SayIt {
   _renderNotifs() {
     const all = this._notifs || [];
     const tab = this._notifTab || 'all';
-    const icons = { like:'❤️', follow:'👤', reply:'💬', repost:'🔁', message:'✉️', vote:'📊', pollend:'🏁' };
+    const icons = { like:'❤️', follow:'👤', reply:'💬', repost:'🔁', message:'✉️', vote:'📊', pollend:'🏁', dm:'🔒' };
     const labels = {
       like:'liked your post', follow:'followed you', reply:'replied to you',
       repost:'reposted your post', message:'sent you a message',
       vote:'voted on your poll', pollend:'', tip:'tipped your post 💎',
+      dm:'sent you an encrypted message',
     };
     /* Tabs partition All cleanly: Likes = plain likes; Mentions = everything
        else (replies, reposts, messages, poll votes/ends, follows). No type is
@@ -1985,9 +1993,11 @@ class SayIt {
            thread in-app; types with no post target (message/follow) fall back
            to the tx on the explorer. */
         const opensThread = n.target && ['vote', 'like', 'reply', 'repost', 'tip'].includes(n.type);
-        const clickAttr = opensThread
-          ? `data-act="notif-open" data-act-arg="${utils.safe(n.target)}"`
-          : `data-act="notif-open" data-act-arg="${utils.safe(n.txHash)}" data-act-arg2="tx"`;
+        const clickAttr = n.type === 'dm'
+          ? `data-act="open-dm" data-act-arg="${utils.safe(n.from)}"`        /* open the encrypted conversation */
+          : opensThread
+            ? `data-act="notif-open" data-act-arg="${utils.safe(n.target)}"`
+            : `data-act="notif-open" data-act-arg="${utils.safe(n.txHash)}" data-act-arg2="tx"`;
         return `
           <div class="notif-item" role="button" tabindex="0" data-from="${utils.safe(n.from)}" ${clickAttr}>
             <div class="notif-icon-wrap">${icon}</div>
@@ -9382,6 +9392,185 @@ class SayIt {
       .sort((a, b) => b.last - a.last);
   }
 
+  /* ── Messages UI (encrypted DMs) — X-style two-column, reusing the Channels
+     ch-layout + rail-collapse. Content is E2E encrypted; the header note makes
+     the public-metadata caveat explicit. ─────────────────────────────────── */
+  async goMessages(peerAddr = null) {
+    this._updateTitle('Messages');
+    this._setRoute(peerAddr ? '/messages/' + peerAddr : '/messages');
+    this.setNav(null, null);
+    this.state.mode = 'messages';
+    this.g('compose-area').style.display   = 'none';
+    this.g('channel-banner').style.display = 'none';
+    this.g('feed-tabs').style.display      = 'none';
+    this.g('loading-more').style.display   = 'none';
+    document.body.classList.add('mode-channels'); /* rail-collapse + two-col (cleared by setNav on next nav) */
+    this._pendingPageHeader = this._makePageHeader({ title: 'Messages', noBack: true });
+    const headerHTML = this._applyPageHeader();
+    const feed = this.g('feed');
+    if (!this.signer) {
+      feed.innerHTML = headerHTML + `<div class="prof-empty"><h3>Connect your wallet</h3>
+        <p style="color:var(--muted)">Encrypted direct messages need a connected wallet to derive your keys.</p></div>`;
+      return;
+    }
+    feed.innerHTML = headerHTML + `
+      <div class="ch-layout" id="dm-layout">
+        <div class="ch-col-list">
+          <div class="dm-meta-note">🔒 End-to-end encrypted (X25519 + ML-KEM post-quantum). The message text is private; <strong>who you message and when is public on-chain.</strong></div>
+          <div id="dm-list"></div>
+        </div>
+        <div class="ch-col-pane">
+          <button class="ch-pane-back" id="dm-pane-back">← Messages</button>
+          <div id="dm-pane-content"></div>
+        </div>
+      </div>`;
+    const back = this.g('dm-pane-back');
+    if (back) back.onclick = () => this.g('dm-layout')?.classList.remove('pane-open');
+    this._dmPeer = peerAddr ? peerAddr.toLowerCase() : null;
+    this._renderDmPanePlaceholder();
+    this._loadConversations(this._dmPeer);
+  }
+
+  _renderDmPanePlaceholder() {
+    const host = this.g('dm-pane-content');
+    if (host) host.innerHTML = `<div class="ch-pane-empty"><h3>Select a conversation</h3>
+      <p>Choose a conversation, or start a new one from the list.</p></div>`;
+  }
+
+  /* Ensure keys (one signature), scan inbound DMs, render the conversation list.
+     If keys aren't unlocked yet, show an explicit unlock button instead of
+     silently prompting a wallet signature. */
+  async _loadConversations(autoOpenPeer) {
+    const list = this.g('dm-list');
+    if (!list) return;
+    if (!this._dmKeys) {
+      list.innerHTML = `<div class="dm-onboard">
+        <h3>Encrypted messages</h3>
+        <p>Sign once to unlock your inbox (this signature stays in your browser and never sends a transaction).</p>
+        <button class="go-btn" id="dm-unlock-btn">Unlock messages</button></div>`;
+      const ub = this.g('dm-unlock-btn');
+      if (ub) ub.onclick = async () => {
+        ub.disabled = true; ub.textContent = 'Check your wallet…';
+        try { await this._ensureDmKeys(); this._loadConversations(autoOpenPeer); }
+        catch (e) { utils.toast(e.message || 'Could not unlock'); ub.disabled = false; ub.textContent = 'Unlock messages'; }
+      };
+      return;
+    }
+    list.innerHTML = `<div class="ch-pane-loading"><div class="spinner" aria-hidden="true"></div></div>`;
+    let convos = [];
+    try { convos = await this._scanDms(); } catch (e) { utils.toast(e.message || 'Scan failed'); }
+    if (this.state.mode !== 'messages') return;
+    this._dmConvos = convos;
+    /* Banner if the user hasn't published their key yet (others can't reach them). */
+    const mine = await this._getDmKeyFor(this.state.signerAddr);
+    if (this.state.mode !== 'messages') return;
+    const banner = mine ? '' : `<div class="dm-onboard" style="border-bottom:1px solid var(--border)">
+      <p>Publish your key so others can message you.</p>
+      <button class="go-btn" id="dm-enable-btn">Enable encrypted DMs</button></div>`;
+    const newBtn = `<button class="settings-btn" id="dm-new-btn" style="margin:10px 12px">✎ New message</button>`;
+    const rows = convos.map(c => {
+      const prof = this.state.profCache[c.addr];
+      const name = prof?.username ? utils.safe(prof.username) : this.trunc(c.addr);
+      const pic = utils.safe(utils.safeUrl(prof?.picUrl) || 'image1.jpeg');
+      const last = c.messages[c.messages.length - 1];
+      const preview = utils.safe((last?.text || '').slice(0, 60));
+      const time = last ? `<span class="ch-hist-time">${utils.safe(this.relTime(new Date(last.ts).toISOString()))}</span>` : '';
+      this.fetchOtherProfile(c.addr);
+      return `<div class="ch-history-item" role="button" tabindex="0" data-dm-open="${utils.safe(c.addr)}">
+        <img src="${pic}" class="ch-hist-avatar" alt="" data-fallback-src="image1.jpeg">
+        <div class="ch-hist-body">
+          <div class="ch-hist-top"><span class="ch-hist-name">${name}</span>${time}</div>
+          <div class="ch-hist-preview">${preview || 'Encrypted message'}</div>
+        </div>
+      </div>`;
+    }).join('') || `<div class="ch-pane-empty" style="padding:24px"><p>No conversations yet. Start one with “New message”.</p></div>`;
+    list.innerHTML = banner + newBtn + rows;
+    const en = this.g('dm-enable-btn');
+    if (en) en.onclick = async () => {
+      en.disabled = true; en.textContent = 'Check your wallet…';
+      try { await this.enableDms(); utils.toast('Encrypted DMs enabled ✓'); this._loadConversations(autoOpenPeer); }
+      catch (e) { utils.toast(e.message || 'Failed'); en.disabled = false; en.textContent = 'Enable encrypted DMs'; }
+    };
+    const nb = this.g('dm-new-btn');
+    if (nb) nb.onclick = () => this._dmNewMessage();
+    list.querySelectorAll('[data-dm-open]').forEach(el => {
+      el.onclick = () => this._openDmThread(el.dataset.dmOpen);
+    });
+    if (autoOpenPeer) this._openDmThread(autoOpenPeer);
+  }
+
+  _dmNewMessage() {
+    const addr = (prompt('Recipient wallet address (0x…):') || '').trim().toLowerCase();
+    if (!addr) return;
+    if (!/^0x[0-9a-f]{40}$/.test(addr)) { utils.toast('Invalid address'); return; }
+    this._openDmThread(addr);
+  }
+
+  /* Render one conversation (decrypted bubbles + composer) into the right pane. */
+  _openDmThread(addr) {
+    addr = (addr || '').toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(addr)) return;
+    this._dmPeer = addr;
+    this.g('dm-layout')?.classList.add('pane-open');
+    const host = this.g('dm-pane-content');
+    if (!host) return;
+    const prof = this.state.profCache[addr];
+    const name = prof?.username ? utils.safe(prof.username) : this.trunc(addr);
+    const convo = (this._dmConvos || []).find(c => c.addr === addr);
+    const me = this.state.signerAddr;
+    const bubbles = (convo?.messages || []).map(m => {
+      const mine = m.from === me;
+      return `<div class="dm-bubble ${mine ? 'mine' : 'theirs'}">${utils.safe(m.text).replace(/\n/g, '<br>')}
+        <div class="dm-bubble-time">${utils.safe(this.relTime(new Date(m.ts).toISOString()))}</div></div>`;
+    }).join('') || `<div class="ch-pane-empty" style="padding:24px"><p>No messages yet — say hi. Messages are end-to-end encrypted.</p></div>`;
+    host.innerHTML = `
+      <div class="ch-pane-header">
+        <img src="${utils.safe(utils.safeUrl(prof?.picUrl) || 'image1.jpeg')}" class="ch-pane-avatar" alt="" data-fallback-src="image1.jpeg">
+        <div class="ch-pane-id"><div class="ch-pane-name">${name}</div>
+          <div class="ch-pane-addr">${utils.safe(this.trunc(addr))} · 🔒 encrypted</div></div>
+      </div>
+      <div class="dm-thread" id="dm-thread">${bubbles}</div>
+      <div class="ch-pane-compose">
+        <textarea id="dm-compose" rows="2" placeholder="Encrypted message…"></textarea>
+        <div class="ch-pane-compose-actions">
+          <button class="go-btn" id="dm-send" disabled>Send</button>
+        </div>
+      </div>`;
+    const ta = this.g('dm-compose'), send = this.g('dm-send');
+    if (ta && send) {
+      ta.oninput = () => { send.disabled = !ta.value.trim(); };
+      send.onclick = () => this._sendDmFromPane(addr);
+    }
+    const th = this.g('dm-thread'); if (th) th.scrollTop = th.scrollHeight;
+    if (prof === undefined) this.fetchOtherProfile(addr);
+  }
+
+  async _sendDmFromPane(addr) {
+    const ta = this.g('dm-compose'); const text = ta?.value.trim();
+    if (!text) return;
+    const send = this.g('dm-send'); if (send) send.disabled = true;
+    let hash;
+    try { hash = await this.sendDm(addr, text); }
+    catch (e) { utils.toast(e.message || 'Send failed'); if (send) send.disabled = false; return; }
+    if (!hash) { if (send) send.disabled = false; return; }
+    if (ta) ta.value = '';
+    /* Optimistically append + record so re-opening shows it without a rescan. */
+    const msg = { from: this.state.signerAddr, to: addr, text, ts: Date.now(), txHash: hash };
+    let convo = (this._dmConvos = this._dmConvos || []).find(c => c.addr === addr);
+    if (!convo) { convo = { addr, messages: [], last: 0 }; this._dmConvos.unshift(convo); }
+    convo.messages.push(msg); convo.last = msg.ts;
+    if (this._dmPeer === addr) {
+      const th = this.g('dm-thread');
+      if (th) {
+        const empty = th.querySelector('.ch-pane-empty'); if (empty) th.innerHTML = '';
+        const el = document.createElement('div');
+        el.className = 'dm-bubble mine';
+        el.innerHTML = `${utils.safe(text).replace(/\n/g, '<br>')}<div class="dm-bubble-time">now</div>`;
+        th.appendChild(el); th.scrollTop = th.scrollHeight;
+      }
+    }
+  }
+
   async publish(content, parentTx = null, toAddress = null) {
     if (!this.signer)     { utils.toast('Connect wallet first'); return false; }
     if (!content?.trim()) { utils.toast('Message cannot be empty'); return false; }
@@ -9905,6 +10094,7 @@ class SayIt {
         case 'notifications':  this.goNotifications(); break;
         case 'bookmarks':      this.goBookmarks(); break;
         case 'channels':       this.goChannels(); break;
+        case 'messages':       this.goMessages?.(/^0x[a-f0-9]{40}$/i.test(arg) ? arg.toLowerCase() : null); break;
         case 'settings':       this.goSettings(); break;
         case 'lists':          this.goLists?.(); break;
         case 'analytics':      this.goAnalytics?.(); break;
@@ -12083,7 +12273,7 @@ class SayIt {
   /* Modes that replace the entire #feed DOM themselves — renderFeed must
      NOT overwrite them with the standard post list. */
   _selfManagedModes = new Set([
-    'notifications', 'profile', 'thread', 'channels',
+    'notifications', 'profile', 'thread', 'channels', 'messages',
     'explore', 'bookmarks', 'settings', 'lists', 'communities', 'followlist',
     'analytics', 'verify', 'dashboard', 'premium'
   ]);  /* lists/communities render their own browse UI into #feed */
@@ -12091,7 +12281,7 @@ class SayIt {
      Superset of _selfManagedModes — includes wave/self/custom where
      the user is on a specific channel feed that isn't the main timeline. */
   _noBannerModes = new Set([
-    'notifications', 'profile', 'thread', 'channels',
+    'notifications', 'profile', 'thread', 'channels', 'messages',
     'explore', 'bookmarks', 'settings', 'self', 'custom', 'followlist'
   ]);
 
