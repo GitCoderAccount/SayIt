@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260614-191';
+const SW_CACHE_VER = '20260614-192';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -914,6 +914,10 @@ class SayIt {
         case 'go-verify':
           e.preventDefault();
           this.goVerify();
+          break;
+        case 'open-support':
+          e.preventDefault();
+          this.goOfficialChannel();
           break;
       }
     }, true);
@@ -2845,7 +2849,7 @@ class SayIt {
   }
 
   async goChannels() {
-    this._updateTitle('Channels');
+    this._updateTitle('Chat');
     this._setRoute('/channels');
     this.setNav('nav-channels','channels');
     /* X behavior: the Chat page collapses the left nav to its icon rail and
@@ -2853,7 +2857,7 @@ class SayIt {
        off body.mode-channels; setNav clears it on every nav). */
     document.body.classList.add('mode-channels');
     this.g('feed-tabs').classList.remove('tabs-sticky');
-    this._pendingPageHeader = this._makePageHeader({ title: 'Channels', noBack: true });
+    this._pendingPageHeader = this._makePageHeader({ title: 'Chat', noBack: true });
     this.g('compose-area').style.display = 'none';
     this.g('channel-banner').style.display = 'none';
     this.g('feed-tabs').style.display    = 'none';
@@ -3770,7 +3774,7 @@ class SayIt {
           <div class="ch-pane-name">${utils.safe(name)}</div>
           <div class="ch-pane-addr">${utils.safe(this.trunc(addr))}</div>
         </div>
-        <button class="ch-pane-fullview" id="ch-pane-fullview" title="Open the full channel feed">Open full view ↗</button>
+        <button class="ch-pane-fullview" id="ch-pane-fullview" title="Open the full chat">Open full chat ↗</button>
       </div>
       <div id="ch-pane-posts"><div class="ch-pane-loading"><div class="spinner" aria-hidden="true"></div></div></div>
       <div class="ch-pane-compose">
@@ -3900,13 +3904,10 @@ class SayIt {
     const follow  = this.state.following;
     const history = this.state.channelHistory || [];
 
-    /* Pinned quick-access destinations (not part of scanned history). */
-    const inboxUnread = this._unreadCount || 0;
-    const pinned = [{ special:'main', icon:'🏠', name:'Main Feed', sub:'The public timeline', unread:false }];
-    if (this.state.signerAddr) {
-      pinned.push({ special:'inbox', icon:'📥', name:'Your inbox/channel', sub:'Posts sent to you', unread: inboxUnread > 0, count: inboxUnread });
-    }
-    pinned.push({ special:'official', icon:'⚡', name:'Say It DeFi Channel', sub:'Official updates & tech', unread:false });
+    /* No pinned static rows on the Chat page anymore — Main Feed lives under
+       Home, your own inbox under My Channel, and Say It DeFi Support moved to
+       the right-sidebar footer. The Chat list is now purely your conversations. */
+    const pinned = [];
 
     /* Visited/scanned channels, plus synthesized rows for follows not yet visited. */
     const entries = history.map(ch => ({
@@ -4941,7 +4942,7 @@ class SayIt {
        post-count subtitle (filled by _updateChannelSubtitle once the feed
        loads), rather than a redundant "Channel" label. */
     const _hdrTitle = this.g('cb-header-title');
-    if (_hdrTitle) _hdrTitle.textContent = this.g('cb-name').textContent || 'Channel';
+    if (_hdrTitle) _hdrTitle.textContent = this.g('cb-name').textContent || 'Chat';
     this._updateChannelSubtitle();
     const meta = this.g('cb-token-meta');
     if (meta) meta.innerHTML = (verified || token) ? this._tokenMetaHTML(token, !!verified, verified) : '';
@@ -6071,7 +6072,7 @@ class SayIt {
             data-act="share-profile" data-act-arg="${utils.safe(address)}">
             <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.48-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>
           </button>
-          <a class="prof-edit-btn" title="View their channel" aria-label="View their channel" style="padding:6px 10px;display:inline-flex;align-items:center"
+          <a class="prof-edit-btn" title="View their chat" aria-label="View their chat" style="padding:6px 10px;display:inline-flex;align-items:center"
             href="#/channel/${utils.safe(address)}"
             data-act="open-channel" data-act-arg="${utils.safe(address)}">
             <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M1.998 5.5c0-1.381 1.119-2.5 2.5-2.5h15c1.381 0 2.5 1.119 2.5 2.5v13c0 1.381-1.119 2.5-2.5 2.5h-15c-1.381 0-2.5-1.119-2.5-2.5v-13zm2.5-.5a.5.5 0 00-.5.5v2.764l8 3.638 8-3.638V5.5a.5.5 0 00-.5-.5h-15zM19.998 10.236l-8 3.636-8-3.636V18.5a.5.5 0 00.5.5h15a.5.5 0 00.5-.5v-8.264z"/></svg>
@@ -14408,8 +14409,8 @@ class SayIt {
       html += `<div class="search-dd-item" role="option" data-search-addr="${sa}" data-go="channel">
         <div class="search-dd-tag-icon">#</div>
         <div class="search-dd-body">
-          <div class="search-dd-name">Open channel</div>
-          <div class="search-dd-sub">${ta} · posts sent to this address</div>
+          <div class="search-dd-name">Open chat</div>
+          <div class="search-dd-sub">${ta} · public posts to this address</div>
         </div>
       </div>`;
     }
