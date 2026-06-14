@@ -1955,6 +1955,19 @@ body.mode-explore .sb-search { display:none; }
 .ch-pane-compose textarea::placeholder { color:var(--muted); }
 .ch-pane-compose-actions { display:flex; justify-content:space-between; align-items:center; margin-top:8px; }
 .ch-pane-loading { display:flex; justify-content:center; padding:40px 0; }
+/* Chat page Channels|Messages toggle (top of the list column). */
+.chat-toggle { display:flex; border-bottom:1px solid var(--border); }
+.chat-toggle-btn {
+  flex:1; padding:14px 8px; background:none; border:none; cursor:pointer;
+  color:var(--muted); font-size:15px; font-weight:600; position:relative;
+  transition:background 0.15s, color 0.15s;
+}
+.chat-toggle-btn:hover { background:var(--hov-1); }
+.chat-toggle-btn.active { color:var(--text); font-weight:800; }
+.chat-toggle-btn.active::after {
+  content:''; position:absolute; bottom:0; left:50%; transform:translateX(-50%);
+  width:56px; height:4px; border-radius:2px; background:var(--primary);
+}
 /* ── Encrypted DMs (Messages) ── */
 .dm-meta-note { font-size:12px; line-height:1.5; color:var(--muted); padding:10px 14px; border-bottom:1px solid var(--border); }
 .dm-meta-note strong { color:var(--text); }
@@ -3347,10 +3360,6 @@ html.ul-links .post-mention { text-decoration:underline; }
      sidebar's overflow:hidden (desktop-collapsed) or hidden by its display:none
      (mobile). Positioned via .more-popup CSS; toggled by the More buttons. -->
 <div class="more-popup" id="more-popup">
-          <button class="more-item" id="more-messages">
-            <span class="more-icon">✉️</span>
-            <span class="more-label">Messages</span>
-          </button>
           <button class="more-item" id="more-lists">
             <span class="more-icon">📋</span>
             <span class="more-label">Lists</span>
