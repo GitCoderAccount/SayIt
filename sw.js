@@ -26,6 +26,7 @@ const STATIC_ASSETS = [
   './core.js',
   './cache.js',
   './boot.js',
+  './sayit-crypto.js',
   './manifest.json',
   './image1.jpeg',
   './image1.png',
