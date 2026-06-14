@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260614-195';
+const SW_CACHE_VER = '20260614-196';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -401,7 +401,7 @@ class SayIt {
     g('nav-explore').onclick   = navClick(() => this.goExplore());
     g('nav-notifs').onclick    = navClick(() => this.goNotifications());
     g('nav-channels').onclick  = navClick(() => this.goChannels());
-    w('nav-mychannel', 'onclick', navClick(() => this.goSelf()));
+    w('nav-notgrok', 'onclick', navClick(() => this.goNotGrok()));
     g('nav-bookmarks').onclick = navClick(() => this.goBookmarks());
     g('nav-studio').onclick    = navClick(() => this.goDashboard());
     /* Lists / Communities are NOT top-level nav entries in X —
@@ -2057,15 +2057,15 @@ class SayIt {
   }
 
   async goSelf() {
-    if (!this.signer) { utils.toast('Connect wallet to view your channel'); return; }
-    this._updateTitle('My Channel');
+    if (!this.signer) { utils.toast('Connect wallet to view your chat'); return; }
+    this._updateTitle('My Chat');
     this._setRoute('/channel/' + this.state.signerAddr);
-    this.setNav('nav-mychannel', null);
+    this.setNav('nav-channels', 'channels'); /* "My Chat" lives under Chat now */
     this.state.mode    = 'self';
     this.state.channel = this.state.signerAddr;
     this.g('feed-tabs').classList.remove('tabs-sticky');
     this.g('feed-tabs').style.display = 'none';
-    const selfTitle = this.state.profile.username || 'My Channel';
+    const selfTitle = this.state.profile.username || 'My Chat';
     const selfHandle = this.state.signerAddr ? '@' + this.trunc(this.state.signerAddr) : '';
     this._pendingPageHeader = this._makePageHeader({
       title: selfTitle, subtitle: selfHandle, noBack: true });
@@ -3992,13 +3992,26 @@ class SayIt {
         <button class="ch-tab ch-tab-action" id="ch-rescan" title="Rescan the chain for channels">↺</button>
       </div>`;
 
-    if (!pins.length && !list.length) {
+    /* "My Chat" — the connected user's own channel, pinned first (opens in the
+       pane like any other chat). Hidden on the Following tab (it's you, not a
+       follow). Replaces the old "My Channel" nav button. */
+    const me = this.state.signerAddr;
+    const myProf = me ? (this.state.profCache[me] || this.state.profile || {}) : {};
+    const myChatRow = (me && tab !== 'following')
+      ? `<div class="ch-history-item ch-mychat" role="button" tabindex="0" data-ch-open="${utils.safe(me)}">
+          <img src="${utils.safe(utils.safeUrl(myProf.picUrl) || 'image1.jpeg')}" class="ch-hist-avatar" alt="" data-fallback-src="image1.jpeg">
+          <div class="ch-hist-body"><div class="ch-hist-top"><span class="ch-hist-name">My Chat</span></div>
+          <div class="ch-hist-preview">Your channel · posts sent to you</div></div>
+        </div>`
+      : '';
+
+    if (!myChatRow && !pins.length && !list.length) {
       const msg = tab === 'unread'    ? 'Nothing unread 🎉'
         : tab === 'following' ? (this.state.signerAddr ? "You're not following anyone yet" : 'Connect your wallet to see who you follow')
-        : 'No channels yet — post to any address and it shows up here.';
+        : 'No chats yet — post to any address and it shows up here.';
       html += `<div class="ch-empty-tab">${msg}</div>`;
     } else {
-      html += pins.map(row).join('') + list.map(row).join('');
+      html += myChatRow + pins.map(row).join('') + list.map(row).join('');
     }
 
     host.innerHTML = html;
@@ -5533,10 +5546,7 @@ class SayIt {
     this.g('connect-btn').style.display  = 'none';
     this.g('ap-addr').textContent        = this.trunc(addr);
     this.g('ch-self').style.display      = 'block';
-    this.g('nav-mychannel').style.display = '';
     this._syncNavLinks();
-    const mnMy = document.getElementById('mn-mychannel');
-    if (mnMy) mnMy.style.display = '';
     /* Retry any posts that failed while offline */
     setTimeout(() => this._retryPendingPosts(), 2000);
     const cached = await this.cache.getProfile(addr);
@@ -5637,9 +5647,6 @@ class SayIt {
     this.g('connect-btn').style.display  = 'block';
     this.g('compose-avatar').src         = 'image1.jpeg';
     this.g('ch-self').style.display      = 'none';
-    this.g('nav-mychannel').style.display = 'none';    /* desktop */
-    const mnMyHide = document.getElementById('mn-mychannel');
-    if (mnMyHide) mnMyHide.style.display = 'none';   /* mobile */
     this.g('ap-avatar').src          = 'image1.jpeg';
     this.g('ap-name').textContent    = 'My Wallet';
     this.g('ap-addr').textContent    = '';
@@ -5692,7 +5699,7 @@ class SayIt {
             /* Update My Channel page-header title if user is on that page */
             if (this.state.mode === 'self' && data.username) {
               const hdrTitle = this.g('feed')?.querySelector('.page-header-title');
-              if (hdrTitle && (hdrTitle.textContent === 'My Channel' || !hdrTitle.textContent)) {
+              if (hdrTitle && (hdrTitle.textContent === 'My Chat' || hdrTitle.textContent === 'My Channel' || !hdrTitle.textContent)) {
                 hdrTitle.textContent = data.username;
               }
             }
@@ -9436,6 +9443,27 @@ class SayIt {
     return this.goChannels('messages');
   }
 
+  /* "Not Grok" — placeholder page for our future on-chain AI assistant. */
+  goNotGrok() {
+    this._updateTitle('Not Grok');
+    this._setRoute('/notgrok');
+    this.setNav('nav-notgrok', null);
+    this.state.mode = 'notgrok';
+    this.g('compose-area').style.display   = 'none';
+    this.g('channel-banner').style.display = 'none';
+    this.g('feed-tabs').style.display      = 'none';
+    this.g('loading-more').style.display   = 'none';
+    this._pendingPageHeader = this._makePageHeader({ title: 'Not Grok', noBack: true });
+    this.g('feed').innerHTML = this._applyPageHeader() + `
+      <div class="prof-empty" style="padding:52px 24px">
+        <span style="font-size:42px">✨</span>
+        <h3>Not Grok — coming soon</h3>
+        <p style="color:var(--muted);max-width:400px;margin:8px auto 0;line-height:1.6">
+          Our own on-chain AI assistant will live here. (Yes, the name's a joke — for now.)
+          It'll help you draft posts, summarize threads, and explore PulseChain without leaving Say&nbsp;It.</p>
+      </div>`;
+  }
+
   _renderDmPanePlaceholder() {
     const host = this.g('ch-pane-content');
     if (host) host.innerHTML = `<div class="ch-pane-empty"><h3>Select a conversation</h3>
@@ -9792,12 +9820,11 @@ class SayIt {
     if (mpb) mpb.disabled = !this.g('modal-compose-text')?.value.trim();
   }
 
-  /* Point the My Channel / Profile nav links at the connected wallet's pages so
-     right-click / middle-click / ⌘-click can open them in a new tab. */
+  /* Point the Profile nav link at the connected wallet's page so right-click /
+     middle-click / ⌘-click can open it in a new tab. */
   _syncNavLinks() {
     const a = this.state.signerAddr;
-    const mc = this.g('nav-mychannel'), pr = this.g('nav-profile');
-    if (mc) { if (a) mc.href = '#/channel/' + a; else mc.removeAttribute('href'); }
+    const pr = this.g('nav-profile');
     if (pr) { if (a) pr.href = '#/profile/' + a; else pr.removeAttribute('href'); }
   }
 
@@ -10175,6 +10202,7 @@ class SayIt {
         case 'bookmarks':      this.goBookmarks(); break;
         case 'channels':       this.goChannels(); break;
         case 'messages':       this.goMessages?.(/^0x[a-f0-9]{40}$/i.test(arg) ? arg.toLowerCase() : null); break;
+        case 'notgrok':        this.goNotGrok?.(); break;
         case 'settings':       this.goSettings(); break;
         case 'lists':          this.goLists?.(); break;
         case 'analytics':      this.goAnalytics?.(); break;
@@ -12353,7 +12381,7 @@ class SayIt {
   /* Modes that replace the entire #feed DOM themselves — renderFeed must
      NOT overwrite them with the standard post list. */
   _selfManagedModes = new Set([
-    'notifications', 'profile', 'thread', 'channels', 'messages',
+    'notifications', 'profile', 'thread', 'channels', 'messages', 'notgrok',
     'explore', 'bookmarks', 'settings', 'lists', 'communities', 'followlist',
     'analytics', 'verify', 'dashboard', 'premium'
   ]);  /* lists/communities render their own browse UI into #feed */
