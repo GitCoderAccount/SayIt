@@ -118,9 +118,10 @@ PulseChain app. See README → Multichain.
 - [x] **Engagement routing — likes**: native on cheap chains, ported to the social chain (`LIKE:eip155:<id>:<hash>`) for expensive ones; counts collapse via `utils.refHash`. *(#189)*
 - [x] **Global follows** — Following feed scans followed addresses across enabled chains. *(#190)*
 
-### Multichain follow-ups (not yet done)
-- [ ] **Profile pages cross-chain** — still single-chain (several fetch loops: posts/replies/media/followers). Thread `chainId` like the feed. *(M)*
-- [ ] **Reposts (plain + quote) routing** — still publish on canonical/default; quote card needs cross-chain original-fetch (by chain-qualified ref) to render reposts of posts on other chains. *(M)*
-- [ ] **`pollNew` multichain** — the "N new posts" banner still polls PulseChain only; new posts on other chains appear on refresh/scroll. *(S)*
-- [ ] **Non-canonical sent-tx depth** — non-PulseChain Following scans use 1 mixed txlist page (no Blockscout v2 `filter=from`); a very active address's posts can be buried. *(S)*
-- [ ] **Real-wallet validation** — all write paths are headless-verified with a stubbed signer; confirm on-chain sends in Rabby (dust) on at least one extra chain. *(test)*
+### Multichain follow-ups
+- [x] **`pollNew` multichain** — the "N new posts" banner polls every enabled chain on the Home feed. *(#192)*
+- [x] **Profile pages cross-chain** — the profile's initial scan merges the address's posts from enabled chains (`_scanProfileExtraChains`), tagged with chain badges. Deeper scroll (`fetchProfileMore`) still pages the canonical chain only — minor. *(#193)*
+- [x] **Reposts (plain + quote) cross-chain** — chain-qualified refs `REPOST:eip155:<id>:0x<hash>`; the quote card fetches the original from its chain via the Etherscan v2 proxy. *(#194)*
+- [x] **Non-canonical sent-tx depth** — the Following scan pages up to 2 txlist pages per non-canonical chain (Etherscan v2 has no sent-only filter). *(#195)*
+- [ ] **Real-wallet validation** — all write paths are headless-verified with a stubbed signer; confirm on-chain sends in Rabby (dust) on at least one extra chain. *(owner test)*
+- [ ] **Followers cross-chain** — follower COUNT/list scans (`_scanFollowers`) still read the canonical chain; follows routed there stay correct, but a fuller cross-chain follower view is a future nicety. *(S)*
