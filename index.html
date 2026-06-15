@@ -642,6 +642,12 @@ nav { flex:1; padding:4px 0; }
   transition:opacity 0.15s;
 }
 .post-img-thumb:hover { opacity:0.9; }
+/* A single video/embed lives INSIDE .post-images, which already supplies the
+   rounded, clipped, 1px-bordered frame. Drop the inner wrap's own top margin
+   and corner radius so the media sits flush in that bordered window — no 8px
+   offset, no mismatched 12px-vs-16px corners (the "border slightly off"). */
+.post-images > .post-vid-wrap,
+.post-images > .post-yt-facade { margin-top:0; border-radius:0; }
 
 /* ── Full-screen image lightbox (X parity) ────────────────────────────
    Top-most overlay (z 9999) above the generic modal (500) and the space
@@ -704,7 +710,12 @@ nav { flex:1; padding:4px 0; }
 .post-vid-thumb {
   width:100%; max-height:420px; display:block;
   outline:none; cursor:pointer; object-fit:contain;
+  /* Fade in once the first frame is decoded so the post doesn't flash a
+     blank black box while the file loads (class added in _wireVideoObserver
+     on loadeddata; a safety timeout reveals it regardless). */
+  opacity:0; transition:opacity .25s ease;
 }
+.post-vid-thumb.vid-ready { opacity:1; }
 .vid-unmute-btn {
   position:absolute; bottom:8px; right:8px;
   background:rgba(0,0,0,0.6); border:none; border-radius:50%;

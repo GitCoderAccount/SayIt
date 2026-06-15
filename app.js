@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260614-207';
+const SW_CACHE_VER = '20260614-208';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -8374,6 +8374,20 @@ class SayIt {
     }
     media.forEach(el => {
       const isVideo = el.tagName === 'VIDEO';
+      /* Reveal the video (fade in) once its first frame is ready, so it never
+         flashes a blank black box while loading. Reveal immediately if already
+         buffered; otherwise on the first of loadeddata/canplay/playing, with a
+         safety timeout so a video that never fires those is never left hidden. */
+      if (isVideo && el.dataset.vidReady !== '1') {
+        const reveal = () => { el.dataset.vidReady = '1'; el.classList.add('vid-ready'); };
+        if (el.readyState >= 2) reveal();
+        else {
+          el.addEventListener('loadeddata', reveal, { once: true });
+          el.addEventListener('canplay',    reveal, { once: true });
+          el.addEventListener('playing',    reveal, { once: true });
+          setTimeout(reveal, 2500);
+        }
+      }
       if (isVideo) {
         if (autoplay && el.controls) {
           el.controls = false;
