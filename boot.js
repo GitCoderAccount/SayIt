@@ -16,10 +16,31 @@ try {
     'wss://tracker.webtorrent.dev',
     'wss://tracker.btorrent.xyz',
   ];
+  /* Explorer-API + RPC origins for the optional multichain networks. boot.js
+     runs before any script, so it can't read core.js's CHAINS registry — keep
+     this map in sync with it. Origins are only added for chains the user has
+     actually enabled (Settings → Networks), so the allowlist stays tight; one
+     Etherscan-v2 origin (api.etherscan.io) covers ETH/Base/BSC reads. */
+  const _CHAIN_ORIGINS = {
+    1:    ['https://api.etherscan.io', 'https://eth.llamarpc.com'],
+    8453: ['https://api.etherscan.io', 'https://mainnet.base.org'],
+    56:   ['https://api.etherscan.io', 'https://bsc-dataseed.binance.org'],
+  };
   try {
     const _s2 = JSON.parse(localStorage.getItem('sayitSettings') || '{}');
-    [_s2.apiPrimary, _s2.apiBackup, _s2.rpcUrl].forEach(u => {
+    /* User-configured PulseChain endpoints (keys: apiUrl/backupApiUrl/rpcUrl). */
+    [_s2.apiUrl, _s2.backupApiUrl, _s2.rpcUrl].forEach(u => {
       if (typeof u === 'string' && u) { try { _cs.push(new URL(u).origin); } catch (e) {} }
+    });
+    /* Enabled multichain networks (+ any custom per-chain endpoints). */
+    (Array.isArray(_s2.enabledChains) ? _s2.enabledChains : []).forEach(id => {
+      (_CHAIN_ORIGINS[Number(id)] || []).forEach(o => _cs.push(o));
+    });
+    const _ce = _s2.chainEndpoints || {};
+    Object.keys(_ce).forEach(id => {
+      [_ce[id]?.api, _ce[id]?.rpc].forEach(u => {
+        if (typeof u === 'string' && u) { try { _cs.push(new URL(u).origin); } catch (e) {} }
+      });
     });
   } catch (e) { /* settings unreadable — defaults only */ }
   const _m = document.createElement('meta');
