@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260615-217';
+const SW_CACHE_VER = '20260615-218';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -7875,13 +7875,26 @@ class SayIt {
     if (typeof document !== 'undefined' && document.hidden) return;
     const latestTs = this.state.posts[0] ? new Date(this.state.posts[0].timestamp) : new Date(0);
     try {
-      const raw       = await this.fetchOnePage(1);
       /* Reuse _postMap rather than rebuilding a Set every poll cycle.
          _postMap is the canonical post lookup, kept in sync by renderFeed. */
       const inPending = new Set(this.state.pending.map(p => p.txHash));
       /* Use _postHashSet (O(1)) if available, fall back to _postMap.has */
       const inFeed = this._postHashSet || null;
-      const fresh = this.parseTxs(raw).filter(p =>
+      /* On the aggregated Home feed, poll page 1 of every enabled chain in
+         parallel (each parsed with its chainId) so new posts on any chain
+         surface in the "N new posts" banner. Single-chain → existing path. */
+      const _chains = this._activeFeedChains();
+      let candidates;
+      if (_chains.length > 1) {
+        const batches = await Promise.all(_chains.map(async cid => {
+          try { return this.parseTxs(await this.apiFetch(this.queryAddr(), 1, cid), cid); }
+          catch { return []; }
+        }));
+        candidates = batches.flat();
+      } else {
+        candidates = this.parseTxs(await this.fetchOnePage(1));
+      }
+      const fresh = candidates.filter(p =>
         /* >= not >: PulseScan timestamps are per-second, so a genuinely new
            post mined in the same second as the newest loaded post would be
            dropped. The hash-set + pending checks below reject true dupes. */
