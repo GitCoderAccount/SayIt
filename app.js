@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260615-211';
+const SW_CACHE_VER = '20260615-212';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -7492,13 +7492,56 @@ class SayIt {
     return this.apiFetch(addr, page);
   }
 
+  /* The chains the current feed should read. Only the Home feed (main channel)
+     aggregates across the user's enabled chains; every other surface (profiles,
+     token channels, notifications, threads) stays single-chain on the canonical
+     chain. Returns [369] by default, so with no extra chains enabled this is a
+     no-op and the single-chain path below is used unchanged. */
+  _activeFeedChains() {
+    if (this.state.mode === 'main'
+        && (this.state.channel || '').toLowerCase() === MAIN_CHANNEL.toLowerCase()) {
+      const enabled = (this._getSettings().enabledChains || [])
+        .map(Number).filter(id => id !== CANONICAL_CHAIN_ID && chainCfg(id));
+      if (enabled.length) return [CANONICAL_CHAIN_ID, ...enabled];
+    }
+    return [CANONICAL_CHAIN_ID];
+  }
+
+  /* Aggregated fetch: pull the next page from every active chain in parallel,
+     parse each with its own chainId, and return the merged posts. Per-chain
+     page cursors + end-of-history live in state.chainPages / chainHasMore so
+     each chain paginates independently; state.hasMore stays true while ANY
+     chain has more. A chain that errors is dropped for this pass (others still
+     render) — one slow/broken explorer never blocks the rest of the feed. */
+  async _fetchNextAcrossChains(chains, myToken) {
+    this.state.chainPages   = this.state.chainPages   || {};
+    this.state.chainHasMore = this.state.chainHasMore || {};
+    const addr = this.queryAddr();
+    const batches = await Promise.all(chains.map(async cid => {
+      if (this.state.chainHasMore[cid] === false) return [];
+      const page = this.state.chainPages[cid] || 1;
+      let raw;
+      try { raw = await this.apiFetch(addr, page, cid); }
+      catch { this.state.chainHasMore[cid] = false; return []; }
+      this.state.chainPages[cid] = page + 1;
+      if (raw.length < 50) this.state.chainHasMore[cid] = false;
+      return this.parseTxs(raw, cid);
+    }));
+    if (myToken !== this._fetchToken) return [];
+    this.state.hasMore = chains.some(cid => this.state.chainHasMore[cid] !== false);
+    return batches.flat();
+  }
+
   async fetchPosts(reset = false) {
     if (this.state.loading) return;
     this.state.loading = true;
     /* Capture token at entry. If a channel switch / refresh bumps it during
        our await, we abort writes to prevent cross-channel post leakage. */
     const myToken = this._fetchToken;
-    if (reset) { this.state.nextPage = 1; this.state.hasMore = true; }
+    if (reset) {
+      this.state.nextPage = 1; this.state.hasMore = true;
+      this.state.chainPages = {}; this.state.chainHasMore = {};
+    }
     const loadingEl = this.g('loading-more');
     loadingEl.style.display = 'block';
     /* Spinner div contributes no text, so the textContent comparison in the
@@ -7508,22 +7551,35 @@ class SayIt {
     let found = 0, pages = 0;
     try {
       while (found < POSTS_TARGET && this.state.hasMore && pages < MAX_PAGES) {
-        let raw;
-        try { raw = await this.fetchOnePage(this.state.nextPage); }
-        catch (err) {
-          /* Don't toast on aborted fetches — they're intentional. */
-          if (myToken === this._fetchToken) utils.toast('Fetch error — ' + err.message);
-          break;
+        const _chains = this._activeFeedChains();
+        let parsed;
+        if (_chains.length > 1) {
+          /* Aggregated Home feed across the user's enabled chains. */
+          try { parsed = await this._fetchNextAcrossChains(_chains, myToken); }
+          catch (err) {
+            if (myToken === this._fetchToken) utils.toast('Fetch error — ' + err.message);
+            break;
+          }
+          if (myToken !== this._fetchToken) return;
+          pages++;
+        } else {
+          let raw;
+          try { raw = await this.fetchOnePage(this.state.nextPage); }
+          catch (err) {
+            /* Don't toast on aborted fetches — they're intentional. */
+            if (myToken === this._fetchToken) utils.toast('Fetch error — ' + err.message);
+            break;
+          }
+          /* Stale fetch — channel changed mid-flight. Abandon silently. */
+          if (myToken !== this._fetchToken) return;
+          this.state.nextPage++;
+          pages++;
+          /* End-of-history is "API returned fewer than the page size" — robust
+             against a single 49-result page that the old equality check would
+             misread as "definitive end". */
+          if (raw.length < 50) this.state.hasMore = false;
+          parsed = this.parseTxs(raw);
         }
-        /* Stale fetch — channel changed mid-flight. Abandon silently. */
-        if (myToken !== this._fetchToken) return;
-        this.state.nextPage++;
-        pages++;
-        /* End-of-history is "API returned fewer than the page size" — robust
-           against a single 49-result page that the old equality check would
-           misread as "definitive end". */
-        if (raw.length < 50) this.state.hasMore = false;
-        const parsed = this.parseTxs(raw);
         if (parsed.length > 0) {
           /* Dedup within this batch AND against already-loaded posts */
           const unique = parsed.filter(p => !this._postHashSet.has(p.txHash));
