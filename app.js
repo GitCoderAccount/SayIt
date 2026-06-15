@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260615-213';
+const SW_CACHE_VER = '20260615-214';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -5511,39 +5511,45 @@ class SayIt {
     catch { return null; }
   }
 
-  /* Poll eth_chainId until the wallet reports PulseChain — switches are async
-     on mobile and can take a moment. Returns the last value read (~2s max). */
-  async _readChainWithRetry(eth, tries = 8) {
+  /* Poll eth_chainId until the wallet reports the wanted chain — switches are
+     async on mobile and can take a moment. Returns the last value read (~2s).
+     wantId defaults to PulseChain so existing callers are unchanged. */
+  async _readChainWithRetry(eth, wantId = PULSE_CHAIN_ID, tries = 8) {
     let id = null;
     for (let i = 0; i < tries; i++) {
       id = await this._readChainId(eth);
-      if (id === PULSE_CHAIN_ID) return id;
+      if (id === wantId) return id;
       await new Promise(r => setTimeout(r, 250));
     }
     return id;
   }
 
-  /* Make sure the wallet is on PulseChain before sending a transaction. Mobile
-     wallets often sit on Ethereum; a tx there wastes gas and never shows up
-     here. Tries to switch and refreshes the signer; returns false (with a
-     toast) if it can't, so the caller aborts the send. */
-  async _ensureOnPulseForTx() {
+  /* Make sure the wallet is on a given chain before sending a transaction.
+     Mobile wallets often sit on Ethereum; a tx on the wrong chain wastes gas
+     and never shows up where expected. Switches (adding the chain if unknown)
+     and refreshes the signer; returns false (with a toast) if it can't, so the
+     caller aborts. Registry-driven — works for any supported chain. */
+  async _ensureOnChain(chainId = CANONICAL_CHAIN_ID) {
+    const cfg = chainCfg(chainId) || CHAINS[CANONICAL_CHAIN_ID];
     const eth = this._getEthereum();
     if (!eth) return true;
-    let chainId = await this._readChainId(eth);
-    if (chainId === PULSE_CHAIN_ID) return true;
-    utils.toast('Switching to PulseChain…');
-    try { await this._ensurePulseChain(eth); } catch { /* handled below */ }
-    chainId = await this._readChainWithRetry(eth);
-    if (chainId === PULSE_CHAIN_ID) {
+    let cur = await this._readChainId(eth);
+    if (cur === cfg.id) return true;
+    utils.toast(`Switching to ${cfg.name}…`);
+    try { await this._ensureChainAdded(eth, cfg); } catch { /* handled below */ }
+    cur = await this._readChainWithRetry(eth, cfg.id);
+    if (cur === cfg.id) {
       this.signer = await new ethers.BrowserProvider(eth).getSigner();
       this._wrongChain = false;
       this._reflectChainState();
       return true;
     }
-    utils.toast('Please switch your wallet to PulseChain (chain 369), then try again.');
+    utils.toast(`Please switch your wallet to ${cfg.name} (chain ${cfg.id}), then try again.`);
     return false;
   }
+
+  /* Backward-compatible wrapper — every existing caller targets PulseChain. */
+  async _ensureOnPulseForTx() { return this._ensureOnChain(CANONICAL_CHAIN_ID); }
 
   /* Show/hide the persistent wrong-network bar (only while connected). */
   _reflectChainState() {
@@ -5551,34 +5557,35 @@ class SayIt {
   }
   /* "Switch" button on the wrong-network bar. */
   async _switchToPulse() {
-    await this._ensureOnPulseForTx();
+    await this._ensureOnChain(CANONICAL_CHAIN_ID);
     this._reflectChainState();
   }
 
-  /* Switch the wallet to PulseChain. If the chain isn't known to the wallet
-     (EIP-1193 error 4902), add it first with the canonical RPC params, then
-     the wallet switches to it automatically. _switchingChain guards the
-     chainChanged listener so OUR switches don't trigger its handler. */
-  async _ensurePulseChain(eth) {
+  /* Switch the wallet to a chain. If the chain isn't known to the wallet
+     (EIP-1193 error 4902), add it first with the registry's RPC params, then
+     the wallet switches to it. _switchingChain guards the chainChanged
+     listener so OUR switches don't trigger its handler. */
+  async _ensureChainAdded(eth, cfg) {
+    cfg = cfg || CHAINS[CANONICAL_CHAIN_ID];
     this._switchingChain = true;
     try {
       try {
-        await eth.request({ method:'wallet_switchEthereumChain', params:[{ chainId:'0x171' }] });
+        await eth.request({ method:'wallet_switchEthereumChain', params:[{ chainId: cfg.hex }] });
       } catch (err) {
         const code = err?.code ?? err?.data?.originalError?.code;
         if (code === 4902 || /unrecognized chain|add this network|wallet_addEthereumChain/i.test(err?.message || '')) {
           await eth.request({
             method:'wallet_addEthereumChain',
             params:[{
-              chainId:'0x171',
-              chainName:'PulseChain',
-              nativeCurrency:{ name:'Pulse', symbol:'PLS', decimals:18 },
-              rpcUrls:['https://rpc.pulsechain.com'],
-              blockExplorerUrls:['https://scan.pulsechain.com'],
+              chainId: cfg.hex,
+              chainName: cfg.name,
+              nativeCurrency: cfg.nativeCurrency,
+              rpcUrls: cfg.rpcUrls,
+              blockExplorerUrls: [cfg.explorer.web],
             }],
           });
           /* Adding a chain usually switches to it; make the switch explicit. */
-          try { await eth.request({ method:'wallet_switchEthereumChain', params:[{ chainId:'0x171' }] }); }
+          try { await eth.request({ method:'wallet_switchEthereumChain', params:[{ chainId: cfg.hex }] }); }
           catch {}
         } else {
           throw err;
@@ -5590,6 +5597,9 @@ class SayIt {
       setTimeout(() => { this._switchingChain = false; }, 1500);
     }
   }
+
+  /* Backward-compatible wrapper used by connect(). */
+  async _ensurePulseChain(eth) { return this._ensureChainAdded(eth, CHAINS[CANONICAL_CHAIN_ID]); }
 
   async connect() {
     const eth = this._getEthereum();
