@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260615-210';
+const SW_CACHE_VER = '20260615-211';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -4296,6 +4296,45 @@ class SayIt {
         </div>
       </div>
 
+      <!-- Networks (multichain) -->
+      <div class="settings-section">
+        <div class="settings-section-title">Networks</div>
+        <div class="settings-row" style="display:block">
+          <span style="font-size:13px;color:var(--muted);line-height:1.6">
+            SayIt is multichain — your feed can aggregate posts across EVM chains, and your address is the same identity on all of them.
+            <strong>PulseChain is always on.</strong> Enable others below; reads use Etherscan's unified API (one key covers Ethereum, Base &amp; BNB Chain).
+            New posts and ported engagement go to your <strong>default chain</strong>. Changes apply on the next reload.
+          </span>
+        </div>
+        ${chainList().filter(c => !c.canonical).map(c => `
+          <div class="settings-row">
+            <div class="settings-row-label"><strong>${utils.safe(c.name)}
+              <span class="chain-badge" style="--chain-color:${chainColor(c.id)};margin-left:4px">${utils.safe(c.badge)}</span></strong>
+              <span>${c.social ? 'Social chain — can host ported likes/follows' : 'Content chain (engagement ports to your default)'} · via ${utils.safe(c.explorer.name)}</span></div>
+            <label class="settings-switch">
+              <input type="checkbox" class="set-chain-toggle" data-chain-id="${c.id}" ${(s.enabledChains || []).map(Number).includes(c.id) ? 'checked' : ''}>
+              <span class="settings-switch-slider"></span>
+            </label>
+          </div>`).join('')}
+        <div class="settings-row" style="flex-direction:column;align-items:flex-start;margin-top:12px">
+          <div class="settings-row-label"><strong>Etherscan API key</strong>
+            <span>Free from etherscan.io — one key covers Ethereum, Base, BNB Chain &amp; more via the unified API. Required to read non-PulseChain networks.</span></div>
+          <input class="settings-input" id="set-etherscan-key" value="${utils.safe(s.etherscanKey || '')}"
+            placeholder="Your Etherscan v2 API key" autocomplete="off" autocorrect="off" spellcheck="false">
+        </div>
+        <div class="settings-row" style="flex-direction:column;align-items:flex-start;margin-top:12px">
+          <div class="settings-row-label"><strong>Default chain</strong>
+            <span>Where new posts are published, and where engagement (likes/follows/reposts) is routed for expensive chains.</span></div>
+          <select class="settings-input" id="set-default-chain">
+            ${[CHAINS[CANONICAL_CHAIN_ID], ...chainList().filter(c => !c.canonical && (s.enabledChains || []).map(Number).includes(c.id))]
+              .map(c => `<option value="${c.id}" ${Number(s.defaultChain || CANONICAL_CHAIN_ID) === c.id ? 'selected' : ''}>${utils.safe(c.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="settings-row" style="margin-top:12px">
+          <button class="settings-btn primary" id="set-save-networks">Save Networks</button>
+        </div>
+      </div>
+
       <!-- Content & Feed filters -->
       <div class="settings-section">
         <div class="settings-section-title">Content &amp; Feed</div>
@@ -4646,6 +4685,26 @@ class SayIt {
       s.backupApiUrl = rawBackup;
       this._saveSettings(s);
       utils.toast('API settings saved ✓');
+    });
+    /* Networks (multichain): enabled chains + Etherscan key + default chain. */
+    g('set-save-networks')?.addEventListener('click', () => {
+      const s = this._getSettings();
+      const prevEnabled = (s.enabledChains || []).map(Number).sort().join(',');
+      const enabled = [...document.querySelectorAll('.set-chain-toggle')]
+        .filter(cb => cb.checked)
+        .map(cb => Number(cb.dataset.chainId))
+        .filter(id => !!chainCfg(id));
+      s.enabledChains = enabled;
+      s.etherscanKey  = g('set-etherscan-key').value.trim();
+      /* Default chain must be the canonical chain or one that's enabled. */
+      let dc = Number(g('set-default-chain').value) || CANONICAL_CHAIN_ID;
+      if (dc !== CANONICAL_CHAIN_ID && !enabled.includes(dc)) dc = CANONICAL_CHAIN_ID;
+      s.defaultChain = dc;
+      this._saveSettings(s);
+      const changed = enabled.slice().sort().join(',') !== prevEnabled;
+      /* connect-src + the chain set are read at boot, so a reload is needed to
+         actually fetch a newly-enabled chain. */
+      utils.toast(changed ? 'Networks saved — reload to apply' : 'Networks saved ✓');
     });
     /* Export / Import data backup. */
     g('set-export')?.addEventListener('click', () => this._exportData());
