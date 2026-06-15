@@ -496,20 +496,26 @@ const utils = {
           const href = `https://x.com/${tw.handle}/status/${tw.id}`;
           const safeHandle = utils.safe(tw.handle);
           const safeId = utils.safe(tw.id);
-          /* Click-to-load X embed facade: nothing contacts X until the user
-             taps. On tap (with embeds allowed) we swap in X's own iframe
-             embed — it renders the full post incl. video, and X's runtime
-             runs INSIDE that sandboxed third-party iframe, so our page CSP
-             stays strict (only frame-src lists platform.twitter.com) and no
-             X script touches our origin. In strict privacy mode the tap
-             opens X in a new tab instead. */
-          embedHtml += `<div class="x-embed-card x-embed-facade" data-x-id="${safeId}" data-x-href="${utils.safe(href)}" role="button" tabindex="0">
+          /* X embed facade. By default embeds AUTO-LOAD as they scroll into
+             view (X-like): we swap in X's own iframe embed — it renders the
+             full post incl. video, and X's runtime runs INSIDE that sandboxed
+             third-party iframe, so our page CSP stays strict (frame-src only
+             lists platform.twitter.com) and no X script touches our origin.
+             The facade is then just a brief loading state. With auto-load
+             turned off (Settings → Privacy / Data saver) it stays a manual
+             card; tapping loads the embed (or opens X in a new tab in strict
+             mode). */
+          const xAuto = (typeof pulse !== 'undefined') && pulse._embedsAutoLoad && pulse._embedsAutoLoad();
+          const xCta = xAuto
+            ? `<span class="x-embed-cta x-embed-loading"><span class="spinner sp-sm" aria-hidden="true"></span>Loading post from X…</span>`
+            : `<span class="x-embed-cta">▶ Tap to load this post (text, images &amp; video)</span>`;
+          embedHtml += `<div class="x-embed-card x-embed-facade" data-x-id="${safeId}" data-x-href="${utils.safe(href)}" role="button" tabindex="0" aria-label="Post on X by @${safeHandle}">
             <span class="x-embed-hdr">
               <svg class="x-embed-logo" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
               <span class="x-embed-title">Post on X</span>
             </span>
             <span class="x-embed-handle">@${safeHandle}</span>
-            <span class="x-embed-cta">▶ Tap to load this post (text, images &amp; video)</span>
+            ${xCta}
           </div>`;
           mediaCount++;
         }

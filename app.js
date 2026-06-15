@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260614-209';
+const SW_CACHE_VER = '20260615-210';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -1159,6 +1159,15 @@ class SayIt {
      explicitly clicks a facade — thumbnails are replaced by a neutral
      local card. Opt-in via Settings → Privacy. */
   _embedThumbsAllowed() { return this._getSettings().loadEmbedThumbs !== false; }
+
+  /* Whether third-party embeds (X tweets, YouTube/Vimeo) auto-load as they
+     scroll into view — the default, X-like behavior. Off when the user opts
+     into a more private / data-light mode. Single source of truth for the
+     scroll observer and the facade's loading affordance. */
+  _embedsAutoLoad() {
+    const s = this._getSettings();
+    return !s.dataSaver && s.autoplayEmbeds !== false && s.loadEmbedThumbs !== false;
+  }
 
   _playFacade(el, muted = false) {
     const yt = el.dataset.ytId, vm = el.dataset.vimeoId;
@@ -4338,7 +4347,7 @@ class SayIt {
           </label>
         </div>
         <div class="settings-row">
-          <div class="settings-row-label"><strong>Autoplay video embeds</strong><span>Start embeds muted when ¾ visible (requires thumbnails; loads the player without a tap)</span></div>
+          <div class="settings-row-label"><strong>Auto-load &amp; play embeds</strong><span>Load shared X posts and start YouTube/Vimeo (muted) automatically as they scroll into view — like X. Off = a tap-to-load card for each (more private). Requires embed thumbnails.</span></div>
           <label class="settings-switch">
             <input type="checkbox" id="set-autoplay-embeds" ${s.autoplayEmbeds === false ? '' : 'checked'}>
             <span class="settings-switch-slider"></span>
@@ -8354,13 +8363,18 @@ class SayIt {
              way to stop a cross-origin player. */
           if (el.classList.contains('x-embed-loaded')) {
             if (!el.isConnected) { this._embObserver.unobserve(el); return; }
-            if (entry.intersectionRatio < 0.25) this._revertXEmbed(el);
+            /* Keep the loaded tweet until it's almost entirely gone — avoids
+               churn now that it loads early. */
+            if (entry.intersectionRatio < 0.05) this._revertXEmbed(el);
             return;
           }
           if (el.classList.contains('x-embed-facade')) {
             const s3 = this._getSettings();
             if (s3.dataSaver || s3.autoplayEmbeds === false || s3.loadEmbedThumbs === false) return;
-            if (entry.intersectionRatio >= 0.75) this._loadXEmbed(el);
+            /* X posts auto-load as soon as they enter the viewport (≥¼), so a
+               shared tweet appears on its own like it does on X — no tap. The
+               privacy toggles above (or Data saver) turn this off. */
+            if (entry.intersectionRatio >= 0.25) this._loadXEmbed(el);
             return;
           }
           if (!el.classList.contains('post-yt-facade')) return;
@@ -8370,7 +8384,7 @@ class SayIt {
           if (s2.dataSaver || s2.autoplayEmbeds === false || s2.loadEmbedThumbs === false) return;
           if (entry.intersectionRatio >= 0.75) this._playFacade(el, true);
         });
-      }, { threshold: [0.25, 0.75] });
+      }, { threshold: [0.05, 0.25, 0.75] });
     }
     media.forEach(el => {
       const isVideo = el.tagName === 'VIDEO';
