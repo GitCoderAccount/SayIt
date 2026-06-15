@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260614-206';
+const SW_CACHE_VER = '20260614-207';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -1115,6 +1115,20 @@ class SayIt {
     g('media-url-input').oninput    = () => this._previewMedia();
     g('media-attach-btn').onclick   = () => this._attachMedia();
     g('media-cancel-btn').onclick   = () => this.closeModal('media-modal');
+
+    /* Reply + Quote modal toolbars — same Media / GIF / Emoji affordances as
+       the main composer, each targeting its OWN textarea (X parity: you can
+       add media, GIFs, and emoji when replying or quoting). */
+    const wireMiniToolbar = (imgId, gifId, emojiId, taId) => {
+      const ta = g(taId);
+      if (!ta) return;
+      const ib = g(imgId), gb = g(gifId), eb = g(emojiId);
+      if (ib) ib.onclick = () => this.openMediaModal('media', ta);
+      if (gb) gb.onclick = () => this.openMediaModal('gif', ta);
+      if (eb) eb.onclick = () => this._openEmojiPickerFor(ta, eb);
+    };
+    wireMiniToolbar('reply-image-btn',  'reply-gif-btn',  'reply-emoji-btn',  'reply-input');
+    wireMiniToolbar('repost-image-btn', 'repost-gif-btn', 'repost-emoji-btn', 'repost-input');
 
     this._initPullToRefresh();
   }
