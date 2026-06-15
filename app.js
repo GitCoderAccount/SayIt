@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260615-214';
+const SW_CACHE_VER = '20260615-215';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -458,6 +458,7 @@ class SayIt {
     g('post-btn').onclick           = () => this.publishPost();
     g('expand-compose-btn').onclick = () => this.openComposeModal();
     this._syncPostBtn(); /* initial: disabled while the box is empty */
+    this._initComposerChains(); /* multichain "posting to" selectors */
 
     g('close-compose-modal').onclick = () => this.closeModal('compose-modal');
     g('modal-compose-text').oninput  = () => {
@@ -1516,7 +1517,7 @@ class SayIt {
     const text = this.g('modal-compose-text').value.trim();
     if (!text) return;
     this.g('compose-text').value = text;
-    const ok = await this.publishPost();
+    const ok = await this.publishPost(this._composerChainFrom('modal-compose-chain'));
     if (ok) {
       this.closeModal('compose-modal');
       this.g('modal-compose-text').value = '';
@@ -9763,12 +9764,13 @@ class SayIt {
   }
 
 
-  async publish(content, parentTx = null, toAddress = null) {
+  async publish(content, parentTx = null, toAddress = null, chainId = CANONICAL_CHAIN_ID) {
     if (!this.signer)     { utils.toast('Connect wallet first'); return false; }
     if (!content?.trim()) { utils.toast('Message cannot be empty'); return false; }
-    /* Guard the chain: never send on the wrong network (mobile wallets default
-       to Ethereum). Switches to PulseChain if needed; aborts if it can't. */
-    if (!(await this._ensureOnPulseForTx())) return false;
+    /* Guard the chain: switch the wallet to the target chain (default = the
+       canonical chain, so every existing caller is unchanged). The composer
+       passes the user's chosen chain; replies pass the parent post's chain. */
+    if (!(await this._ensureOnChain(chainId))) return false;
     let body = content.trim();
     /* No character limit — users can post articles, essays, or books.
        The feed truncates long posts with a "Show more" expand link. */
@@ -9819,6 +9821,7 @@ class SayIt {
           reporter: this.state.signerAddr, to: to.toLowerCase(),
           timestamp: new Date().toISOString(),
           txHash: hash, channel: this.state.channel, mode: this.state.mode,
+          chainId: Number(chainId) || CANONICAL_CHAIN_ID,
         };
         this.state.posts.unshift(post);
         /* Add to the dedup set so the next poll doesn't treat our own
@@ -9875,15 +9878,43 @@ class SayIt {
     }
   }
 
-  async publishPost() {
+  /* The chain a composer should post to: its selector value, falling back to
+     the user's default chain (or canonical). */
+  _composerChainFrom(selId) {
+    const el = this.g(selId);
+    const v  = el ? Number(el.value) : NaN;
+    if (v && chainCfg(v)) return v;
+    return Number(this._getSettings().defaultChain) || CANONICAL_CHAIN_ID;
+  }
+
+  /* Populate + show the composer "posting to" selectors. Only shown when the
+     user has >1 chain enabled; otherwise hidden (single-chain users see no
+     change). Default selection = the user's default chain. */
+  _initComposerChains() {
+    const enabled = (this._getSettings().enabledChains || [])
+      .map(Number).filter(id => id !== CANONICAL_CHAIN_ID && chainCfg(id));
+    const ids = [CANONICAL_CHAIN_ID, ...enabled];
+    const def = Number(this._getSettings().defaultChain) || CANONICAL_CHAIN_ID;
+    ['compose-chain', 'modal-compose-chain'].forEach(selId => {
+      const el = this.g(selId);
+      if (!el) return;
+      if (ids.length <= 1) { el.hidden = true; el.innerHTML = ''; return; }
+      el.innerHTML = ids.map(id =>
+        `<option value="${id}"${id === def ? ' selected' : ''}>${utils.safe(chainName(id))}</option>`).join('');
+      el.hidden = false;
+    });
+  }
+
+  async publishPost(chainId) {
     const text = this.g('compose-text').value.trim();
     if (!text) return false;
+    const cid = chainId != null ? chainId : this._composerChainFrom('compose-chain');
     /* Disable the Post button during the publish round-trip so users can't
        double-click and fire two transactions. Re-enable in finally. */
     const btn = this.g('post-btn');
     if (btn) btn.disabled = true;
     try {
-      const ok = await this.publish(text);
+      const ok = await this.publish(text, null, null, cid);
       if (ok) {
         this.g('compose-text').value = '';
         this.g('compose-text').style.height = '';
@@ -10203,9 +10234,12 @@ class SayIt {
     const comment = this.g('repost-input').value.trim();
     if (!comment) { utils.toast('Add some text to quote this post'); return; }
     const hash    = this.state.repostTarget.txHash;
-    /* Quote format: REPOST:{hash}\n\n{comment} */
+    /* Quote format: REPOST:{hash}\n\n{comment}. A quote is a fresh post →
+       publish on the user's default chain (it references the original by hash,
+       cross-chain is fine — it just loads a touch slower). */
     const content = `REPOST:${hash}\n\n${comment}`;
-    const ok = await this.publish(content);
+    const cid = Number(this._getSettings().defaultChain) || CANONICAL_CHAIN_ID;
+    const ok = await this.publish(content, null, null, cid);
     if (ok) {
       this.closeModal('repost-modal');
       this.g('repost-input').value = '';
@@ -10216,7 +10250,11 @@ class SayIt {
   async postReply() {
     const text = this.g('reply-input').value.trim();
     if (!text || !this.state.replyTarget) return;
-    const ok = await this.publish(text, this.state.replyTarget.txHash, this.state.replyTarget.to);
+    /* Replies stay NATIVE — published on the parent post's own chain (the same
+       channel address exists on every EVM chain), so the thread stays on-chain
+       where the post lives. */
+    const cid = Number(this.state.replyTarget.chainId) || CANONICAL_CHAIN_ID;
+    const ok = await this.publish(text, this.state.replyTarget.txHash, this.state.replyTarget.to, cid);
     if (ok) { this.closeModal('reply-modal'); this.g('reply-input').value = ''; }
   }
 
