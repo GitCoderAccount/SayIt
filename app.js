@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260615-215';
+const SW_CACHE_VER = '20260615-216';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -1865,7 +1865,7 @@ class SayIt {
             }
             let type = 'message', target = null, preview = '';
             if (text.startsWith(LIKE_PREFIX)) {
-              type = 'like'; target = text.slice(LIKE_PREFIX.length).trim().toLowerCase();
+              type = 'like'; target = utils.refHash(text.slice(LIKE_PREFIX.length));
             } else if (text.startsWith(FOLLOW_PREFIX)) {
               type = 'follow'; target = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
             } else if (text.startsWith(UNFOLLOW_PREFIX)) {
@@ -3053,7 +3053,7 @@ class SayIt {
           try {
             const text = ethers.toUtf8String(tx.input).trim();
             if (text.startsWith(LIKE_PREFIX)) {
-              const target = text.slice(LIKE_PREFIX.length).trim().toLowerCase();
+              const target = utils.refHash(text.slice(LIKE_PREFIX.length));
               if (/^0x[a-f0-9]{64}$/.test(target)) {
                 likes.push({ txHash: tx.hash.toLowerCase(), target,
                              from: tx.from.toLowerCase(),
@@ -3229,7 +3229,7 @@ class SayIt {
         if (p.postType !== 'like') return;
         let target = p.reactionTarget;
         if (!target && typeof p.content === 'string' && p.content.startsWith('LIKE:'))
-          target = p.content.slice(5).trim().toLowerCase();
+          target = utils.refHash(p.content.slice(5));
         add(target, p.txHash);
       });
     } catch { /* cache unavailable */ }
@@ -5741,10 +5741,10 @@ class SayIt {
             /* UNLIKE check before LIKE (defensive ordering — neither
                startsWith would clash but readability matters). */
             if (text.startsWith(UNLIKE_PREFIX)) {
-              const h = text.slice(UNLIKE_PREFIX.length).trim().toLowerCase();
+              const h = utils.refHash(text.slice(UNLIKE_PREFIX.length));
               if (!seenLike.has(h)) seenLike.add(h);
             } else if (text.startsWith(LIKE_PREFIX)) {
-              const h = text.slice(LIKE_PREFIX.length).trim().toLowerCase();
+              const h = utils.refHash(text.slice(LIKE_PREFIX.length));
               if (!seenLike.has(h)) { seenLike.add(h); this.state.likes.add(h); }
             } else if (text.startsWith(UNBOOKMARK_PREFIX) && to === from) {
               const h = text.slice(UNBOOKMARK_PREFIX.length).trim().toLowerCase();
@@ -7766,10 +7766,10 @@ class SayIt {
       let reactionTarget = null;
       if (raw.startsWith(UNLIKE_PREFIX)) {
         postType = 'unlike';
-        reactionTarget = raw.slice(UNLIKE_PREFIX.length).trim().toLowerCase();
+        reactionTarget = utils.refHash(raw.slice(UNLIKE_PREFIX.length));
       } else if (raw.startsWith(LIKE_PREFIX)) {
         postType = 'like';
-        reactionTarget = raw.slice(LIKE_PREFIX.length).trim().toLowerCase();
+        reactionTarget = utils.refHash(raw.slice(LIKE_PREFIX.length));
       } else if (raw.startsWith(UNFOLLOW_PREFIX)) {
         postType = 'unfollow';
         reactionTarget = raw.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase();
@@ -9970,6 +9970,30 @@ class SayIt {
     return true;
   }
 
+  /* The social chain to port engagement (likes/reposts) to: the user's default
+     chain if it can host engagement, else the canonical chain (always social). */
+  _engagementChain() {
+    const def = Number(this._getSettings().defaultChain) || CANONICAL_CHAIN_ID;
+    return chainCfg(def)?.social ? def : CANONICAL_CHAIN_ID;
+  }
+
+  /* Where a like/repost for `post` should be recorded:
+     - the post's OWN chain when that chain is cheap (social) — native, bare ref;
+     - otherwise the user's social chain — ported, with a chain-qualified ref
+       (LIKE:eip155:<postChainId>:<hash>) so it still names the target post.
+     Counts aggregate either way (utils.refHash collapses both to the hash). */
+  _engagementRouteFor(post) {
+    const postChain = Number(post?.chainId) || CANONICAL_CHAIN_ID;
+    if (chainCfg(postChain)?.social) return { chainId: postChain, qualified: false };
+    return { chainId: this._engagementChain(), qualified: true };
+  }
+
+  /* Build the engagement ref for a post — chain-qualified only when ported. */
+  _engagementRef(post, route) {
+    const hash = post.txHash;
+    return route.qualified ? `eip155:${Number(post.chainId) || CANONICAL_CHAIN_ID}:${hash}` : hash;
+  }
+
   async toggleLike(post, itemEl) {
     if (!this.signer) { utils.toast('Connect wallet to like posts'); return; }
     const hash = post.txHash;
@@ -9983,6 +10007,10 @@ class SayIt {
       const countEl = btn?.querySelector('.act-count');
       const bump = d => { if (!countEl) return; const c = (parseInt(countEl.textContent, 10) || 0) + d; countEl.textContent = c > 0 ? String(c) : ''; };
       const destination = post.to || this.state.channel;
+      /* Route engagement: native on cheap chains, ported to the user's social
+         chain (chain-qualified ref) for expensive ones. */
+      const route = this._engagementRouteFor(post);
+      const ref   = this._engagementRef(post, route);
       if (this.state.likes.has(hash)) {
         /* Toggle off — publish UNLIKE so the change persists across sessions.
            Optimistic UI: remove immediately, revert on tx failure. */
@@ -9990,7 +10018,7 @@ class SayIt {
         if (btn)  btn.classList.remove('liked');
         if (icon) icon.innerHTML = heartEmpty;
         bump(-1);
-        const ok = await this.publish(UNLIKE_PREFIX + hash, null, destination);
+        const ok = await this.publish(UNLIKE_PREFIX + ref, null, destination, route.chainId);
         if (!ok) {
           this.state.likes.add(hash);
           if (btn)  btn.classList.add('liked');
@@ -10004,7 +10032,7 @@ class SayIt {
         if (btn)  btn.classList.add('liked');
         if (icon) icon.innerHTML = heartFull;
         bump(1);
-        const ok = await this.publish(LIKE_PREFIX + hash, null, destination);
+        const ok = await this.publish(LIKE_PREFIX + ref, null, destination, route.chainId);
         if (!ok) {
           this.state.likes.delete(hash);
           if (btn)  btn.classList.remove('liked');
