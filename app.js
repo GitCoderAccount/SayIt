@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260615-216';
+const SW_CACHE_VER = '20260615-217';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -1369,6 +1369,12 @@ class SayIt {
        Keeps total API calls bounded: 200 addrs * 3 pages * 5 concurrent = manageable. */
     const scanLimit  = this._getMaxScanPages();
     const pagesPerAddr = scanLimit === Infinity ? 3 : Math.min(3, Math.ceil(scanLimit / 30));
+    /* Global follows: a followed address is the same identity on every EVM
+       chain, so scan their posts across all enabled chains (one page each on
+       non-canonical chains to bound cost). Empty extra set → canonical only,
+       unchanged. */
+    const fExtraChains = (this._getSettings().enabledChains || [])
+      .map(Number).filter(id => id !== CANONICAL_CHAIN_ID && chainCfg(id));
     const BATCH = 5;
     const totalBatches = Math.ceil(addrs.length / BATCH);
     const startedAt = Date.now();
@@ -1401,21 +1407,34 @@ class SayIt {
       const batch = addrs.slice(i, i + BATCH);
       const results = await Promise.allSettled(
         batch.map(async addr => {
-          /* Sent-only fetch first: guarantees the account's own latest posts
-             even when received engagement floods their mixed txlist. */
+          const all = [];
+          /* Canonical chain: sent-only fetch first (guarantees the account's
+             own latest posts even when received engagement floods their mixed
+             txlist); fall back to compat txlist pages. Tag each tx's origin
+             chain so _parsePostTx stamps the right chainId. */
           const sent = await this._apiFetchSentTxs(addr);
-          if (sent) return sent;
-          /* Fallback: compat txlist pages (endpoint without a v2 API). */
-          const pages = [];
-          for (let pg = 1; pg <= pagesPerAddr; pg++) {
-            try {
-              const r = await this.apiFetch(addr, pg);
-              pages.push(...r);
-              if (r.length < 50) break;
-              if (pg < pagesPerAddr) await this._scanDelay(100);
-            } catch { break; }
+          if (sent) { sent.forEach(t => { t._chainId = CANONICAL_CHAIN_ID; }); all.push(...sent); }
+          else {
+            for (let pg = 1; pg <= pagesPerAddr; pg++) {
+              try {
+                const r = await this.apiFetch(addr, pg, CANONICAL_CHAIN_ID);
+                r.forEach(t => { t._chainId = CANONICAL_CHAIN_ID; });
+                all.push(...r);
+                if (r.length < 50) break;
+                if (pg < pagesPerAddr) await this._scanDelay(100);
+              } catch { break; }
+            }
           }
-          return pages;
+          /* Other enabled chains: one txlist page each (their own posts are
+             filtered by reporter below; received txs are dropped). */
+          for (const cid of fExtraChains) {
+            try {
+              const r = await this.apiFetch(addr, 1, cid);
+              r.forEach(t => { t._chainId = cid; });
+              all.push(...r);
+            } catch { /* skip this chain for this address */ }
+          }
+          return all;
         })
       );
       results.forEach((res, j) => {
@@ -1430,7 +1449,7 @@ class SayIt {
           const hash = tx.hash?.toLowerCase();
           if (!hash || known.has(hash)) return;
           if (!tx.input || tx.input === '0x') return;
-          const parsed = this._parsePostTx(tx, { mode: 'main' });
+          const parsed = this._parsePostTx(tx, { mode: 'main', chainId: tx._chainId || CANONICAL_CHAIN_ID });
           if (!parsed) return;
           /* Only the followed account's OWN posts — their txlist also contains
              received txs authored by others. But any destination channel is
