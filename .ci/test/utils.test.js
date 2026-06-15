@@ -60,3 +60,19 @@ test('sanitizeTxs() filters bad txs and strips malformed numerics', () => {
   assert.strictEqual(utils.sanitizeTxs('junk').length, 0);
   assert.strictEqual(utils.sanitizeTxs(null).length, 0);
 });
+
+test('xPost() parses X/Twitter status URLs, rejects others', () => {
+  assert.deepEqual(utils.xPost('https://x.com/jack/status/20'), { handle: 'jack', id: '20' });
+  assert.deepEqual(utils.xPost('https://twitter.com/Jack_/statuses/12345'), { handle: 'Jack_', id: '12345' });
+  assert.deepEqual(utils.xPost('https://mobile.x.com/a/status/9'), { handle: 'a', id: '9' });
+  assert.strictEqual(utils.xPost('https://x.com/jack'), null);          /* profile, not a status */
+  assert.strictEqual(utils.xPost('https://example.com/x/status/1'), null);
+  assert.strictEqual(utils.xPost('not a url'), null);
+});
+
+test('grokPost() parses grok.com / x.ai pages, rejects others', () => {
+  assert.deepEqual(utils.grokPost('https://grok.com/imagine/abc'), { kind: 'imagine', href: 'https://grok.com/imagine/abc' });
+  assert.deepEqual(utils.grokPost('https://x.ai/share/xyz?t=1'), { kind: 'share', href: 'https://x.ai/share/xyz' });
+  assert.strictEqual(utils.grokPost('https://grok.com/'), null);
+  assert.strictEqual(utils.grokPost('https://example.com/imagine/a'), null);
+});
