@@ -310,6 +310,29 @@ const utils = {
     const m = String(url).match(/vimeo\.com\/(?:video\/)?(\d+)/i);
     return m ? m[1] : null;
   },
+  /* Parse an X / Twitter status URL → { handle, id } or null. Single source of
+     truth, shared by linkify's embed card AND the quote-card preview (so a
+     reposted X share renders an X card instead of a raw URL). */
+  xPost(url) {
+    try {
+      const u = new URL(url);
+      const h = u.hostname.replace(/^(www|mobile|m)\./, '');
+      if (h !== 'x.com' && h !== 'twitter.com') return null;
+      const m = u.pathname.match(/^\/([A-Za-z0-9_]{1,15})\/status(?:es)?\/(\d+)/);
+      return m ? { handle: m[1], id: m[2] } : null;
+    } catch { return null; }
+  },
+  /* Parse a Grok URL (grok.com / x.ai) → { kind, href } or null. */
+  grokPost(url) {
+    try {
+      const u = new URL(url);
+      const h = u.hostname.replace(/^www\./, '');
+      if (h !== 'grok.com' && h !== 'x.ai') return null;
+      const m = u.pathname.match(/^\/(imagine|share|chat)(?:\/|$)/);
+      if (!m) return null;
+      return { kind: m[1], href: u.origin + u.pathname };
+    } catch { return null; }
+  },
   /* Format a wei string as PLS for display (not financial math). */
   fmtPLS(wei) {
     const n = Number(wei || 0) / 1e18;
@@ -383,31 +406,11 @@ const utils = {
        real status URLs (x.com/<handle>/status/<id>); anything else (profiles,
        search, etc.) falls through to a plain link. No third-party script is
        loaded — we render our own styled card that links out to X. */
-    const xPost = url => {
-      try {
-        const u = new URL(url);
-        const h = u.hostname.replace(/^(www|mobile|m)\./, '');
-        if (h !== 'x.com' && h !== 'twitter.com') return null;
-        const m = u.pathname.match(/^\/([A-Za-z0-9_]{1,15})\/status(?:es)?\/(\d+)/);
-        return m ? { handle: m[1], id: m[2] } : null;
-      } catch { return null; }
-    };
-    /* Parse a Grok URL (grok.com / x.ai) → { kind, href } or null. Grok pages
-       send X-Frame-Options: DENY (frame-ancestors only x.com), so they CANNOT
-       be embedded in an iframe by us — and the URL is a web page, not a direct
-       media file, so there's nothing to play inline. We render our own styled
-       click-out card (canonical link, tracking params dropped) that opens Grok
-       in a new tab — the closest we can faithfully show. */
-    const grokPost = url => {
-      try {
-        const u = new URL(url);
-        const h = u.hostname.replace(/^www\./, '');
-        if (h !== 'grok.com' && h !== 'x.ai') return null;
-        const m = u.pathname.match(/^\/(imagine|share|chat)(?:\/|$)/);
-        if (!m) return null;
-        return { kind: m[1], href: u.origin + u.pathname };
-      } catch { return null; }
-    };
+    /* X / Twitter + Grok parsers now live on utils (single source of truth,
+       also used by the quote-card preview). Aliased here so the rest of
+       linkify reads unchanged. */
+    const xPost = utils.xPost;
+    const grokPost = utils.grokPost;
 
     /* ── Pass 1: extract ALL media from fullText (never truncated) ── */
     const scanText = fullText || text;

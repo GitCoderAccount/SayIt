@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260614-208';
+const SW_CACHE_VER = '20260614-209';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -8589,17 +8589,21 @@ class SayIt {
     const imgs   = this._mediaImageUrls(orig.display);
     const words  = orig.display.split(/\s+/);
     const vidUrl = words.find(w => _LK_VID_RE.test(w) && /^(https?:|ipfs:|ar:|arweave:)/.test(w));
-    let ytVid = null, vmVid = null;
+    let ytVid = null, vmVid = null, xTw = null, grok = null;
     for (const w of words) {
       if (!ytVid) ytVid = utils.ytId(w);
       if (!vmVid) vmVid = utils.vimeoId(w);
-      if (ytVid || vmVid) break;
+      if (!xTw)   xTw   = utils.xPost(w);
+      if (!grok)  grok  = utils.grokPost(w);
+      if (ytVid || vmVid || xTw || grok) break;
     }
-    /* Strip media + embed URLs from the preview text; what remains is the
-       author's own words. */
-    const isMediaUrl = u => this._postHasMedia(u) || _LK_VID_RE.test(u) || !!utils.ytId(u) || !!utils.vimeoId(u);
+    /* Strip media + embed URLs (incl. X / Grok) from the preview text; what
+       remains is the author's own words. Without the X/Grok cases a reposted
+       X share left its raw x.com URL in the body (looked like "raw data"). */
+    const isEmbedUrl = u => this._postHasMedia(u) || _LK_VID_RE.test(u)
+      || !!utils.ytId(u) || !!utils.vimeoId(u) || !!utils.xPost(u) || !!utils.grokPost(u);
     let text = orig.display.replace(_LK_RE, m =>
-      (/^(https?:|ipfs:|ar:|arweave:)/.test(m) && isMediaUrl(m)) ? '' : m);
+      (/^(https?:|ipfs:|ar:|arweave:)/.test(m) && isEmbedUrl(m)) ? '' : m);
     text = text.replace(/\s{2,}/g, ' ').trim();
     const body = utils.safe(text.slice(0, 200) + (text.length > 200 ? '…' : ''));
     /* Real media in the card, like the original post: native videos get a
@@ -8635,6 +8639,23 @@ class SayIt {
       </div>`;
     } else if (imgs.length) {
       mediaHtml = `<img class="repost-card-thumb" src="${utils.safe(imgs[0])}" alt="" loading="lazy" data-fallback="hide">`;
+    } else if (xTw) {
+      /* Reposted X share: a compact, non-interactive X preview (clicking the
+         quote card opens the original SayIt thread, where the full X embed is
+         interactive). Replaces the raw x.com URL that used to print here. */
+      mediaHtml = `<div class="x-embed-card repost-card-xpreview">
+        <span class="x-embed-hdr">
+          <svg class="x-embed-logo" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+          <span class="x-embed-title">Post on X</span>
+        </span>
+        <span class="x-embed-handle">@${utils.safe(xTw.handle)}</span>
+      </div>`;
+    } else if (grok) {
+      const label = grok.kind === 'imagine' ? 'Grok Imagine' : 'Grok';
+      mediaHtml = `<a class="grok-card" href="${utils.safe(grok.href)}" target="_blank" rel="noopener noreferrer">
+        <span class="grok-card-logo" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 2.5l2.6 6.9L21.5 12l-6.9 2.6L12 21.5l-2.6-6.9L2.5 12l6.9-2.6z"/></svg></span>
+        <span class="grok-card-body"><span class="grok-card-title">${label}</span><span class="grok-card-sub">View on Grok</span></span>
+      </a>`;
     }
     return `
       <div class="repost-card-hdr">
