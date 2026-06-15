@@ -484,6 +484,14 @@ nav { flex:1; padding:4px 0; }
   transition:background 0.18s, color 0.18s;
 }
 .cmp-icon:hover { background:var(--primary-dim); color:var(--primary-lt); }
+/* Multichain "posting to" selector (composer). Hidden until >1 chain enabled. */
+.cmp-chain {
+  margin-left:6px; background:var(--primary-dim); color:var(--primary-lt);
+  border:1px solid var(--border); border-radius:9999px;
+  padding:5px 10px; font-size:13px; font-weight:600; cursor:pointer;
+  max-width:150px;
+}
+.cmp-chain[hidden] { display:none; }
 .compose-right { display:flex; align-items:center; gap:10px; }
 
 .char-ring {
@@ -3253,6 +3261,8 @@ html.ul-links .post-mention { text-decoration:underline; }
             <button class="cmp-icon" id="cmp-emoji-btn" title="Emoji" aria-label="Insert emoji">
               <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M8 9.5C8 8.672 8.672 8 9.5 8s1.5.672 1.5 1.5S10.328 11 9.5 11 8 10.328 8 9.5zm6.5 1.5c.828 0 1.5-.672 1.5-1.5S15.328 8 14.5 8 13 8.672 13 9.5s.672 1.5 1.5 1.5zM12 16c-2.224 0-3.021-1.4-3.094-1.536l-1.76.992C7.196 15.69 8.638 18 12 18s4.804-2.31 4.854-2.544l-1.76-.992C15.021 14.6 14.224 16 12 16zm-.002-14C6.477 2 2 6.477 2 12s4.477 10 9.998 10C17.523 22 22 17.523 22 12S17.523 2 11.998 2zM12 20C7.582 20 4 16.418 4 12s3.582-8 8-8 8 3.582 8 8-3.582 8-8 8z"/></svg>
             </button>
+            <!-- Multichain: "posting to" selector — populated + shown only when >1 chain is enabled -->
+            <select id="compose-chain" class="cmp-chain" hidden aria-label="Post to chain"></select>
           </div>
           <div class="compose-right">
             <span class="draft-saved-hint" id="draft-saved-hint">Draft saved</span>
@@ -3511,6 +3521,7 @@ html.ul-links .post-mention { text-decoration:underline; }
             <button class="cmp-icon" id="modal-cmp-emoji-btn" title="Emoji" aria-label="Insert emoji">
               <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M8 9.5C8 8.672 8.672 8 9.5 8s1.5.672 1.5 1.5S10.328 11 9.5 11 8 10.328 8 9.5zm6.5 1.5c.828 0 1.5-.672 1.5-1.5S15.328 8 14.5 8 13 8.672 13 9.5s.672 1.5 1.5 1.5zM12 16c-2.224 0-3.021-1.4-3.094-1.536l-1.76.992C7.196 15.69 8.638 18 12 18s4.804-2.31 4.854-2.544l-1.76-.992C15.021 14.6 14.224 16 12 16zm-.002-14C6.477 2 2 6.477 2 12s4.477 10 9.998 10C17.523 22 22 17.523 22 12S17.523 2 11.998 2zM12 20C7.582 20 4 16.418 4 12s3.582-8 8-8 8 3.582 8 8-3.582 8-8 8z"/></svg>
             </button>
+            <select id="modal-compose-chain" class="cmp-chain" hidden aria-label="Post to chain"></select>
           </div>
           <span id="modal-char-count" style="font-size:14px;color:var(--muted)"></span>
           <button class="btn-pri" id="modal-post-btn" style="flex:none;padding:10px 24px">Post</button>
