@@ -74,17 +74,28 @@ test('explorerTxlistUrl: apiBase override replaces the endpoint', () => {
   assert.ok(url.startsWith('https://backup.example/api?module=account'));
 });
 
-test('explorerTxlistUrl: Etherscan-v2 adds chainid + apikey', () => {
-  const url = eval_(`explorerTxlistUrl(CHAINS[1], '0xdef', 1, { apiKey: 'KEY123' })`);
-  assert.ok(url.startsWith('https://api.etherscan.io/v2/api?chainid=1&module=account&action=txlist'));
+test('explorerTxlistUrl: Etherscan-v2 (BSC) adds chainid + apikey', () => {
+  const url = eval_(`explorerTxlistUrl(CHAINS[56], '0xdef', 1, { apiKey: 'KEY123' })`);
+  assert.ok(url.startsWith('https://api.etherscan.io/v2/api?chainid=56&module=account&action=txlist'));
   assert.match(url, /address=0xdef/);
   assert.match(url, /&apikey=KEY123$/);
 });
 
 test('explorerTxlistUrl: Etherscan-v2 omits apikey when none supplied', () => {
-  const url = eval_(`explorerTxlistUrl(CHAINS[8453], '0x1', 1)`);
-  assert.ok(url.startsWith('https://api.etherscan.io/v2/api?chainid=8453&module=account'));
+  const url = eval_(`explorerTxlistUrl(CHAINS[56], '0x1', 1)`);
+  assert.ok(url.startsWith('https://api.etherscan.io/v2/api?chainid=56&module=account'));
   assert.ok(!/apikey/.test(url));
+});
+
+test('Ethereum & Base read keyless via Blockscout (no chainid/apikey)', () => {
+  assert.strictEqual(eval_('CHAINS[1].explorer.type'), 'blockscout');
+  assert.strictEqual(eval_('CHAINS[8453].explorer.type'), 'blockscout');
+  const eth = eval_(`explorerTxlistUrl(CHAINS[1], '0xabc', 1, { apiKey: 'SHOULD_BE_IGNORED' })`);
+  assert.strictEqual(eth,
+    'https://eth.blockscout.com/api?module=account&action=txlist&address=0xabc&offset=50&page=1&sort=desc');
+  const base = eval_(`explorerTxlistUrl(CHAINS[8453], '0xabc', 1)`);
+  assert.ok(base.startsWith('https://base.blockscout.com/api?module=account'));
+  assert.ok(!/apikey|chainid/.test(eth) && !/apikey|chainid/.test(base));
 });
 
 test('txUrl: PulseChain keeps OtterScan; other chains use their explorer', () => {

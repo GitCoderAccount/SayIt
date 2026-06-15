@@ -22,8 +22,8 @@ try {
      actually enabled (Settings → Networks), so the allowlist stays tight; one
      Etherscan-v2 origin (api.etherscan.io) covers ETH/Base/BSC reads. */
   const _CHAIN_ORIGINS = {
-    1:    ['https://api.etherscan.io', 'https://eth.llamarpc.com'],
-    8453: ['https://api.etherscan.io', 'https://mainnet.base.org'],
+    1:    ['https://eth.blockscout.com', 'https://eth.llamarpc.com'],
+    8453: ['https://base.blockscout.com', 'https://mainnet.base.org'],
     56:   ['https://api.etherscan.io', 'https://bsc-dataseed.binance.org'],
   };
   try {
