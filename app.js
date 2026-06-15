@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260615-220';
+const SW_CACHE_VER = '20260615-221';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -1425,14 +1425,20 @@ class SayIt {
               } catch { break; }
             }
           }
-          /* Other enabled chains: one txlist page each (their own posts are
-             filtered by reporter below; received txs are dropped). */
+          /* Other enabled chains: a couple of txlist pages each. Etherscan v2
+             has no sent-only filter (unlike PulseChain's Blockscout v2), so an
+             active account's own posts can be buried under received engagement
+             in a single page — scan a few, stop early at end-of-history. Their
+             own posts are filtered by reporter below; received txs dropped. */
           for (const cid of fExtraChains) {
-            try {
-              const r = await this.apiFetch(addr, 1, cid);
+            for (let pg = 1; pg <= 2; pg++) {
+              let r;
+              try { r = await this.apiFetch(addr, pg, cid); }
+              catch { break; }
               r.forEach(t => { t._chainId = cid; });
               all.push(...r);
-            } catch { /* skip this chain for this address */ }
+              if (r.length < 50) break;
+            }
           }
           return all;
         })
