@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260615-212';
+const SW_CACHE_VER = '20260615-213';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -8566,7 +8566,9 @@ class SayIt {
      thread videos never paused off-screen. */
   _initVideoAutoWire() {
     if (this._videoAutoWire) return;
-    const SEL = '.post-vid-thumb, .post-yt-facade';
+    /* Includes .x-embed-facade so X embeds inserted by async paths (e.g. a
+       repost/quote card hydrated after fetch) also auto-load on scroll. */
+    const SEL = '.post-vid-thumb, .post-yt-facade, .x-embed-facade';
     this._videoAutoWire = new MutationObserver(muts => {
       for (const m of muts) {
         for (const n of m.addedNodes) {
@@ -8769,16 +8771,11 @@ class SayIt {
     } else if (imgs.length) {
       mediaHtml = `<img class="repost-card-thumb" src="${utils.safe(imgs[0])}" alt="" loading="lazy" data-fallback="hide">`;
     } else if (xTw) {
-      /* Reposted X share: a compact, non-interactive X preview (clicking the
-         quote card opens the original SayIt thread, where the full X embed is
-         interactive). Replaces the raw x.com URL that used to print here. */
-      mediaHtml = `<div class="x-embed-card repost-card-xpreview">
-        <span class="x-embed-hdr">
-          <svg class="x-embed-logo" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
-          <span class="x-embed-title">Post on X</span>
-        </span>
-        <span class="x-embed-handle">@${utils.safe(xTw.handle)}</span>
-      </div>`;
+      /* Reposted X share: render the FULL X embed (the same auto-loading
+         facade the feed uses), so the quote card shows the real tweet —
+         text, images & video — not just a "Post on X" placeholder. The
+         media observer auto-loads it as it scrolls into view. */
+      mediaHtml = utils.xFacadeHTML(xTw.handle, xTw.id, `https://x.com/${xTw.handle}/status/${xTw.id}`);
     } else if (grok) {
       const label = grok.kind === 'imagine' ? 'Grok Imagine' : 'Grok';
       mediaHtml = `<a class="grok-card" href="${utils.safe(grok.href)}" target="_blank" rel="noopener noreferrer">
