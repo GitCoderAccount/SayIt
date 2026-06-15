@@ -76,3 +76,12 @@ test('grokPost() parses grok.com / x.ai pages, rejects others', () => {
   assert.strictEqual(utils.grokPost('https://grok.com/'), null);
   assert.strictEqual(utils.grokPost('https://example.com/imagine/a'), null);
 });
+
+test('refHash() strips eip155 chain qualifier → bare hash (cross-chain like dedup)', () => {
+  const h = '0x' + 'a'.repeat(64);
+  assert.strictEqual(utils.refHash(h), h);                       /* native ref unchanged */
+  assert.strictEqual(utils.refHash('eip155:1:' + h), h);        /* ported (Ethereum) */
+  assert.strictEqual(utils.refHash('eip155:8453:' + h), h);     /* ported (Base) */
+  assert.strictEqual(utils.refHash('  EIP155:1:' + h.toUpperCase() + '  '), h); /* trims + lowercases */
+  assert.strictEqual(utils.refHash(null), '');
+});

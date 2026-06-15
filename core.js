@@ -352,6 +352,15 @@ const utils = {
       return { kind: m[1], href: u.origin + u.pathname };
     } catch { return null; }
   },
+  /* Normalize an engagement reference (the part after LIKE:/UNLIKE:) to its
+     bare lowercase post hash, stripping an optional `eip155:<chainId>:` chain
+     qualifier. A post's txHash is globally unique, so a like ported onto a
+     cheap social chain (LIKE:eip155:1:0x…) collapses to the same key as a
+     native like (LIKE:0x…) — engagement counts aggregate across chains for
+     free. */
+  refHash(s) {
+    return String(s ?? '').trim().toLowerCase().replace(/^eip155:\d+:/, '');
+  },
   /* Format a wei string as PLS for display (not financial math). */
   fmtPLS(wei) {
     const n = Number(wei || 0) / 1e18;
