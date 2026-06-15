@@ -322,6 +322,25 @@ const utils = {
       return m ? { handle: m[1], id: m[2] } : null;
     } catch { return null; }
   },
+  /* Build the X embed facade (the scroll/click-to-load card that swaps in X's
+     own iframe — the real tweet with its images & video). Single source of
+     truth so the feed AND repost/quote cards render an identical, auto-loading
+     embed. Auto-load on (default) → brief loading state; off → tap-to-load. */
+  xFacadeHTML(handle, id, href) {
+    const h = this.safe(handle), i = this.safe(id), hr = this.safe(href);
+    const auto = (typeof pulse !== 'undefined') && pulse._embedsAutoLoad && pulse._embedsAutoLoad();
+    const cta = auto
+      ? `<span class="x-embed-cta x-embed-loading"><span class="spinner sp-sm" aria-hidden="true"></span>Loading post from X…</span>`
+      : `<span class="x-embed-cta">▶ Tap to load this post (text, images &amp; video)</span>`;
+    return `<div class="x-embed-card x-embed-facade" data-x-id="${i}" data-x-href="${hr}" role="button" tabindex="0" aria-label="Post on X by @${h}">
+      <span class="x-embed-hdr">
+        <svg class="x-embed-logo" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+        <span class="x-embed-title">Post on X</span>
+      </span>
+      <span class="x-embed-handle">@${h}</span>
+      ${cta}
+    </div>`;
+  },
   /* Parse a Grok URL (grok.com / x.ai) → { kind, href } or null. */
   grokPost(url) {
     try {
@@ -492,31 +511,13 @@ const utils = {
         const tw = xPost(resolved);
         if (tw) {
           mediaUrls.add(resolved);
-          /* Canonical URL (drops tracking params); handle is [A-Za-z0-9_] only. */
+          /* Canonical URL (drops tracking params); handle is [A-Za-z0-9_] only.
+             By default embeds AUTO-LOAD as they scroll into view (X-like): X's
+             own iframe renders the full post incl. images & video, and X's
+             runtime runs INSIDE that sandboxed iframe so our CSP stays strict.
+             See utils.xFacadeHTML (shared with the repost/quote card). */
           const href = `https://x.com/${tw.handle}/status/${tw.id}`;
-          const safeHandle = utils.safe(tw.handle);
-          const safeId = utils.safe(tw.id);
-          /* X embed facade. By default embeds AUTO-LOAD as they scroll into
-             view (X-like): we swap in X's own iframe embed — it renders the
-             full post incl. video, and X's runtime runs INSIDE that sandboxed
-             third-party iframe, so our page CSP stays strict (frame-src only
-             lists platform.twitter.com) and no X script touches our origin.
-             The facade is then just a brief loading state. With auto-load
-             turned off (Settings → Privacy / Data saver) it stays a manual
-             card; tapping loads the embed (or opens X in a new tab in strict
-             mode). */
-          const xAuto = (typeof pulse !== 'undefined') && pulse._embedsAutoLoad && pulse._embedsAutoLoad();
-          const xCta = xAuto
-            ? `<span class="x-embed-cta x-embed-loading"><span class="spinner sp-sm" aria-hidden="true"></span>Loading post from X…</span>`
-            : `<span class="x-embed-cta">▶ Tap to load this post (text, images &amp; video)</span>`;
-          embedHtml += `<div class="x-embed-card x-embed-facade" data-x-id="${safeId}" data-x-href="${utils.safe(href)}" role="button" tabindex="0" aria-label="Post on X by @${safeHandle}">
-            <span class="x-embed-hdr">
-              <svg class="x-embed-logo" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
-              <span class="x-embed-title">Post on X</span>
-            </span>
-            <span class="x-embed-handle">@${safeHandle}</span>
-            ${xCta}
-          </div>`;
+          embedHtml += utils.xFacadeHTML(tw.handle, tw.id, href);
           mediaCount++;
         }
       } else if (mtype === 'grok') {
