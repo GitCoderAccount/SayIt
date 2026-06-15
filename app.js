@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260615-221';
+const SW_CACHE_VER = '20260615-222';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -5459,19 +5459,21 @@ class SayIt {
          our own switch — plus hard-disconnecting on any non-369 chain — is what
          made the wallet connect then disconnect repeatedly on mobile. */
       if (this._switchingChain) return;
-      const onPulse = parseInt(chainId, 16) === PULSE_CHAIN_ID;
-      this._wrongChain = !onPulse;
+      const id = parseInt(chainId, 16);
+      const usable = this._isUsableChain(id);
+      this._wrongChain = !usable;
       this._reflectChainState();
-      if (onPulse) {
-        /* Back on PulseChain — refresh the signer on a provider that sees it.
-           (v6: getSigner is async; this handler is sync, so chain the promise.) */
+      if (usable) {
+        /* On a supported chain (canonical or an enabled one) — refresh the
+           signer on a provider that sees the new chain. (v6: getSigner is
+           async; this handler is sync, so chain the promise.) */
         new ethers.BrowserProvider(eth).getSigner()
           .then(s => { this.signer = s; })
           .catch(() => {});
       } else {
-        /* Don't disconnect — keep the session. Posting is guarded by
-           _ensureOnPulseForTx, which offers to switch back on demand. */
-        utils.toast('Wrong network — switch to PulseChain to post');
+        /* Don't disconnect — keep the session. Posting/engagement are guarded
+           by _ensureOnChain, which switches to the right chain on demand. */
+        utils.toast('Unsupported network — switch to PulseChain or a chain you enabled in Settings → Networks.');
       }
     });
   }
@@ -5488,6 +5490,17 @@ class SayIt {
     return this._cachedEthereum;
   }
 
+  /* A chain the user can actually use here: the canonical chain, or one they've
+     enabled in Settings → Networks. The wrong-network bar only fires for chains
+     OUTSIDE this set — being on an enabled chain (e.g. Ethereum) is fine, since
+     posting/engagement auto-switch to the right chain as needed. */
+  _isUsableChain(chainId) {
+    const id = Number(chainId);
+    if (id === CANONICAL_CHAIN_ID) return true;
+    return !!chainCfg(id)
+      && (this._getSettings().enabledChains || []).map(Number).includes(id);
+  }
+
   async tryAutoReconnect() {
     const eth = this._getEthereum();
     if (!eth) return;
@@ -5499,12 +5512,13 @@ class SayIt {
            wallet to PulseChain and verifies it, but auto-reconnect runs
            silently at load and must not assume the wallet is still on 369.
            The chainChanged handler only fires on a CHANGE, so a wallet left on
-           (say) Ethereum mainnet emits no event — reconnecting here would
-           leave an active signer on the wrong chain, and the next post/like
-           would fire a tx there (wasted gas; never appears in-app). Stay
-           disconnected; the user can click Connect, which runs the switch. */
+           an UNSUPPORTED chain emits no event — reconnecting there would leave
+           an active signer on a chain we can't use. An ENABLED chain is fine
+           (posting/engagement auto-switch as needed), so reconnect on any
+           usable chain; otherwise stay disconnected until the user clicks
+           Connect (which runs the switch). */
         /* v6: chainId is a bigint — compare as Number. */
-        if (Number((await prov.getNetwork()).chainId) !== PULSE_CHAIN_ID) return;
+        if (!this._isUsableChain(Number((await prov.getNetwork()).chainId))) return;
         this.signer = await prov.getSigner();
         this.state.signerAddr = (await this.signer.getAddress()).toLowerCase();
         this._registerWalletListeners();
@@ -5648,13 +5662,16 @@ class SayIt {
          it first avoids the switch-then-connect ordering that made mobile
          flaky. */
       await prov.send('eth_requestAccounts', []);
-      /* Ensure PulseChain, reading the live chain id (not ethers' cached
-         network) and polling until the async switch lands. */
+      /* If the wallet is already on a supported chain (canonical OR one the
+         user enabled), keep it — multichain users may want to connect straight
+         onto Ethereum/Base. Only force a switch to PulseChain when the current
+         chain is unsupported. Reads the live chain id (not ethers' cached
+         network) and polls until the async switch lands. */
       let chainId = await this._readChainId(eth);
-      if (chainId !== PULSE_CHAIN_ID) {
+      if (!this._isUsableChain(chainId)) {
         await this._ensurePulseChain(eth);
         chainId = await this._readChainWithRetry(eth);
-        if (chainId !== PULSE_CHAIN_ID) {
+        if (!this._isUsableChain(chainId)) {
           utils.toast('Couldn\'t switch to PulseChain. In your wallet, switch to PulseChain (chain 369), then tap Connect again.');
           return;
         }
