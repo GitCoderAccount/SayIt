@@ -85,7 +85,7 @@ eslint-disable, 28 unit + 16 regression tests green). Forward-looking items:
 ### P0 — Security (DMs now exist)
 - [ ] **Independent cryptography review** of `DMCrypto` (dual-wrap envelope, KDF, key derivation) + the vendored bundle. Primitives are audited `@noble`; the *construction* is a custom integration and should get a human cryptographer's eyes before DMs go beyond "experimental." *(external)*
 - [x] **Crypto under CI** — added `.ci/test/dm-crypto.test.js` (loads the vendored bundle + core.js in node): keygen determinism, dual-wrap round-trip, tamper/spoof/wrong-key rejection. *(done)*
-- [ ] **Tighten CSP `connect-src`** (currently `*`). Hard because the explorer endpoint + Space relay are user-configurable; needs a design (allowlist + a validated slot for custom endpoints). *(needs decision)*
+- [x] **Tighten CSP `connect-src`** — boot.js now injects an allowlist (self + pulsechain + IPFS/Arweave gateways + trackers + user-configured endpoints) that intersects with the static `*`; extended for enabled multichain networks. *(done #175/#184)*
 
 ### P1 — Maintainability & coverage
 - [ ] **Split `app.js` (~15k lines / ~293 methods)** into feature modules sharing the global scope like core/cache + update the extractor. Large, high-value, merge-risky. *(needs decision / scheduling)*
@@ -100,3 +100,27 @@ eslint-disable, 28 unit + 16 regression tests green). Forward-looking items:
 - [ ] **Group DMs** — multi-recipient envelope (the dual-wrap points the way). *(feature)*
 - [ ] **Build "Not Grok"** — placeholder page shipped; real AI feature later. *(feature)*
 - [x] **X-embed facade in chats** — chat pane now auto-loads embeds on scroll (matches the profile), subject to embed-privacy settings. *(done)*
+
+---
+
+## 2026-06-15 — Multichain protocol (shipped this round)
+
+SayIt went multichain (PRs #178–#190). Gated entirely by Settings → Networks
+`enabledChains` — with none enabled the app is byte-for-byte the single-chain
+PulseChain app. See README → Multichain.
+
+- [x] **Chain registry + explorer adapter** (`CHAINS`, `explorerTxlistUrl`; Blockscout vs Etherscan-v2) and chain-aware `apiFetch(addr,page,chainId)`. *(#178)*
+- [x] **Post identity `(chainId, txHash)`** threaded through `_parsePostTx`/`parseTxs`; `txUrl()` chain-aware explorer links; `_chainBadge` pill. *(#179)*
+- [x] **Settings → Networks** (enable chains, Etherscan v2 key, default chain) + per-chain `connect-src`. *(#184)*
+- [x] **Aggregated Home feed** across enabled chains (`_activeFeedChains` / `_fetchNextAcrossChains`). *(#185)*
+- [x] **Registry-driven wallet switching** (`_ensureOnChain`). *(#187)*
+- [x] **Chain-aware writes** + composer "posting to" selector; replies native, quotes → default chain. *(#188)*
+- [x] **Engagement routing — likes**: native on cheap chains, ported to the social chain (`LIKE:eip155:<id>:<hash>`) for expensive ones; counts collapse via `utils.refHash`. *(#189)*
+- [x] **Global follows** — Following feed scans followed addresses across enabled chains. *(#190)*
+
+### Multichain follow-ups (not yet done)
+- [ ] **Profile pages cross-chain** — still single-chain (several fetch loops: posts/replies/media/followers). Thread `chainId` like the feed. *(M)*
+- [ ] **Reposts (plain + quote) routing** — still publish on canonical/default; quote card needs cross-chain original-fetch (by chain-qualified ref) to render reposts of posts on other chains. *(M)*
+- [ ] **`pollNew` multichain** — the "N new posts" banner still polls PulseChain only; new posts on other chains appear on refresh/scroll. *(S)*
+- [ ] **Non-canonical sent-tx depth** — non-PulseChain Following scans use 1 mixed txlist page (no Blockscout v2 `filter=from`); a very active address's posts can be buried. *(S)*
+- [ ] **Real-wallet validation** — all write paths are headless-verified with a stubbed signer; confirm on-chain sends in Rabby (dust) on at least one extra chain. *(test)*
