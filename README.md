@@ -110,8 +110,8 @@ Your wallet ──signs──► PulseChain transaction ──contains──► 
 
 Every social action is a transaction whose input data carries a small, human-readable payload. The front-end scans the chain through a public block-explorer API, decodes these payloads, and assembles them into feeds, threads, profiles, tallies, and notes — computing reactions and engagement the same way. Nothing is stored on a private server; the only local storage is your own browser cache and preferences.
 
-- **Network:** PulseChain (chain ID **369**)
-- **Data source:** a configurable block-explorer API (defaults to PulseScan) with an optional backup endpoint. Token identity is read from DexScreener; contract owner lookups use a public RPC.
+- **Network:** PulseChain (chain ID **369**) by default — and **any EVM chain** you enable (Ethereum, Base, BNB Chain). See [Multichain](#multichain).
+- **Data source:** a configurable block-explorer API (defaults to PulseScan) with an optional backup endpoint; other chains read through Etherscan's unified v2 API. Token identity is read from DexScreener; contract owner lookups use a public RPC.
 
 ---
 
@@ -125,6 +125,7 @@ Everything is a transaction sent **to a channel/recipient address** with a UTF-8
 | `REPLY_TO:0x<txhash>\n\n<text>` | A reply to a post |
 | `REPOST:0x<txhash>[\n\n<text>]` | Repost / quote-post |
 | `LIKE:0x<txhash>` / `UNLIKE:0x<txhash>` | Like / unlike (last action wins) |
+| `LIKE:eip155:<chainId>:0x<txhash>` | A like **ported** from another chain (see Multichain). Counts collapse to the bare hash, so native + ported likes aggregate. |
 | `BOOKMARK:0x<txhash>` / `UNBOOKMARK:` | Private bookmark (sent to self) |
 | `FOLLOW:0x<addr>` / `UNFOLLOW:0x<addr>` | Follow / unfollow (sent to the target) |
 | `TIP:0x<txhash>` | Tip the post's author — the tx **value** is the tip (PLS) |
@@ -140,6 +141,21 @@ Everything is a transaction sent **to a channel/recipient address** with a UTF-8
 | `DM1:<base64>` | One end-to-end **encrypted** direct message (see below) |
 
 Likes, follows, votes, tips, etc. are derived by scanning and applying these in chain order, so any client computes the same state.
+
+---
+
+## Multichain
+
+SayIt's protocol is chain-agnostic — a post is just a transaction with a UTF-8 `input`, so the **same protocol runs on any EVM chain**, and your wallet address is the **same identity everywhere**. PulseChain (369) is the canonical, default chain; Ethereum, Base, and BNB Chain are built in and opt-in.
+
+- **Turn chains on** in **Settings → Networks**: enable the chains you want, paste a free **Etherscan v2 API key** (one key covers Ethereum/Base/BNB Chain reads via the unified API), and pick your **default chain**. PulseChain reads need no key (Blockscout).
+- **One aggregated feed.** Your Home feed reads the main channel on every enabled chain in parallel and time-merges the results; each post shows a small **chain badge** (PLS / ETH / BASE / BSC) and links to that chain's explorer.
+- **Posting** uses a "posting to" selector (default = your default chain); the wallet auto-switches to the target chain. **Replies stay native** — published on the parent post's own chain. Quotes go to your default chain.
+- **Engagement routing.** On cheap (social) chains, likes are recorded natively. On an expensive chain (e.g. Ethereum L1), a like is **ported** to your social chain with a chain-qualified ref `LIKE:eip155:<chainId>:0x<hash>`. Because a tx hash is globally unique, native and ported likes for the same post **collapse to one count** when aggregating across chains.
+- **Global follows.** A followed address is the same person on every chain, so the **Following feed** gathers their posts from all enabled chains. (Follow txs themselves stay on the canonical chain.)
+- **Tips stay native** (they carry real value and can't be ported).
+
+Everything multichain is gated by your enabled chains: with none enabled, SayIt behaves exactly as the single-chain PulseChain app.
 
 ---
 
