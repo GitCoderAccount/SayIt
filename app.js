@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260615-219';
+const SW_CACHE_VER = '20260615-220';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -1894,9 +1894,9 @@ class SayIt {
               const m = text.match(/^REPLY_TO:(0x[a-f0-9]{64})\n\n/i);
               target  = m[1].toLowerCase();
               preview = text.slice(m[0].length).trim().slice(0, 100);
-            } else if (text.match(/^REPOST:(0x[a-f0-9]{64})/i)) {
+            } else if (text.match(/^REPOST:(?:eip155:\d+:)?(0x[a-f0-9]{64})/i)) {
               type = 'repost';
-              const m = text.match(/^REPOST:(0x[a-f0-9]{64})/i);
+              const m = text.match(/^REPOST:(?:eip155:\d+:)?(0x[a-f0-9]{64})/i);
               target  = m[1].toLowerCase();
             } else if (text.startsWith(TIP_PREFIX)) {
               const t = text.slice(TIP_PREFIX.length).trim().toLowerCase();
@@ -7747,17 +7747,21 @@ class SayIt {
       || text.startsWith(BOOKMARK_PREFIX) || text.startsWith(UNBOOKMARK_PREFIX)
       || text.startsWith(FOLLOW_PREFIX) || text.startsWith(UNFOLLOW_PREFIX)) return null;
 
-    let parentTx = null, repostOf = null, poll = null, postType = 'post', display;
+    let parentTx = null, repostOf = null, repostOfChain = null, poll = null, postType = 'post', display;
     const replyM = text.match(/^REPLY_TO:(0x[a-f0-9]{64})\n\n/i);
     if (text.startsWith(POLL_PREFIX)) {
       poll = this._parsePoll(text);
       display = poll ? poll.question : text;
       if (poll) postType = 'poll';
     } else {
-      const repostM = text.match(/^REPOST:(0x[a-f0-9]{64})(?:\n\n([\s\S]*))?$/i);
+      /* REPOST may name the original on another chain: REPOST:eip155:<id>:0x…
+         An unqualified REPOST:0x… means the original is on the canonical chain
+         (true for every pre-multichain repost). */
+      const repostM = text.match(/^REPOST:(?:eip155:(\d+):)?(0x[a-f0-9]{64})(?:\n\n([\s\S]*))?$/i);
       if (repostM) {
-        repostOf = repostM[1].toLowerCase();
-        display  = repostM[2]?.trim() || '';
+        repostOf      = repostM[2].toLowerCase();
+        repostOfChain = repostM[1] ? Number(repostM[1]) : CANONICAL_CHAIN_ID;
+        display  = repostM[3]?.trim() || '';
         postType = 'repost';
       } else if (replyM) {
         parentTx = replyM[1].toLowerCase();
@@ -7769,7 +7773,7 @@ class SayIt {
     if (!display && !repostOf) return null;
 
     return {
-      content: text, display, parentTx, repostOf, poll, postType,
+      content: text, display, parentTx, repostOf, repostOfChain, poll, postType,
       reactionTarget: null, direction: null,
       reporter: tx.from?.toLowerCase(),
       to: tx.to?.toLowerCase() ?? null,
@@ -8911,9 +8915,10 @@ class SayIt {
           ${this._quoteCardInner(orig)}
         </div>`;
     }
-    /* Original not in _postMap — render placeholder and trigger fetch */
+    /* Original not in _postMap — render placeholder and trigger fetch from the
+       original's own chain (repostOfChain), so cross-chain reposts resolve. */
     const qid = utils.safe(hash);
-    this._fetchQuotedPost(hash, post.to || this.state.channel);
+    this._fetchQuotedPost(hash, post.to || this.state.channel, post.repostOfChain);
     return `<div class="repost-card repost-card-missing" data-fetch-quote="${qid}" id="qc-${qid.slice(2,8)}">
       <span class="spinner sp-sm" aria-hidden="true"></span>
       <span>Loading quoted post…</span>
@@ -10063,6 +10068,15 @@ class SayIt {
     return route.qualified ? `eip155:${Number(post.chainId) || CANONICAL_CHAIN_ID}:${hash}` : hash;
   }
 
+  /* Repost/quote ref for an original post — chain-qualified when the original
+     lives on a non-canonical chain, so the quote card can fetch it from the
+     right chain. Unqualified means the original is on the canonical chain
+     (back-compatible with every pre-multichain repost). */
+  _repostRef(post) {
+    const cid = Number(post?.chainId) || CANONICAL_CHAIN_ID;
+    return cid === CANONICAL_CHAIN_ID ? post.txHash : `eip155:${cid}:${post.txHash}`;
+  }
+
   async toggleLike(post, itemEl) {
     if (!this.signer) { utils.toast('Connect wallet to like posts'); return; }
     const hash = post.txHash;
@@ -10268,7 +10282,10 @@ class SayIt {
       if (!this.signer) { utils.toast('Connect wallet to repost'); return; }
       if (!this._reactionBusy('repost:' + post.txHash)) return;
       try {
-        const ok = await this.publish(`REPOST:${post.txHash}`);
+        /* Publish on the user's default chain; the ref is chain-qualified when
+           the original lives elsewhere, so the quote card can locate it. */
+        const cid = Number(this._getSettings().defaultChain) || CANONICAL_CHAIN_ID;
+        const ok = await this.publish(`REPOST:${this._repostRef(post)}`, null, null, cid);
         if (ok) utils.toast('Reposted');
       } finally {
         this._pendingTx.delete('repost:' + post.txHash);
@@ -10330,11 +10347,10 @@ class SayIt {
     if (!this.state.repostTarget) return;
     const comment = this.g('repost-input').value.trim();
     if (!comment) { utils.toast('Add some text to quote this post'); return; }
-    const hash    = this.state.repostTarget.txHash;
-    /* Quote format: REPOST:{hash}\n\n{comment}. A quote is a fresh post →
-       publish on the user's default chain (it references the original by hash,
-       cross-chain is fine — it just loads a touch slower). */
-    const content = `REPOST:${hash}\n\n${comment}`;
+    /* Quote format: REPOST:{ref}\n\n{comment}. A quote is a fresh post →
+       publish on the user's default chain; the ref is chain-qualified when the
+       original lives on another chain so the quote card can locate it. */
+    const content = `REPOST:${this._repostRef(this.state.repostTarget)}\n\n${comment}`;
     const cid = Number(this._getSettings().defaultChain) || CANONICAL_CHAIN_ID;
     const ok = await this.publish(content, null, null, cid);
     if (ok) {
@@ -10479,10 +10495,39 @@ class SayIt {
      dropped by PulseScan — it now answers "Unknown action", which is why cold
      deep-links had stopped resolving.) Falls back to the JSON-RPC node,
      enriched with the block timestamp, if v2 is unreachable. */
-  async _fetchTxByHash(hash) {
+  async _fetchTxByHash(hash, chainId = CANONICAL_CHAIN_ID) {
     /* Guard: hash is interpolated into the request URL below — never send
        a malformed value to the explorer (and short-circuit junk lookups). */
     if (!/^0x[0-9a-f]{64}$/i.test(hash || '')) return null;
+    const cid = Number(chainId) || CANONICAL_CHAIN_ID;
+    /* Non-canonical chain (cross-chain quoted post): Etherscan v2 proxy
+       eth_getTransactionByHash. That response has no block timestamp, so
+       _parsePostTx falls back to "now" for the quote card's relative time. */
+    if (cid !== CANONICAL_CHAIN_ID) {
+      const cfg = chainCfg(cid);
+      if (!cfg || cfg.explorer.type !== 'etherscan-v2') return null;
+      try {
+        const sx  = this._getSettings();
+        const key = sx.etherscanKey ? `&apikey=${encodeURIComponent(sx.etherscanKey)}` : '';
+        const res = await fetch(`${cfg.explorer.api}?chainid=${cfg.id}&module=proxy&action=eth_getTransactionByHash&txhash=${hash}${key}`);
+        if (res.ok) {
+          const d = await res.json();
+          const r = d && d.result;
+          if (r && r.input && r.input !== '0x') {
+            const txLike = {
+              hash: r.hash || hash, from: r.from, to: r.to, input: r.input,
+              blockNumber: r.blockNumber ? parseInt(r.blockNumber, 16) : null, timeStamp: null,
+            };
+            if (!utils.isTxShape(txLike)) return null;
+            utils._stripBadNumerics(txLike);
+            const parsed = this._parsePostTx(txLike, { mode: 'main', chainId: cid });
+            if (parsed) this._postMap.set(hash, parsed);
+            return parsed;
+          }
+        }
+      } catch { /* give up */ }
+      return null;
+    }
     const s = this._getSettings();
     const base = (s.apiUrl || 'https://api.scan.pulsechain.com/api').replace(/\/api\/?$/, '');
     let txLike = null;
@@ -12928,7 +12973,7 @@ class SayIt {
      _fetchTxByHash — the old 5-page channel scan never found quoted posts
      older than ~250 txs in the channel, leaving the card stuck on
      "Loading quoted post…" forever (most visible with older video posts). */
-  async _fetchQuotedPost(hash, channel) {
+  async _fetchQuotedPost(hash, channel, chainId = CANONICAL_CHAIN_ID) {
     /* Only fetch if not already in progress */
     if (!this._fetchingQuotes) this._fetchingQuotes = new Set();
     if (this._fetchingQuotes.has(hash)) return;
@@ -12940,7 +12985,7 @@ class SayIt {
          post that also renders below) — without this yield _postMap.get misses
          it and we'd do a needless chain fetch (and, offline, fail outright). */
       await Promise.resolve();
-      const orig = this._postMap.get(hash) || await this._fetchTxByHash(hash);
+      const orig = this._postMap.get(hash) || await this._fetchTxByHash(hash, chainId);
       const placeholder = document.getElementById('qc-' + hash.slice(2, 8));
       if (!orig) {
         /* Unresolvable (pruned node, wrong hash, network down) — say so
