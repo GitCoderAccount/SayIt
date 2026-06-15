@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260615-218';
+const SW_CACHE_VER = '20260615-219';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -6968,17 +6968,27 @@ class SayIt {
              latest posts even when received engagement floods the mixed
              txlist pages) merged with a shallow page scan; deeper history
              streams in via fetchProfileMore (scroll / fill). */
-          const [sent, paged] = await Promise.all([
+          const [sent, paged, extra] = await Promise.all([
             this._apiFetchSentTxs(address),
             this._scanProfilePages(address, PROFILE_INIT_PAGES),
+            this._scanProfileExtraChains(address, PROFILE_INIT_PAGES),
           ]);
           if (sent?.length) {
             const seen = new Set(sent.map(t => t.hash.toLowerCase()));
             raw = [...sent, ...(paged || []).filter(t => !seen.has(t.hash?.toLowerCase()))];
-            raw.sort((a, b) => Number(b.timeStamp || 0) - Number(a.timeStamp || 0));
           } else {
-            raw = paged;
+            raw = paged || [];
           }
+          /* Merge in the enabled non-canonical chains' posts (chain-tagged),
+             deduped by hash, then sort all by time. */
+          if (extra && extra.length) {
+            const seen2 = new Set(raw.map(t => t.hash?.toLowerCase()));
+            for (const t of extra) {
+              const h = t.hash?.toLowerCase();
+              if (h && !seen2.has(h)) { raw.push(t); seen2.add(h); }
+            }
+          }
+          raw.sort((a, b) => Number(b.timeStamp || 0) - Number(a.timeStamp || 0));
           /* Cache for 60s — covers all tab switching */
           this._profileScanCache[cacheKey] = raw;
           setTimeout(() => { delete this._profileScanCache[cacheKey]; }, 60_000);
@@ -6995,7 +7005,10 @@ class SayIt {
           const to   = tx.to?.toLowerCase();
           if (from !== address.toLowerCase()) return;
           if (!tx.input || tx.input === '0x') return;
-          if (tab === 'posts' && to === addrLc) {
+          /* Pins resolve from canonical-chain txs only — block numbers aren't
+             comparable across chains, so the last-wins ordering would be wrong
+             if pins existed on multiple chains. */
+          if (tab === 'posts' && to === addrLc && (!tx._chainId || tx._chainId === CANONICAL_CHAIN_ID)) {
             try {
               const t = ethers.toUtf8String(tx.input).trim();
               let pinHash = null, isUnpin = false;
@@ -7012,8 +7025,8 @@ class SayIt {
           try {
             /* Canonical parse — identical poll/vote/repost/reply handling
                to the main feed. Returns null for non-post txs (profile,
-               reactions, votes). */
-            const parsed = this._parsePostTx(tx, { mode: 'profile' });
+               reactions, votes). chainId from the tx's origin chain tag. */
+            const parsed = this._parsePostTx(tx, { mode: 'profile', chainId: tx._chainId || CANONICAL_CHAIN_ID });
             if (!parsed) return;
             const isReply = !!parsed.parentTx;
             if (tab === 'posts'   &&  isReply) return;
@@ -7173,6 +7186,30 @@ class SayIt {
     const donePill = document.getElementById('prof-scan-pill');
     if (donePill) donePill.remove();
     return all;
+  }
+
+  /* Scan an address's posts on the user's enabled NON-canonical chains for the
+     profile's initial paint. One identity across EVM chains, so a profile
+     should show its posts everywhere. Each tx is tagged with its origin chain
+     (_chainId) so _parsePostTx stamps it. Bounded to a few pages per chain;
+     empty enabled set → [] (canonical-only profile, unchanged). Deeper scroll
+     still pages the canonical chain only — see AUDIT follow-up. */
+  async _scanProfileExtraChains(address, pagesPerChain = 2) {
+    const extra = (this._getSettings().enabledChains || [])
+      .map(Number).filter(id => id !== CANONICAL_CHAIN_ID && chainCfg(id));
+    if (!extra.length) return [];
+    const out = [];
+    await Promise.all(extra.map(async cid => {
+      for (let page = 1; page <= pagesPerChain; page++) {
+        let raw;
+        try { raw = await this.apiFetch(address, page, cid); }
+        catch { break; }
+        raw.forEach(t => { t._chainId = cid; });
+        out.push(...raw);
+        if (raw.length < 50) break;
+      }
+    }));
+    return out;
   }
 
   /* ── Edit profile modal ─────────────────────────────────────────────── */
