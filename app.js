@@ -1685,8 +1685,7 @@ class SayIt {
     const body = `
       <div class="disclaimer-body">
         <p><strong>Say It DeFi is an open, decentralized front-end.</strong>
-        It is a web interface to a public, permissionless social protocol that
-        lives entirely on the PulseChain blockchain.</p>
+        It is a web interface to a public, permissionless social protocol that lives on multiple EVM chains by default (PulseChain + Ethereum + Base + BSC).</p>
 
         <p>All posts, replies, polls, votes, profiles, and other content are
         created by users and written directly to the blockchain by their own
