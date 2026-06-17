@@ -1540,7 +1540,12 @@ class SayIt {
 
   async publishFromModal() {
     let chainId = this._composerChainFrom("modal-compose-chain");
-    const enabled = (this._getSettings().enabledChains || []).map(Number).filter(id => chainCfg(id));
+    let enabled = this._getSettings().enabledChains;
+    if (!Array.isArray(enabled) || enabled.length === 0) {
+      enabled = Object.keys(CHAINS).map(Number).filter(id => id !== CANONICAL_CHAIN_ID && chainCfg(id));
+    } else {
+      enabled = enabled.map(Number).filter(id => chainCfg(id));
+    }
     if (enabled.length > 0 && !chainId) {
       chainId = await this._selectChainForPost(this._getSettings().defaultChain);
     }
@@ -9976,7 +9981,12 @@ class SayIt {
 
   async publishPost(chainId) {
     if (!chainId) {
-      const enabled = (this._getSettings().enabledChains || []).map(Number).filter(id => chainCfg(id));
+      let enabled = this._getSettings().enabledChains;
+      if (!Array.isArray(enabled) || enabled.length === 0) {
+        enabled = Object.keys(CHAINS).map(Number).filter(id => id !== CANONICAL_CHAIN_ID && chainCfg(id));
+      } else {
+        enabled = enabled.map(Number).filter(id => chainCfg(id));
+      }
       if (enabled.length > 0) {
         chainId = await this._selectChainForPost(this._getSettings().defaultChain);
       }
