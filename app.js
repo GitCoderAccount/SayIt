@@ -1548,7 +1548,7 @@ class SayIt {
     }
     if (enabled.length > 0 && !chainId) {
       try {
-        chainId = await this._selectChainForPost(this._getSettings().defaultChain);
+        chainId = await this._showChainSelectModal(this._getSettings().defaultChain);
       } catch(e) { console.warn("Chain selection failed", e); }
     }
     const text = this.g('modal-compose-text').value.trim();
@@ -9991,14 +9991,7 @@ class SayIt {
         enabled = enabled.map(Number).filter(id => chainCfg(id));
       }
       if (enabled.length > 0) {
-        // Reliable selection (prompt fallback for live site stability)
-        const names = enabled.map(id => chainName(id) + " (" + id + ")").join(", ");
-        const choice = prompt("Post to which network?\n" + names);
-        const match = enabled.find(id => 
-          chainName(id).toLowerCase().includes(String(choice || "").toLowerCase()) || 
-          String(id) === String(choice)
-        );
-        chainId = match || this._getSettings().defaultChain || CANONICAL_CHAIN_ID;
+        chainId = await this._showChainSelectModal(this._getSettings().defaultChain);
       }
     }
     const text = this.g('compose-text').value.trim();
