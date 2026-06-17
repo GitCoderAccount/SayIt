@@ -4205,7 +4205,6 @@ class SayIt {
       return { enabledChains: Object.keys(CHAINS).map(Number).filter(id => id !== CANONICAL_CHAIN_ID && chainCfg(id)) };
     }
   }
-}
   _getPostCap() {
     const s = this._getSettings();
     /* No cap by default — block gas limit caps individual post size, and
