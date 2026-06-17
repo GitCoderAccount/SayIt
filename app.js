@@ -9991,7 +9991,14 @@ class SayIt {
         enabled = enabled.map(Number).filter(id => chainCfg(id));
       }
       if (enabled.length > 0) {
-        chainId = await this._selectChainForPost(this._getSettings().defaultChain);
+        // Reliable selection (prompt fallback for live site stability)
+        const names = enabled.map(id => chainName(id) + " (" + id + ")").join(", ");
+        const choice = prompt("Post to which network?\n" + names);
+        const match = enabled.find(id => 
+          chainName(id).toLowerCase().includes(String(choice || "").toLowerCase()) || 
+          String(id) === String(choice)
+        );
+        chainId = match || this._getSettings().defaultChain || CANONICAL_CHAIN_ID;
       }
     }
     const text = this.g('compose-text').value.trim();
