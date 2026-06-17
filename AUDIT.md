@@ -125,3 +125,13 @@ PulseChain app. See README → Multichain.
 - [x] **Non-canonical sent-tx depth** — the Following scan pages up to 2 txlist pages per non-canonical chain (Etherscan v2 has no sent-only filter). *(#195)*
 - [ ] **Real-wallet validation** — all write paths are headless-verified with a stubbed signer; confirm on-chain sends in Rabby (dust) on at least one extra chain. *(owner test)*
 - [ ] **Followers cross-chain** — follower COUNT/list scans (`_scanFollowers`) still read the canonical chain; follows routed there stay correct, but a fuller cross-chain follower view is a future nicety. *(S)*
+
+## AEP Governance Integration (2026-06-17)
+- Full AEP layer added (scene, registry, theme, dynAEP config, validator, test harness)
+- data-aep-id attributes added across UI elements
+- renderFeed updated with AEP/dynAEP hooks and readiness
+- CI validator v2 and test script passing
+- MCP config for AEP/dynAEP
+- Governance foundation complete and verified
+
+Remaining: Full event instrumentation, skin bindings, pilot governed edit.

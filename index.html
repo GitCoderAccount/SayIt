@@ -3095,7 +3095,7 @@ html.ul-links .post-mention { text-decoration:underline; }
 }
 </style>
 </head>
-<body>
+<body data-aep-id="CZ-00000">
 <h1 class="visually-hidden">Say It DeFi — uncensorable social on PulseChain</h1>
 <!-- Icon sprite — symbols defined once, referenced via <use> from every post.
      Biggest DOM-weight win: 12 SVGs per post × 2000 posts collapses to
@@ -3129,12 +3129,12 @@ html.ul-links .post-mention { text-decoration:underline; }
     </div>
 
     <nav>
-      <a class="nav-btn active" id="nav-home" href="#/home">
+      <a class="nav-btn active" id="nav-home" data-aep-id="PN-00002" href="#/home">
         <span class="nav-icon">
           <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 1.696L.622 8.807l1.06 1.696L3 9.679V19.5C3 20.881 4.119 22 5.5 22h4a1 1 0 001-1v-6h3v6a1 1 0 001 1h4c1.381 0 2.5-1.119 2.5-2.5V9.679l1.318.824 1.06-1.696L12 1.696zM19 19.5c0 .276-.224.5-.5.5H15v-6a1 1 0 00-1-1h-4a1 1 0 00-1 1v6H5.5a.5.5 0 01-.5-.5V8.429l7-4.375 7 4.375V19.5z"/></svg>
         </span><span class="nav-label">Home</span>
       </a>
-      <a class="nav-btn" id="nav-explore" href="#/explore">
+      <a class="nav-btn" id="nav-explore" data-aep-id="PN-00004" href="#/explore">
         <span class="nav-icon">
           <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M10.25 3.75c-3.59 0-6.5 2.91-6.5 6.5s2.91 6.5 6.5 6.5c1.795 0 3.419-.726 4.596-1.904 1.178-1.177 1.904-2.801 1.904-4.596 0-3.59-2.91-6.5-6.5-6.5zm-8.5 6.5c0-4.694 3.806-8.5 8.5-8.5s8.5 3.806 8.5 8.5c0 1.986-.682 3.815-1.814 5.272l4.771 4.771-1.414 1.414-4.771-4.771A8.456 8.456 0 0110.25 18.75c-4.694 0-8.5-3.806-8.5-8.5z"/></svg>
         </span><span class="nav-label">Explore</span>
@@ -3186,7 +3186,7 @@ html.ul-links .post-mention { text-decoration:underline; }
       </div>
     </nav>
 
-    <button id="nav-post-btn">Post</button>
+    <button id="nav-post-btn" data-aep-id="CP-00002">Post</button>
 
     <div class="sidebar-footer">
       <div id="account-pill" style="display:none">
@@ -3203,7 +3203,7 @@ html.ul-links .post-mention { text-decoration:underline; }
 
   <!-- Main feed -->
   <div id="main">
-    <div id="feed-tabs">
+    <div id="feed-tabs" data-aep-id="PN-00001">
       <button class="feed-tab active" id="tab-foryou">For You</button>
       <button class="feed-tab" id="tab-following">Following</button>
     </div>
@@ -3294,7 +3294,7 @@ html.ul-links .post-mention { text-decoration:underline; }
       <span id="new-pill-text">New posts</span>
     </button>
 
-    <div id="feed"></div>
+    <div id="feed" data-aep-id="CZ-00001"></div>
     <div id="loading-more">Scanning the chain…</div>
   </div>
 
@@ -3460,7 +3460,7 @@ html.ul-links .post-mention { text-decoration:underline; }
 <button id="mobile-fab" aria-label="New post">✦</button>
 
 <!-- Mobile nav -->
-<nav id="mobile-nav">
+<nav id="mobile-nav" data-aep-id="PN-00003">
   <button class="mn-btn active" data-mn="home">
     <span class="mn-icon"><svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 1.696L.622 8.807l1.06 1.696L3 9.679V19.5C3 20.881 4.119 22 5.5 22h4a1 1 0 001-1v-6h3v6a1 1 0 001 1h4c1.381 0 2.5-1.119 2.5-2.5V9.679l1.318.824 1.06-1.696L12 1.696z"/></svg></span>Home
   </button>
@@ -3494,7 +3494,7 @@ html.ul-links .post-mention { text-decoration:underline; }
 <div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <!-- Fullscreen compose modal -->
-<div class="modal-bg" id="compose-modal">
+<div class="modal-bg" id="compose-modal" data-aep-id="MD-00001">
   <div class="modal" role="dialog" aria-modal="true" aria-label="Compose post">
     <div class="modal-head">
       <button class="modal-close" aria-label="Close" id="close-compose-modal">✕</button>
@@ -3532,7 +3532,7 @@ html.ul-links .post-mention { text-decoration:underline; }
 </div>
 
 <!-- Edit Profile modal (view is now a full in-column page) -->
-<div class="modal-bg" id="profile-modal">
+<div class="modal-bg" id="profile-modal" data-aep-id="MD-00002">
   <div class="modal" role="dialog" aria-modal="true" aria-label="Edit profile">
     <div class="modal-head">
       <span class="modal-title">Edit Profile</span>
@@ -3599,7 +3599,7 @@ html.ul-links .post-mention { text-decoration:underline; }
 </div>
 
 <!-- Share card modal -->
-<div class="modal-bg" id="share-modal">
+<div class="modal-bg" id="share-modal" data-aep-id="MD-00003">
   <div class="modal" style="max-width:520px" role="dialog" aria-modal="true" aria-label="Share post">
     <div class="modal-head">
       <span class="modal-title">Share Post</span>
@@ -3615,7 +3615,7 @@ html.ul-links .post-mention { text-decoration:underline; }
 </div>
 
 <!-- Reply modal -->
-<div class="modal-bg" id="reply-modal">
+<div class="modal-bg" id="reply-modal" data-aep-id="MD-00004">
   <div class="modal" role="dialog" aria-modal="true" aria-label="Reply">
     <div class="modal-head">
       <span class="modal-title">Reply</span>
