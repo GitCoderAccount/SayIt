@@ -4193,9 +4193,19 @@ class SayIt {
 
   /* ── Settings page ──────────────────────────────────────────────────── */
   _getSettings() {
-    try { return JSON.parse(utils.safeLS.get(SETTINGS_KEY, '{}')); }
-    catch { return {}; }
+    try {
+      let s = JSON.parse(utils.safeLS.get(SETTINGS_KEY, '{}'));
+      if (!s.enabledChains || s.enabledChains.length === 0) {
+        s.enabledChains = Object.keys(CHAINS)
+          .map(Number)
+          .filter(id => id !== CANONICAL_CHAIN_ID && chainCfg(id));
+      }
+      return s;
+    } catch {
+      return { enabledChains: Object.keys(CHAINS).map(Number).filter(id => id !== CANONICAL_CHAIN_ID && chainCfg(id)) };
+    }
   }
+}
   _getPostCap() {
     const s = this._getSettings();
     /* No cap by default — block gas limit caps individual post size, and
