@@ -1539,18 +1539,6 @@ class SayIt {
   }
 
   async publishFromModal() {
-    let chainId = this._composerChainFrom("modal-compose-chain");
-    let enabled = this._getSettings().enabledChains;
-    if (!Array.isArray(enabled) || enabled.length === 0) {
-      enabled = Object.keys(CHAINS).map(Number).filter(id => id !== CANONICAL_CHAIN_ID && chainCfg(id));
-    } else {
-      enabled = enabled.map(Number).filter(id => chainCfg(id));
-    }
-    if (enabled.length > 0 && !chainId) {
-      try {
-        chainId = await this._showChainSelectModal(this._getSettings().defaultChain);
-      } catch(e) { console.warn("Chain selection failed", e); }
-    }
     const text = this.g('modal-compose-text').value.trim();
     if (!text) return;
     this.g('compose-text').value = text;
@@ -7567,11 +7555,8 @@ class SayIt {
   _activeFeedChains() {
     if (this.state.mode === 'main'
         && (this.state.channel || '').toLowerCase() === MAIN_CHANNEL.toLowerCase()) {
-      let enabled = this._getSettings().enabledChains;
-      if (!Array.isArray(enabled) || enabled.length === 0) {
-        enabled = Object.keys(CHAINS).map(Number).filter(id => id !== CANONICAL_CHAIN_ID && chainCfg(id));
-      }
-      enabled = enabled.map(Number).filter(id => id !== CANONICAL_CHAIN_ID && chainCfg(id));
+      const enabled = (this._getSettings().enabledChains || [])
+        .map(Number).filter(id => id !== CANONICAL_CHAIN_ID && chainCfg(id));
       if (enabled.length) return [CANONICAL_CHAIN_ID, ...enabled];
     }
     return [CANONICAL_CHAIN_ID];
@@ -9983,17 +9968,6 @@ class SayIt {
   }
 
   async publishPost(chainId) {
-    if (!chainId) {
-      let enabled = this._getSettings().enabledChains;
-      if (!Array.isArray(enabled) || enabled.length === 0) {
-        enabled = Object.keys(CHAINS).map(Number).filter(id => id !== CANONICAL_CHAIN_ID && chainCfg(id));
-      } else {
-        enabled = enabled.map(Number).filter(id => chainCfg(id));
-      }
-      if (enabled.length > 0) {
-        chainId = await this._showChainSelectModal(this._getSettings().defaultChain);
-      }
-    }
     const text = this.g('compose-text').value.trim();
     if (!text) return false;
     const cid = chainId != null ? chainId : this._composerChainFrom('compose-chain');
