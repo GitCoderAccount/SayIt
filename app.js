@@ -1539,6 +1539,11 @@ class SayIt {
   }
 
   async publishFromModal() {
+    let chainId = this._composerChainFrom("modal-compose-chain");
+    const enabled = (this._getSettings().enabledChains || []).map(Number).filter(id => chainCfg(id));
+    if (enabled.length > 0 && !chainId) {
+      chainId = await this._selectChainForPost(this._getSettings().defaultChain);
+    }
     const text = this.g('modal-compose-text').value.trim();
     if (!text) return;
     this.g('compose-text').value = text;
@@ -1680,7 +1685,8 @@ class SayIt {
     const body = `
       <div class="disclaimer-body">
         <p><strong>Say It DeFi is an open, decentralized front-end.</strong>
-        It is a web interface to a public, permissionless social protocol that lives on multiple EVM chains (PulseChain + Ethereum + Base + BSC by default).</p>
+        It is a web interface to a public, permissionless social protocol that
+        lives entirely on the PulseChain blockchain.</p>
 
         <p>All posts, replies, polls, votes, profiles, and other content are
         created by users and written directly to the blockchain by their own
@@ -9959,7 +9965,7 @@ class SayIt {
     ['compose-chain', 'modal-compose-chain'].forEach(selId => {
       const el = this.g(selId);
       if (!el) return;
-      if (ids.length > 1) { el.hidden = true; } else { el.hidden = true; }
+      if (ids.length <= 1) { el.hidden = true; el.innerHTML = ''; return; }
       el.innerHTML = ids.map(id =>
         `<option value="${id}"${id === def ? ' selected' : ''}>${utils.safe(chainName(id))}</option>`).join('');
       el.hidden = false;
@@ -9970,10 +9976,7 @@ class SayIt {
     if (!chainId) {
       const enabled = (this._getSettings().enabledChains || []).map(Number).filter(id => chainCfg(id));
       if (enabled.length > 0) {
-        const names = [chainName(CANONICAL_CHAIN_ID), ...enabled.map(chainName)].join(" / ");
-        const choice = prompt("Post to which network?\n" + names + "\n(leave blank for default)");
-        const match = enabled.find(id => chainName(id).toLowerCase().includes(String(choice||"").toLowerCase()));
-        chainId = match || this._getSettings().defaultChain || CANONICAL_CHAIN_ID;
+        chainId = await this._selectChainForPost(this._getSettings().defaultChain);
       }
     }
     const text = this.g('compose-text').value.trim();
