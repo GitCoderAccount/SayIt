@@ -25,6 +25,7 @@ try {
     1:    ['https://eth.blockscout.com', 'https://eth.llamarpc.com'],
     8453: ['https://base.blockscout.com', 'https://mainnet.base.org'],
     56:   ['https://api.etherscan.io', 'https://bsc-dataseed.binance.org'],
+    56:   ['https://bsc.blockscout.com', 'https://bsc-dataseed.binance.org'],
   };
   try {
     const _s2 = JSON.parse(localStorage.getItem('sayitSettings') || '{}');
