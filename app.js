@@ -1547,7 +1547,9 @@ class SayIt {
       enabled = enabled.map(Number).filter(id => chainCfg(id));
     }
     if (enabled.length > 0 && !chainId) {
-      chainId = await this._selectChainForPost(this._getSettings().defaultChain);
+      try {
+        chainId = await this._selectChainForPost(this._getSettings().defaultChain);
+      } catch(e) { console.warn("Chain selection failed", e); }
     }
     const text = this.g('modal-compose-text').value.trim();
     if (!text) return;
