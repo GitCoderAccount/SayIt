@@ -25,4 +25,5 @@
   },
   "defaultServers": ["aep-main", "dynaep-lattice"],
   "startupPrompt": "Use AEP MCP tools for all ID validation, lattice queries, temporal stamps before proposing changes. Follow AGENTS.md startup template."
-}
+}AEP MCP config ready for Grok Build orchestrator testing (#7)
+AEP MCP ready for testing with Grok Build orchestrator (#5)

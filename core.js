@@ -132,7 +132,7 @@ const CHAINS = {
        Settings. */
     explorer: { type: 'blockscout', name: 'BscScan', api: 'https://bsc.blockscout.com/api', web: 'https://bscscan.com' },
     rpcUrls: ['https://bsc-dataseed.binance.org'],
-    social: true, enabled: false,
+    social: true, enabled: true,
   },
 };
 /* The default + canonical social chain. Everything that doesn't yet specify a
@@ -1412,3 +1412,4 @@ const DMCrypto = {
   },
 };
 if (typeof window !== 'undefined') window.DMCrypto = DMCrypto;
+// Additional chains can be added via Blockscout pattern in core.js (#7)
