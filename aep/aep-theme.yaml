@@ -14,3 +14,10 @@ skin:
     binding: "var(--bg-card)"
   modal:
     binding: "var(--glass)"
+
+  button:
+    binding: "var(--primary)"
+  input:
+    binding: "var(--border)"
+  badge:
+    binding: "var(--glass)"

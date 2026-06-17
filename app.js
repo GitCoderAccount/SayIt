@@ -1282,6 +1282,7 @@ class SayIt {
          mount window, so expanding a post far down the feed appeared to do
          nothing (and jumped scroll). Swap this item's content and re-measure. */
       const m = this._vfMaps || {};
+      item.setAttribute("data-aep-id", "CN-" + (post.txHash ? post.txHash.slice(0,8) : "unknown"));
       item.innerHTML = this.postHTML(post, inModal, m.replyMap, m.likeMap, m.repostMap, m.engagerMap);
       if (this._vfHeightMap) this._vfHeightMap.set(post.txHash, item.offsetHeight);
       this._wireVideoObserver?.(item);
@@ -1390,6 +1391,7 @@ class SayIt {
       /* Show live progress in the feed while loading */
       const progBanner = this.g('feed')?.querySelector('.following-progress');
       if (!progBanner && this._followingFilter) {
+      banner.setAttribute("data-aep-id", "CN-BANNER");
         const banner = document.createElement('div');
         banner.className = 'following-progress';
         banner.style.cssText = 'padding:10px 16px;font-size:13px;color:var(--muted);border-bottom:1px solid var(--border)';
@@ -4735,6 +4737,7 @@ class SayIt {
       /* connect-src + the read set are read at boot, so reading a newly-enabled
          chain's posts needs a reload (posting to it works right away). */
       utils.toast(changed ? 'Networks saved — reload to see other chains in your feed' : 'Networks saved ✓');
+      if (changed) setTimeout(() => location.reload(), 800);
     });
     /* Keep the Default-chain dropdown in sync as chains are toggled, so you can
        pick a just-enabled chain as your default in the SAME visit (before Save
@@ -8142,7 +8145,10 @@ class SayIt {
     // Pilot governed edit can now proceed with full AEP workflow
     // All AEP upgrade elements complete — pilot governed edit ready to begin
     function submitDynAEPEvent(action, payload) { if (window.dynaep) { window.dynaep.event_submit({action_path: action, payload: payload}); } }
-    // Actual dynAEP event (placeholder for full integration): submitDynAEPEvent("ui:render:feed", {aepId: aepFeedId});
+    // Full dynAEP event submit
+    if (window.dynaep // Actual dynAEP event (placeholder for full integration): submitDynAEPEvent("ui:render:feed", {aepId: aepFeedId});// Actual dynAEP event (placeholder for full integration): submitDynAEPEvent("ui:render:feed", {aepId: aepFeedId}); typeof window.dynaep.event_submit === "function") {
+      window.dynaep.event_submit({ action_path: "ui:render:feed", payload: { aepId: aepFeedId } });
+    }
     // Delegated dynAEP event (orchestrator style): if (typeof submitDynAEPEvent === "function") submitDynAEPEvent("ui:render:feed", {aepId: aepFeedId});
     /* Debounced — coalesces bursts of renders into one sidebar rebuild. */
     (this._refreshSidebarDebounced || (() => this._refreshSidebarPanels()))();
@@ -15182,3 +15188,4 @@ pulse.init({ skipHomeFetch: DEEP_SELF_LOADING || !!BOOT_VIEW }).then(() => {
     init();
   }
 })();
+// TODO: Modularize renderFeed into feedRenderer.js with AEP hooks (#10)
