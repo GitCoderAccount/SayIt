@@ -8142,27 +8142,13 @@ class SayIt {
     // End of AEP upgrade cycle in renderFeed — foundation complete for pilot
     // Pilot can now begin — all AEP elements in place
     // Full AEP compliance foundation complete — pilot governed edit ready
-    // Pilot governed edit can now proceed with full AEP workflow
-    // All AEP upgrade elements complete — pilot governed edit ready to begin
-    function submitDynAEPEvent(action, payload) { if (window.dynaep) { window.dynaep.event_submit({action_path: action, payload: payload}); } }
-    // Production dynAEP event submit (safe)
+        // Production dynAEP event submit (safe)
     if (window.dynaep && typeof window.dynaep.event_submit === "function") {
       try { window.dynaep.event_submit({ action_path: "ui:render:feed", payload: { aepId: aepFeedId } }); } catch(e){}
     }
-    // Delegated dynAEP event (orchestrator style): if (typeof submitDynAEPEvent === "function") submitDynAEPEvent("ui:render:feed", {aepId: aepFeedId});
-    /* Debounced — coalesces bursts of renders into one sidebar rebuild. */
-    (this._refreshSidebarDebounced || (() => this._refreshSidebarPanels()))();
-    const selfManaged = this._selfManagedModes;
-    /* Inject pending page-header BEFORE the self-managed bail.
-       Self-managed pages (Notifications, Explore, etc.) call
-       feed.innerHTML = header + content in their own render functions.
-       Non-self-managed pages (My Channel, Wave, Custom, Main) get the
-       header prepended here to their feed DOM. */
-    if (this._pendingPageHeader && !this.g('feed')?.querySelector('.page-header')) {
-      const feed = this.g('feed');
-      if (feed) feed.insertAdjacentHTML('afterbegin', this._pendingPageHeader);
-      this._pendingPageHeader = null;
-    }
+    // Delegated dynAEP event
+    if (typeof submitDynAEPEvent === "function") submitDynAEPEvent("ui:render:feed", {aepId: aepFeedId});
+
     if (selfManaged.has(this.state.mode)) return;
 
     const feed = this.g('feed');
