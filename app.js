@@ -9998,7 +9998,7 @@ class SayIt {
       const el = this.g(selId);
       if (!el) return;
       if (ids.length <= 1) { el.hidden = true; el.innerHTML = ''; return; }
-      el.innerHTML = ids.map(id =>
+      el.style.fontSize = "12px"; el.style.padding = "2px 4px"; el.innerHTML = ids.map(id =>
         `<option style="font-size:12px" value="${id}"${id === def ? ' selected' : ''}>${utils.safe(chainName(id))}</option>`).join('');
       el.hidden = false;
     });
@@ -10015,7 +10015,7 @@ class SayIt {
     const ids  = [CANONICAL_CHAIN_ID, ...checked];
     const cur  = Number(sel.value) || CANONICAL_CHAIN_ID;
     const keep = ids.includes(cur) ? cur : CANONICAL_CHAIN_ID;
-    sel.innerHTML = ids.map(id =>
+    sel.style.fontSize = "12px"; el.style.padding = "2px 4px"; el.innerHTML = ids.map(id =>
       `<option style="font-size:12px" value="${id}"${id === keep ? ' selected' : ''}>${utils.safe(chainName(id))}</option>`).join('');
   }
 
