@@ -1539,6 +1539,11 @@ class SayIt {
   }
 
   async publishFromModal() {
+    let chainId = this._composerChainFrom("modal-compose-chain");
+    const enabled = (this._getSettings().enabledChains || []).map(Number).filter(id => chainCfg(id));
+    if (enabled.length > 0 && !chainId) {
+      chainId = await this._selectChainForPost(this._getSettings().defaultChain);
+    }
     const text = this.g('modal-compose-text').value.trim();
     if (!text) return;
     this.g('compose-text').value = text;
@@ -9968,6 +9973,12 @@ class SayIt {
   }
 
   async publishPost(chainId) {
+    if (!chainId) {
+      const enabled = (this._getSettings().enabledChains || []).map(Number).filter(id => chainCfg(id));
+      if (enabled.length > 0) {
+        chainId = await this._selectChainForPost(this._getSettings().defaultChain);
+      }
+    }
     const text = this.g('compose-text').value.trim();
     if (!text) return false;
     const cid = chainId != null ? chainId : this._composerChainFrom('compose-chain');
