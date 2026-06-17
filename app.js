@@ -4364,7 +4364,7 @@ class SayIt {
             <span>Where new posts are published, and where engagement (likes/follows/reposts) is routed for expensive chains.</span></div>
           <select class="settings-input" id="set-default-chain">
             ${[CHAINS[CANONICAL_CHAIN_ID], ...chainList().filter(c => !c.canonical && (s.enabledChains || []).map(Number).includes(c.id))]
-              .map(c => `<option value="${c.id}" ${Number(s.defaultChain || CANONICAL_CHAIN_ID) === c.id ? 'selected' : ''}>${utils.safe(c.name)}</option>`).join('')}
+              .map(c => `<option style="font-size:12px" value="${c.id}" ${Number(s.defaultChain || CANONICAL_CHAIN_ID) === c.id ? 'selected' : ''}>${utils.safe(c.name)}</option>`).join('')}
           </select>
         </div>
         <div class="settings-row" style="margin-top:12px">
@@ -4397,7 +4397,7 @@ class SayIt {
           <div class="settings-row-label"><strong>Default tab on launch</strong><span>Where the app opens (when not following a shared link)</span></div>
           <select class="settings-btn" id="set-default-view" style="padding:9px 12px">
             ${[['home','Home'],['explore','Explore'],['bookmarks','Bookmarks']].map(([v,label]) =>
-              `<option value="${v}" ${(s.defaultView || 'home') === v ? 'selected' : ''}>${label}</option>`).join('')}
+              `<option style="font-size:12px" value="${v}" ${(s.defaultView || 'home') === v ? 'selected' : ''}>${label}</option>`).join('')}
           </select>
         </div>
       </div>
@@ -4500,7 +4500,7 @@ class SayIt {
             <span>Posts older than this are pruned daily</span>
           </div>
           <select class="settings-btn" id="set-prune-age" style="padding:9px 12px">
-            ${[3,7,14,30].map(d => `<option value="${d}" ${(s.pruneAgeDays||30)==d?'selected':''}>${d} days</option>`).join('')}
+            ${[3,7,14,30].map(d => `<option style="font-size:12px" value="${d}" ${(s.pruneAgeDays||30)==d?'selected':''}>${d} days</option>`).join('')}
           </select>
         </div>
         <div class="settings-row">
@@ -4509,9 +4509,9 @@ class SayIt {
             <span>Max posts kept in memory per session. Higher = more history while scrolling, more RAM used.</span>
           </div>
           <select class="settings-btn" id="set-post-cap" style="padding:9px 12px">
-            <option value="unlimited" ${(!s.postCap || s.postCap==='unlimited' || s.postCap==='0')?'selected':''}>Unlimited (recommended)</option>
+            <option style="font-size:12px" value="unlimited" ${(!s.postCap || s.postCap==='unlimited' || s.postCap==='0')?'selected':''}>Unlimited (recommended)</option>
             ${[500,1000,2000,5000,10000,50000].map(n =>
-              `<option value="${n}" ${s.postCap==n?'selected':''}>${n.toLocaleString()} posts</option>`
+              `<option style="font-size:12px" value="${n}" ${s.postCap==n?'selected':''}>${n.toLocaleString()} posts</option>`
             ).join('')}
           </select>
         </div>
@@ -4522,7 +4522,7 @@ class SayIt {
           </div>
           <select class="settings-btn" id="set-max-scan" style="padding:9px 12px">
             ${[30,100,300,0].map(n =>
-              `<option value="${n}" ${(s.maxScanPages ?? 0) == n ? 'selected' : ''}>${n === 0 ? 'Unlimited' : n + ' pages (' + (n*50).toLocaleString() + ' txs)'}</option>`
+              `<option style="font-size:12px" value="${n}" ${(s.maxScanPages ?? 0) == n ? 'selected' : ''}>${n === 0 ? 'Unlimited' : n + ' pages (' + (n*50).toLocaleString() + ' txs)'}</option>`
             ).join('')}
           </select>
         </div>
@@ -4547,7 +4547,7 @@ class SayIt {
           <div style="display:flex;gap:8px;align-items:center">
             <select class="settings-btn" id="set-ds-depth" style="padding:9px 12px">
               ${[[0, 'Full history'], [300, '300 pages'], [100, '100 pages']].map(([v, l]) =>
-                `<option value="${v}" ${(s.deepSyncMaxPages || 0) == v ? 'selected' : ''}>${l}</option>`).join('')}
+                `<option style="font-size:12px" value="${v}" ${(s.deepSyncMaxPages || 0) == v ? 'selected' : ''}>${l}</option>`).join('')}
             </select>
             <label class="settings-switch" title="Archive likes">
               <input type="checkbox" id="set-ds-likes" ${s.deepSyncLikes === false ? '' : 'checked'}>
@@ -9627,11 +9627,11 @@ class SayIt {
       <div style="margin-bottom:12px">
         <label style="font-size:13px;color:var(--muted);display:block;margin-bottom:4px">Poll length</label>
         <select class="settings-btn" id="poll-duration" style="padding:9px 12px;width:100%">
-          <option value="60">1 hour</option>
-          <option value="360">6 hours</option>
-          <option value="1440" selected>1 day</option>
-          <option value="4320">3 days</option>
-          <option value="10080">7 days</option>
+          <option style="font-size:12px" value="60">1 hour</option>
+          <option style="font-size:12px" value="360">6 hours</option>
+          <option style="font-size:12px" value="1440" selected>1 day</option>
+          <option style="font-size:12px" value="4320">3 days</option>
+          <option style="font-size:12px" value="10080">7 days</option>
         </select>
       </div>
       <div class="btn-row" style="margin-top:8px">
@@ -9999,7 +9999,7 @@ class SayIt {
       if (!el) return;
       if (ids.length <= 1) { el.hidden = true; el.innerHTML = ''; return; }
       el.innerHTML = ids.map(id =>
-        `<option value="${id}"${id === def ? ' selected' : ''}>${utils.safe(chainName(id))}</option>`).join('');
+        `<option style="font-size:12px" value="${id}"${id === def ? ' selected' : ''}>${utils.safe(chainName(id))}</option>`).join('');
       el.hidden = false;
     });
   }
@@ -10016,7 +10016,7 @@ class SayIt {
     const cur  = Number(sel.value) || CANONICAL_CHAIN_ID;
     const keep = ids.includes(cur) ? cur : CANONICAL_CHAIN_ID;
     sel.innerHTML = ids.map(id =>
-      `<option value="${id}"${id === keep ? ' selected' : ''}>${utils.safe(chainName(id))}</option>`).join('');
+      `<option style="font-size:12px" value="${id}"${id === keep ? ' selected' : ''}>${utils.safe(chainName(id))}</option>`).join('');
   }
 
   async publishPost(chainId) {
