@@ -1412,4 +1412,3 @@ const DMCrypto = {
   },
 };
 if (typeof window !== 'undefined') window.DMCrypto = DMCrypto;
-// Additional chains can be added via Blockscout pattern in core.js (#7)

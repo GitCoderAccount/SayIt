@@ -8145,9 +8145,9 @@ class SayIt {
     // Pilot governed edit can now proceed with full AEP workflow
     // All AEP upgrade elements complete — pilot governed edit ready to begin
     function submitDynAEPEvent(action, payload) { if (window.dynaep) { window.dynaep.event_submit({action_path: action, payload: payload}); } }
-    // Full dynAEP event submit
-    if (window.dynaep // Actual dynAEP event (placeholder for full integration): submitDynAEPEvent("ui:render:feed", {aepId: aepFeedId});// Actual dynAEP event (placeholder for full integration): submitDynAEPEvent("ui:render:feed", {aepId: aepFeedId}); typeof window.dynaep.event_submit === "function") {
-      window.dynaep.event_submit({ action_path: "ui:render:feed", payload: { aepId: aepFeedId } });
+    // Production dynAEP event submit (safe)
+    if (window.dynaep && typeof window.dynaep.event_submit === "function") {
+      try { window.dynaep.event_submit({ action_path: "ui:render:feed", payload: { aepId: aepFeedId } }); } catch(e){}
     }
     // Delegated dynAEP event (orchestrator style): if (typeof submitDynAEPEvent === "function") submitDynAEPEvent("ui:render:feed", {aepId: aepFeedId});
     /* Debounced — coalesces bursts of renders into one sidebar rebuild. */
