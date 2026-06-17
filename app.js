@@ -8149,6 +8149,7 @@ class SayIt {
     // Delegated dynAEP event
     if (typeof submitDynAEPEvent === "function") submitDynAEPEvent("ui:render:feed", {aepId: aepFeedId});
 
+    const selfManaged = this._selfManagedModes;
     if (selfManaged.has(this.state.mode)) return;
 
     const feed = this.g('feed');
