@@ -223,3 +223,8 @@ See the repository for license details.
 ---
 
 *Say It DeFi — uncensorable social on PulseChain.*
+
+## Multi-Network Support (Updated)
+Say It DeFi now aggregates content across multiple EVM chains by default (PulseChain + Ethereum + Base + BSC). Your identity is the same across all chains. Posting, likes, follows, etc. are chain-specific but the feed shows everything together.
+
+See Settings → Networks to customize.
