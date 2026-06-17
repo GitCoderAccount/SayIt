@@ -7559,8 +7559,11 @@ class SayIt {
   _activeFeedChains() {
     if (this.state.mode === 'main'
         && (this.state.channel || '').toLowerCase() === MAIN_CHANNEL.toLowerCase()) {
-      const enabled = (this._getSettings().enabledChains || [])
-        .map(Number).filter(id => id !== CANONICAL_CHAIN_ID && chainCfg(id));
+      let enabled = this._getSettings().enabledChains;
+      if (!Array.isArray(enabled) || enabled.length === 0) {
+        enabled = Object.keys(CHAINS).map(Number).filter(id => id !== CANONICAL_CHAIN_ID && chainCfg(id));
+      }
+      enabled = enabled.map(Number).filter(id => id !== CANONICAL_CHAIN_ID && chainCfg(id));
       if (enabled.length) return [CANONICAL_CHAIN_ID, ...enabled];
     }
     return [CANONICAL_CHAIN_ID];
