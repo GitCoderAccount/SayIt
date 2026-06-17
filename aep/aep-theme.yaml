@@ -1,0 +1,23 @@
+version: 1.0
+skin:
+  component_styles:
+    feed:
+      binding: "var(--feed-bg)"
+    post:
+      binding: "var(--post-bg)"
+    modal:
+      binding: "var(--modal-bg)"
+  notes: "Basic skin bindings for SayIt. Expand with full CSS vars from index.html."
+  nav:
+    binding: "var(--border)"
+  post:
+    binding: "var(--bg-card)"
+  modal:
+    binding: "var(--glass)"
+
+  button:
+    binding: "var(--primary)"
+  input:
+    binding: "var(--border)"
+  badge:
+    binding: "var(--glass)"

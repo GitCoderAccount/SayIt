@@ -1,0 +1,23 @@
+version: 1.0
+behaviour:
+  constraints:
+    - delegated_events_only: true
+    - no_inline_handlers: true
+    - sanitization_required: true
+    - csp_compliant: true
+  forbidden:
+    - inline_onclick
+    - raw_innerHTML_without_safe
+    - unescaped_user_content
+  templates:
+    post-row:
+      id_prefix: CN-
+      required_attrs: ["data-aep-id", "data-post-hash"]
+    modal:
+      id_prefix: MD-
+      required_attrs: ["data-aep-id", "aria-modal"]
+  scanners:
+    - sanitizeTxs
+    - utils.safe
+    - safeUrl
+  notes: "Enforces SayIt existing safety primitives as AEP Behaviour rules."

@@ -105,27 +105,34 @@ const CHAINS = {
     id: 1, hex: '0x1', name: 'Ethereum', short: 'ETH', badge: 'ETH',
     color: '#627eea',
     nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-    explorer: { type: 'etherscan-v2', name: 'Etherscan', api: 'https://api.etherscan.io/v2/api', web: 'https://etherscan.io' },
+    /* Reads via Blockscout (eth.blockscout.com) — etherscan-compatible AND
+       keyless, so no Etherscan API key is needed. tx links go to etherscan.io
+       (the familiar explorer). */
+    explorer: { type: 'blockscout', name: 'Etherscan', api: 'https://eth.blockscout.com/api', web: 'https://etherscan.io' },
     rpcUrls: ['https://eth.llamarpc.com'],
     /* L1 gas is too high for cheap engagement — port likes/follows off it to
        the user's chosen social chain (see engagement routing). */
-    social: false, enabled: false,
+    social: false, enabled: true, /* enabled for multichain testing */
   },
   8453: {
     id: 8453, hex: '0x2105', name: 'Base', short: 'BASE', badge: 'BASE',
     color: '#0052ff',
     nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-    explorer: { type: 'etherscan-v2', name: 'BaseScan', api: 'https://api.etherscan.io/v2/api', web: 'https://basescan.org' },
+    /* Reads via Blockscout (base.blockscout.com) — keyless. tx links → basescan.org. */
+    explorer: { type: 'blockscout', name: 'BaseScan', api: 'https://base.blockscout.com/api', web: 'https://basescan.org' },
     rpcUrls: ['https://mainnet.base.org'],
-    social: true, enabled: false, /* cheap L2 — a good social/engagement chain */
+    social: true, enabled: true, /* enabled for multichain feed testing */
   },
   56: {
     id: 56, hex: '0x38', name: 'BNB Smart Chain', short: 'BSC', badge: 'BSC',
     color: '#f0b90b',
     nativeCurrency: { name: 'BNB', symbol: 'BNB', decimals: 18 },
-    explorer: { type: 'etherscan-v2', name: 'BscScan', api: 'https://api.etherscan.io/v2/api', web: 'https://bscscan.com' },
+    /* No reliable keyless Blockscout for BSC — reads via the Etherscan v2
+       unified API, which needs a (free) Etherscan key. needsKey flags this in
+       Settings. */
+    explorer: { type: 'blockscout', name: 'BscScan', api: 'https://bsc.blockscout.com/api', web: 'https://bscscan.com' },
     rpcUrls: ['https://bsc-dataseed.binance.org'],
-    social: true, enabled: false,
+    social: true, enabled: true,
   },
 };
 /* The default + canonical social chain. Everything that doesn't yet specify a

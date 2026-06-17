@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "aep": {
+      "command": "node",
+      "args": ["/home/user/aep/aep-main/dist/cli.js", "serve"],
+      "env": {
+        "AEP_ROOT": "/home/user/aep/aep-main"
+      }
+    },
+    "dynaep": {
+      "command": "node",
+      "args": ["/home/user/aep/aep-main/dynAEP/mcp-server/index.ts", "serve"]
+    }
+  }
+}
