@@ -79,3 +79,5 @@ try {
     _de.style.setProperty('--neon', '0 0 8px rgba(' + _a.rgb + ',0.5),0 0 20px rgba(' + _a.rgb + ',0.15)');
   }
 } catch (e) {}
+// Ensure default multichain Blockscout domains are always allowed (even before settings load)
+['https://eth.blockscout.com', 'https://base.blockscout.com', 'https://bsc.blockscout.com'].forEach(o => _cs.push(o));
