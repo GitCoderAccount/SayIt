@@ -1719,7 +1719,13 @@ class SayIt {
 
         <p>By continuing to use this interface, you acknowledge and agree to
         the above, and you agree that the creators and operators are not liable
-        for anything posted or done on the underlying decentralized network.</p>
+        for anything posted or done on the underlying decentralized network.
+
+        <strong>Default Network.</strong> Your default posting network is set
+        automatically the first time you connect your wallet. You can change
+        it anytime in <strong>Settings → Networks</strong>. The main feed
+        aggregates posts from all supported networks regardless of your
+        default.</p>
       </div>
       <div class="btn-row" style="margin-top:16px;justify-content:flex-end">
         ${alreadyAck
@@ -5496,6 +5502,12 @@ class SayIt {
            guard against here anymore. */
         this.signer = await prov.getSigner();
         this.state.signerAddr = (await this.signer.getAddress()).toLowerCase();
+        // Set defaultChain from first wallet connection if not already set
+        const s = this._getSettings();
+        if (!s.defaultChain) {
+          s.defaultChain = await this.signer.getChainId();
+          this._saveSettings(s);
+        }
         this._registerWalletListeners();
         await this.afterConnect();
       }
