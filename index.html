@@ -2857,10 +2857,31 @@ body.mode-explore .sb-search { display:none; }
 .x-embed-cta { display:block; font-size:13px; color:var(--primary-lt); margin-top:2px; }
 .x-embed-loading { display:flex; align-items:center; gap:7px; color:var(--muted); }
 .x-embed-facade { cursor:pointer; }
-.x-embed-loaded { padding:0; border:none; background:none; }
+/* Loaded tweet — the iframe is X's, but we frame it in our own card chrome so
+   it reads as one of our cards, not a foreign grey box. */
+.x-embed-loaded {
+  padding:0; position:relative; overflow:hidden;
+  border:1px solid var(--border); border-radius:14px;
+  background:var(--bg-dark);
+}
+/* Long tweets are capped behind a "Show full post" fade, like X's own
+   truncated quote posts. */
+.x-embed-loaded.x-embed-capped { max-height:420px; }
+.x-embed-more {
+  position:absolute; left:0; right:0; bottom:0;
+  display:flex; align-items:flex-end; justify-content:center;
+  height:88px; padding-bottom:12px;
+  border:0; cursor:pointer; font:inherit;
+  font-size:13px; font-weight:700; color:var(--primary-lt);
+  background:linear-gradient(to bottom, transparent, var(--bg-dark) 80%);
+}
+.x-embed-more::after { content:' ▾'; }
+.x-embed-more:hover { color:var(--primary); }
 /* X embed inside a repost/quote card — spacing above the author's text. */
 .repost-card .x-embed-card { margin:8px 0 0; }
-.x-embed-frame { width:100%; min-height:280px; border:0; border-radius:14px; display:block; }
+/* height is a pre-resize placeholder; _sizeXEmbed sets the exact height from
+   X's postMessage so the tweet is never clipped. */
+.x-embed-frame { width:100%; height:240px; border:0; display:block; }
 
 /* Grok link card — grok.com can't be iframed (X-Frame-Options: DENY), so this
    is a styled click-out card that opens Grok in a new tab. */

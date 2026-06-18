@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260618-227';
+const SW_CACHE_VER = '20260618-228';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -835,7 +835,7 @@ class SayIt {
       /* Media elements inside actionable cards (e.g. a YouTube facade in a
          quote card) handle their own clicks — let them through instead of
          firing the card's action. */
-      if (e.target.closest('.post-yt-facade, .post-embed-playing, video.post-vid-thumb, .vid-unmute-btn, .x-embed-facade')) return;
+      if (e.target.closest('.post-yt-facade, .post-embed-playing, video.post-vid-thumb, .vid-unmute-btn, .x-embed-facade, .x-embed-loaded')) return;
       const el = e.target.closest('[data-act]');
       if (!el) return;
       /* A link inside an actionable element is a link first (timestamps,
@@ -1238,6 +1238,15 @@ class SayIt {
     if (xFacade) {
       e.stopPropagation();
       this._loadXEmbed(xFacade);
+      return;
+    }
+    /* "Show full post" — drop the height cap on a long, capped X embed. */
+    const xMore = e.target.closest('.x-embed-more');
+    if (xMore) {
+      e.stopPropagation();
+      const card = xMore.closest('.x-embed-loaded');
+      if (card) card.classList.remove('x-embed-capped');
+      xMore.remove();
       return;
     }
     /* Poll vote buttons are handled before the generic post routing. */
@@ -10709,6 +10718,7 @@ class SayIt {
     const id = el.dataset.xId, href = el.dataset.xHref;
     if (!/^[0-9]{5,25}$/.test(id || '')) { if (href) window.open(href, '_blank', 'noopener,noreferrer'); return; }
     if (!this._embedThumbsAllowed()) { if (href) window.open(href, '_blank', 'noopener,noreferrer'); return; }
+    this._wireXEmbedResize();
     const theme = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
     const frame = document.createElement('iframe');
     frame.src = `https://platform.twitter.com/embed/Tweet.html?id=${encodeURIComponent(id)}&theme=${theme}&dnt=true`;
@@ -10728,8 +10738,55 @@ class SayIt {
   _revertXEmbed(el) {
     if (!el.classList.contains('x-embed-loaded') || el._facadeHTML == null) return;
     el.innerHTML = el._facadeHTML;
-    el.classList.remove('x-embed-loaded');
+    el.classList.remove('x-embed-loaded', 'x-embed-capped');
     el.classList.add('x-embed-facade');
+  }
+
+  /* X's Tweet.html iframe can't size itself — it posts its rendered height to
+     the parent. Wire one global listener (lazily, on the first embed) that
+     matches each message to its iframe by source window and sets the exact
+     height, so tweets stop getting clipped at a fixed height. */
+  _wireXEmbedResize() {
+    if (this._xResizeWired) return;
+    this._xResizeWired = true;
+    window.addEventListener('message', e => this._onXEmbedMessage(e));
+  }
+
+  _onXEmbedMessage(e) {
+    if (e.origin !== 'https://platform.twitter.com') return;
+    let data = e.data;
+    if (typeof data === 'string') { try { data = JSON.parse(data); } catch { return; } }
+    const embed = data && data['twttr.embed'];
+    if (!embed || embed.method !== 'twttr.private.resize') return;
+    const p = Array.isArray(embed.params) && embed.params[0];
+    const h = p && (p.height || (p.data && p.data.height));
+    if (!h) return;
+    const frame = [...document.querySelectorAll('iframe.x-embed-frame')]
+      .find(f => f.contentWindow === e.source);
+    if (frame) this._sizeXEmbed(frame, Math.ceil(h));
+  }
+
+  /* Fit the iframe to the tweet; cap very tall tweets behind a "Show full
+     post" fade button (like X's truncated quote posts). */
+  _sizeXEmbed(frame, h) {
+    frame.style.height = h + 'px';
+    const card = frame.closest('.x-embed-loaded');
+    if (!card) return;
+    const CAP = 420;
+    if (h > CAP) {
+      card.classList.add('x-embed-capped');
+      if (!card.querySelector('.x-embed-more')) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'x-embed-more';
+        btn.textContent = 'Show full post';
+        card.appendChild(btn);
+      }
+    } else {
+      card.classList.remove('x-embed-capped');
+      const btn = card.querySelector('.x-embed-more');
+      if (btn) btn.remove();
+    }
   }
 
   /* Decode a SPACE: payload → { roomId, startsMs, title } or null.
