@@ -41,6 +41,8 @@ const BYPASS_CACHE_HOSTS = new Set([
   'api.scan.pulsechain.com',
   'otter.pulsechain.com',
   'scan.pulsechain.com',
+  'api.microlink.io',   /* link-preview OG metadata API — never cache; the SW's
+                           network-first path also breaks its CORS fetch */
 ]);
 
 /* Skip caching cross-origin responses larger than this — prevents the cache

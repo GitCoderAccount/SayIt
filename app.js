@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260618-230';
+const SW_CACHE_VER = '20260618-231';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -1168,6 +1168,15 @@ class SayIt {
   _embedsAutoLoad() {
     const s = this._getSettings();
     return !s.dataSaver && s.autoplayEmbeds !== false && s.loadEmbedThumbs !== false;
+  }
+
+  /* Whether to render rich link-preview cards (og:image/title/description) for
+     plain URLs, like X. ON by default. It fetches each link's metadata via a
+     third-party service (microlink), so it's off under Data saver and can be
+     turned off in Settings → Privacy. */
+  _linkPreviewsEnabled() {
+    const s = this._getSettings();
+    return !s.dataSaver && s.linkPreviews !== false;
   }
 
   _playFacade(el, muted = false) {
@@ -4439,6 +4448,13 @@ class SayIt {
           </label>
         </div>
         <div class="settings-row">
+          <div class="settings-row-label"><strong>Rich link previews</strong><span>Show preview cards (image, title, description) for posted links, like X. Fetches each link's metadata via a third-party service (microlink.io), so it's off under Data saver. Off = plain text links, zero third-party contact.</span></div>
+          <label class="settings-switch">
+            <input type="checkbox" id="set-link-previews" ${s.linkPreviews === false ? '' : 'checked'}>
+            <span class="settings-switch-slider"></span>
+          </label>
+        </div>
+        <div class="settings-row">
           <div class="settings-row-label"><strong>Mask my IP in Live Spaces</strong><span>Route Space audio through a TURN relay so other participants see the relay's
             address instead of yours (audio stays end-to-end encrypted — the relay can't listen). Needs a relay server below; without masking,
             speakers see each other's IPs, and listeners are only ever visible to the host. Signaling trackers see your IP either way, like any site you visit.</span></div>
@@ -4875,6 +4891,13 @@ class SayIt {
       this._saveSettings(s);
       const feed = this.g('feed');
       if (feed) this._wireVideoObserver(feed, true);
+    });
+    g('set-link-previews')?.addEventListener('change', () => {
+      const s = this._getSettings();
+      s.linkPreviews = g('set-link-previews').checked;
+      this._saveSettings(s);
+      /* Link-card markup is decided in linkify — re-render so it applies now. */
+      if (!this._selfManagedModes.has(this.state.mode)) this.renderFeed();
     });
     g('set-data-saver')?.addEventListener('change', () => {
       const s = this._getSettings();
@@ -8544,7 +8567,7 @@ class SayIt {
        stop a cross-origin iframe, and it also stops click-started (sound)
        embeds once scrolled away. Strict one-playing rule across everything
        via _stopOtherMedia. */
-    const media = container.querySelectorAll('.post-vid-thumb, .post-yt-facade, .post-embed-playing, .x-embed-facade, .x-embed-loaded');
+    const media = container.querySelectorAll('.post-vid-thumb, .post-yt-facade, .post-embed-playing, .x-embed-facade, .x-embed-loaded, .link-card-pending');
     if (!media.length && !reset) return;
     const st = this._getSettings();
     const autoplay = st.autoplayMedia !== false && !st.dataSaver;
@@ -8574,6 +8597,13 @@ class SayIt {
       this._embObserver = new IntersectionObserver(entries => {
         entries.forEach(entry => {
           const el = entry.target;
+          /* Link-preview cards fetch their og metadata lazily, the first time
+             they near the viewport (the dataset guard in _fillLinkCard makes
+             re-entry a no-op). */
+          if (el.classList.contains('link-card-pending')) {
+            if (entry.isIntersecting) this._fillLinkCard(el);
+            return;
+          }
           if (el.classList.contains('post-embed-playing')) {
             if (!el.isConnected) { this._embObserver.unobserve(el); return; }
             if (entry.intersectionRatio < 0.25) this._revertEmbed(el);
@@ -8685,7 +8715,7 @@ class SayIt {
     if (this._videoAutoWire) return;
     /* Includes .x-embed-facade so X embeds inserted by async paths (e.g. a
        repost/quote card hydrated after fetch) also auto-load on scroll. */
-    const SEL = '.post-vid-thumb, .post-yt-facade, .x-embed-facade';
+    const SEL = '.post-vid-thumb, .post-yt-facade, .x-embed-facade, .link-card-pending';
     this._videoAutoWire = new MutationObserver(muts => {
       for (const m of muts) {
         for (const n of m.addedNodes) {
@@ -10743,6 +10773,10 @@ class SayIt {
     frame.setAttribute('frameborder', '0');
     frame.setAttribute('title', 'Post on X');
     frame.setAttribute('allow', 'autoplay; encrypted-media; picture-in-picture; fullscreen');
+    /* allow="fullscreen" grants the permission, but the iframe also needs the
+       allowfullscreen attribute or a video's fullscreen is confined to the
+       iframe's own box instead of filling the screen. */
+    frame.setAttribute('allowfullscreen', '');
     el._facadeHTML = el.innerHTML; /* so scrolling away can restore the facade */
     el.classList.remove('x-embed-facade');
     el.classList.add('x-embed-loaded');
@@ -10770,6 +10804,56 @@ class SayIt {
     el.classList.add('dex-embed-loaded');
     el.innerHTML = '';
     el.appendChild(frame);
+  }
+
+  /* Fetch Open Graph metadata for a URL via microlink (CORS-enabled, keyless).
+     Cached in-memory for the session so each URL is fetched once (microlink's
+     free tier is rate-limited). Returns {title,description,image} or null. */
+  async _fetchOG(url) {
+    this._ogCache = this._ogCache || new Map();
+    if (this._ogCache.has(url)) return this._ogCache.get(url);
+    let data = null;
+    try {
+      const r = await fetch('https://api.microlink.io/?url=' + encodeURIComponent(url), { referrerPolicy: 'no-referrer' });
+      const j = await r.json();
+      if (j && j.status === 'success' && j.data) {
+        data = {
+          title: j.data.title || '',
+          description: j.data.description || '',
+          image: (j.data.image && j.data.image.url) || (j.data.logo && j.data.logo.url) || '',
+        };
+      }
+    } catch { /* network/parse error → null; the card keeps its host chip */ }
+    this._ogCache.set(url, data);
+    return data;
+  }
+
+  /* Fill a pending link-preview card with fetched OG metadata. Called lazily by
+     the media observer as the card nears the viewport. Everything here is
+     attacker-influenced (the linked page controls its og tags), so the title +
+     description are escaped via utils.safe and the image URL is validated by
+     utils.safeUrl AND escaped for the attribute. */
+  async _fillLinkCard(el) {
+    if (el.dataset.lpDone) return;
+    el.dataset.lpDone = '1';
+    if (!this._linkPreviewsEnabled()) return;
+    const url = el.dataset.lpUrl;
+    const og = await this._fetchOG(url);
+    if (!og || !el.isConnected) return;
+    const title = utils.safe(og.title);
+    const desc = utils.safe(og.description);
+    const img = og.image ? utils.safe(utils.safeUrl(og.image)) : '';
+    if (!title && !img) return; /* nothing useful — keep the host chip */
+    let host = '';
+    try { host = new URL(url).hostname.replace(/^www\./, ''); } catch { /* '' */ }
+    el.innerHTML = `${img ? `<img class="link-card-img" src="${img}" alt="" loading="lazy" data-fallback="hide">` : ''}
+      <span class="link-card-body">
+        <span class="link-card-host">${utils.safe(host) || 'link'}</span>
+        ${title ? `<span class="link-card-title">${title}</span>` : ''}
+        ${desc ? `<span class="link-card-desc">${desc}</span>` : ''}
+      </span>`;
+    el.classList.remove('link-card-pending');
+    el.classList.add('link-card-loaded');
   }
 
   /* Restore a loaded X embed back to its facade (scrolled away). */

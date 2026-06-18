@@ -475,6 +475,10 @@ const utils = {
     let imgHtml = '', embedHtml = '', mediaCount = 0;
     const mediaUrls = new Set(); /* dedup */
     let mScan;
+    /* Rich link previews (og:image/title cards, like X) for the first plain URL
+       in a post — gated by the setting (default on; off under Data saver). */
+    let linkPreviewDone = false;
+    const previewsOn = (typeof pulse !== 'undefined') && pulse._linkPreviewsEnabled && pulse._linkPreviewsEnabled();
     re.lastIndex = 0;
     while ((mScan = re.exec(scanText)) !== null && mediaCount < 4) {
       const raw = mScan[0];
@@ -599,6 +603,20 @@ const utils = {
           </div>`;
           mediaCount++;
         }
+      } else if (previewsOn && !linkPreviewDone && /^https?:\/\//i.test(resolved)) {
+        /* First plain (non-media) URL → a rich link-preview card. It starts as
+           a clean clickable host chip; _fillLinkCard() fetches the og metadata
+           (title/image/description) lazily when it nears the viewport. If the
+           fetch fails — or previews are off — the host chip remains, so the
+           link is never lost. One card per post, like X. */
+        linkPreviewDone = true;
+        mediaUrls.add(resolved);
+        let host = '';
+        try { host = new URL(resolved).hostname.replace(/^www\./, ''); } catch { /* keep '' */ }
+        const sU = utils.safe(resolved), sHost = utils.safe(host) || 'link';
+        embedHtml += `<a class="link-card link-card-pending" data-lp-url="${sU}" href="${sU}" target="_blank" rel="noopener noreferrer">
+          <span class="link-card-body"><span class="link-card-host">🔗 ${sHost}</span></span>
+        </a>`;
       }
     }
 
