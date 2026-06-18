@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260618-228';
+const SW_CACHE_VER = '20260618-229';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -8610,13 +8610,23 @@ class SayIt {
          safety timeout so a video that never fires those is never left hidden. */
       if (isVideo && el.dataset.vidReady !== '1') {
         const reveal = () => { el.dataset.vidReady = '1'; el.classList.add('vid-ready'); };
-        if (el.readyState >= 2) reveal();
-        else {
+        /* Reveal on the first ACTUALLY-painted frame (requestVideoFrameCallback)
+           so the fade-in lands on real pixels. The data-ready events below fire
+           before the first frame composites, which is what caused the black
+           blink on start. Keep them only as a fallback: paused videos never
+           present a frame to rVFC, and a safety timeout guarantees a video is
+           never left hidden. */
+        if (typeof el.requestVideoFrameCallback === 'function') {
+          el.requestVideoFrameCallback(reveal);
+          el.addEventListener('loadeddata', () => { if (el.paused) reveal(); }, { once: true });
+        } else if (el.readyState >= 2) {
+          reveal();
+        } else {
           el.addEventListener('loadeddata', reveal, { once: true });
           el.addEventListener('canplay',    reveal, { once: true });
           el.addEventListener('playing',    reveal, { once: true });
-          setTimeout(reveal, 2500);
         }
+        setTimeout(reveal, 2500);
       }
       if (isVideo) {
         if (autoplay && el.controls) {
@@ -10726,7 +10736,7 @@ class SayIt {
     frame.setAttribute('scrolling', 'no');
     frame.setAttribute('frameborder', '0');
     frame.setAttribute('title', 'Post on X');
-    frame.setAttribute('allow', 'encrypted-media; picture-in-picture; fullscreen');
+    frame.setAttribute('allow', 'autoplay; encrypted-media; picture-in-picture; fullscreen');
     el._facadeHTML = el.innerHTML; /* so scrolling away can restore the facade */
     el.classList.remove('x-embed-facade');
     el.classList.add('x-embed-loaded');

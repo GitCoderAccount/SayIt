@@ -713,7 +713,10 @@ nav { flex:1; padding:4px 0; }
 }
 .post-vid-wrap {
   position:relative; display:block; border-radius:12px; overflow:hidden;
-  background:#000; margin-top:8px;
+  /* Match the page bg (black in dark, white in light) so the wrapper — visible
+     as letterbox bars and for the instant before the first frame paints — never
+     flashes a harsh black box (jarring in light theme especially). */
+  background:var(--bg-dark); margin-top:8px;
 }
 .post-vid-thumb {
   width:100%; max-height:420px; display:block;
