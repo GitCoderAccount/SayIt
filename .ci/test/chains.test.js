@@ -21,9 +21,16 @@ test('CANONICAL chain is PulseChain (369), enabled + social', () => {
   assert.strictEqual(pls.explorer.type, 'blockscout');
 });
 
-test('only the canonical chain is enabled by default (others behind flag)', () => {
+test('canonical + keyless chains enabled by default; keyed chains (BSC) are not', () => {
   const enabled = Object.values(CHAINS).filter(c => c.enabled).map(c => c.id);
-  assert.deepStrictEqual(enabled, [369]);
+  /* PLS (canonical) + ETH + Base read keyless via Blockscout, so the Home feed
+     aggregates across them out of the box. Order follows JS integer-key
+     iteration (ascending by id), not registry insertion order. */
+  assert.deepStrictEqual(enabled, [1, 369, 8453]);
+  /* BSC has no keyless explorer (needs a paid Etherscan key), so it ships
+     opt-in: enabled:false + needsKey, never fired on a fresh load. */
+  assert.strictEqual(CHAINS[56].enabled, false);
+  assert.strictEqual(CHAINS[56].needsKey, true);
 });
 
 test('every registry entry has the fields the wallet/UI need', () => {
@@ -48,7 +55,7 @@ test('chainCfg() resolves by number or numeric string, undefined for unknown', (
 test('chainList() filters by enabled/social', () => {
   /* Spread vm-realm arrays into native ones so deepStrictEqual's prototype
      check passes (the arrays are constructed inside the vm context). */
-  assert.deepStrictEqual([...eval_('chainList({enabledOnly:true}).map(c=>c.id)')], [369]);
+  assert.deepStrictEqual([...eval_('chainList({enabledOnly:true}).map(c=>c.id)')], [1, 369, 8453]);
   const social = [...eval_('chainList({socialOnly:true}).map(c=>c.id)')];
   assert.ok(social.includes(369));
   assert.ok(!social.includes(1), 'Ethereum L1 is not a social chain');
@@ -106,12 +113,16 @@ test('txUrl: PulseChain keeps OtterScan; other chains use their explorer', () =>
   assert.strictEqual(eval_(`txUrl(999999, '0xHASH')`), 'https://otter.pulsechain.com/tx/0xHASH');
 });
 
-test('_chainBadge: dormant for canonical-only single-chain, shown otherwise', () => {
+test('_chainBadge: shown for every post when multiple chains are enabled', () => {
   const pulse = eval_('pulse');
-  /* Only PulseChain enabled → a canonical post shows no pill. */
-  assert.strictEqual(pulse._chainBadge({ chainId: 369 }), '');
-  assert.strictEqual(pulse._chainBadge({}), ''); /* missing chainId → canonical */
-  /* A non-canonical post is always badged, even with the feed still off. */
+  /* Multichain is on by default (PLS + ETH + Base), so even a canonical post
+     gets a pill — a mixed-chain feed should always show each post's origin. */
+  const pls = pulse._chainBadge({ chainId: 369 });
+  assert.match(pls, /chain-badge/);
+  assert.match(pls, />PLS</);
+  assert.match(pls, /Posted on PulseChain/);
+  assert.match(pulse._chainBadge({}), />PLS</); /* missing chainId → canonical, still badged */
+  /* A non-canonical post is always badged. */
   const eth = pulse._chainBadge({ chainId: 1 });
   assert.match(eth, /chain-badge/);
   assert.match(eth, />ETH</);

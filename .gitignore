@@ -1,3 +1,8 @@
 # CI lint artifacts (generated from index.html's inline scripts)
 .ci/app.extracted.js
 .ci/head.extracted.js
+
+# Agent-generated audit/governance logs — keep them out of the product repo.
+# (AEP/grok orchestration tooling lives at the agent level, not in SayIt.)
+*_AUDIT*.md
+HERMES_*.md

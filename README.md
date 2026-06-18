@@ -224,19 +224,15 @@ See the repository for license details.
 
 *Say It DeFi — uncensorable social on PulseChain.*
 
-## Multi-Network Support (Updated)
-Say It DeFi now aggregates content across multiple EVM chains by default (PulseChain + Ethereum + Base + BSC). Your identity is the same across all chains. Posting, likes, follows, etc. are chain-specific but the feed shows everything together.
+## Multi-Network Support
+Say It DeFi aggregates content across multiple EVM chains. Your wallet identity
+is the same on every chain; posts, likes, and follows are chain-specific, but
+the Home feed shows them together.
 
-See Settings → Networks to customize.
+- **Enabled by default** (read keyless via Blockscout): **PulseChain**
+  (canonical), **Ethereum**, **Base**.
+- **Opt-in:** **BSC** has no keyless explorer, so it needs a (paid) Etherscan
+  API key and ships off by default — add a key and enable it under
+  **Settings → Networks**.
 
-## Multi-Network Support (Default)
-Say It DeFi now aggregates and posts across multiple EVM chains by default:
-
-- **PulseChain** (canonical)
-- **Ethereum**
-- **Base**
-- **BSC**
-
-Your wallet identity works across all chains. The feed shows posts from all enabled networks automatically. You can customize which networks to include in **Settings → Networks**.
-
-See the AEP governance layer and multichain improvements for technical details.
+Customize which networks to include under **Settings → Networks**.

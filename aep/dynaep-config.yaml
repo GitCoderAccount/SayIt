@@ -1,9 +1,0 @@
-lattice:
-  registry: "./aep/aep-registry.yaml"
-  governance: "filter_all"
-  agent_interest_enabled: true
-  hook: "mle"
-temporal:
-  authority: "bridge"
-  drift_check: true
-notes: "Basic dynAEP config for SayIt UI events (render, modal, publish). Extend with event_submit hooks in app.js."

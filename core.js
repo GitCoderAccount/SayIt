@@ -78,14 +78,19 @@ const ACTIVE_SPACE_KEY = 'sayitActiveSpace'; /* JSON {txHash,roomId,title,starts
    social/engagement layer.
 
    PulseChain (369) is CANONICAL: enabled, the default chain, and the default
-   social chain. Other chains are defined but `enabled:false` until the
-   multichain feature ships — Settings (or flipping `enabled`) turns them on.
-   Reads aggregate across enabled chains; a write happens on its post's chain.
+   social chain. ETH (1) and Base (8453) are enabled by default too — both
+   read keyless via Blockscout — so the Home feed aggregates across them out of
+   the box. BSC (56) is defined but `enabled:false`: no keyless explorer exists
+   for it, so it needs a paid Etherscan key and is opt-in via Settings.
+   Reads aggregate across the registry's enabled chains (chainList enabledOnly);
+   a write happens on its post's chain.
 
    `explorer.type` selects the read adapter (see explorerTxlistUrl):
      - 'blockscout'   legacy etherscan-compatible txlist; no chainid/apikey
      - 'etherscan-v2' unified api.etherscan.io/v2 — adds &chainid=N&apikey=KEY
-   One Etherscan v2 key covers ETH/Base/BSC/etc; PulseChain needs no key.
+   PulseChain/ETH/Base read keyless (Blockscout); only etherscan-v2 chains
+   (BSC) need an Etherscan key — and BSC requires a PAID plan (it's excluded
+   from the free tier).
 
    `social:true` marks a chain cheap enough to carry ported engagement
    (likes/follows/reposts) for users who don't want to spend on an expensive
@@ -127,12 +132,16 @@ const CHAINS = {
     id: 56, hex: '0x38', name: 'BNB Smart Chain', short: 'BSC', badge: 'BSC',
     color: '#f0b90b',
     nativeCurrency: { name: 'BNB', symbol: 'BNB', decimals: 18 },
-    /* No reliable keyless Blockscout for BSC — reads via the Etherscan v2
-       unified API, which needs a (free) Etherscan key. needsKey flags this in
-       Settings. */
-    explorer: { type: 'blockscout', name: 'BscScan', api: 'https://bsc.blockscout.com/api', web: 'https://bscscan.com' },
+    /* No keyless explorer exists for BSC: there's no public Blockscout
+       (bsc/bnb.blockscout.com 404) and the deprecated BscScan V1 now redirects
+       to the Etherscan v2 unified API, which does NOT cover BSC on the free
+       tier ("Free API access is not supported for this chain"). So BSC reads
+       require a PAID Etherscan key (Settings → API key) and ship OFF by
+       default — needsKey surfaces that; enabled:false keeps it from spamming
+       failed reads on every load. */
+    explorer: { type: 'etherscan-v2', name: 'BscScan', api: 'https://api.etherscan.io/v2/api', web: 'https://bscscan.com' },
     rpcUrls: ['https://bsc-dataseed.binance.org'],
-    social: true, enabled: true,
+    social: false, enabled: false, needsKey: true,
   },
 };
 /* The default + canonical social chain. Everything that doesn't yet specify a

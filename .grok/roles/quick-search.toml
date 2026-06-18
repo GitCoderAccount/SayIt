@@ -1,4 +1,0 @@
-# Quick search role
-description = "Fast read-only search for quick lookups"
-default_capability_mode = "read-only"
-reasoning_effort = "low"

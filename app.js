@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260615-223';
+const SW_CACHE_VER = '20260618-227';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -7568,8 +7568,13 @@ class SayIt {
         && (this.state.channel || '').toLowerCase() === MAIN_CHANNEL.toLowerCase()) {
       let enabled = this._getSettings().enabledChains;
       if (!Array.isArray(enabled) || enabled.length === 0) {
-        enabled = Object.keys(CHAINS).map(Number).filter(id => id !== CANONICAL_CHAIN_ID && chainCfg(id));
+        /* No explicit choice → aggregate the registry's enabled chains
+           (canonical + any keyless-readable chain). enabled:false chains like
+           BSC stay out, so a broken/keyed explorer never fires on first load. */
+        enabled = chainList({ enabledOnly: true }).map(c => c.id).filter(id => id !== CANONICAL_CHAIN_ID);
       } else {
+        /* Explicit user selection is honored as-is — including an opt-in
+           keyed chain like BSC the user enabled in Settings. */
         enabled = enabled.map(Number).filter(id => id !== CANONICAL_CHAIN_ID && chainCfg(id));
       }
       if (enabled.length) return [CANONICAL_CHAIN_ID, ...enabled];
