@@ -368,6 +368,18 @@ const utils = {
       return { kind: m[1], href: u.origin + u.pathname };
     } catch { return null; }
   },
+  /* Parse a DexScreener pair URL → { chain, pair, href } or null. Path is
+     /<chain>/<pairAddress> where the address is EVM (0x + 40 hex) or Solana
+     (base58). DexScreener allows iframe embedding (?embed=1) so this renders as
+     a live chart, not just a link. */
+  dexPair(url) {
+    try {
+      const u = new URL(url);
+      if (u.hostname.replace(/^www\./, '') !== 'dexscreener.com') return null;
+      const m = u.pathname.match(/^\/([a-z0-9-]{2,32})\/(0x[a-fA-F0-9]{40}|[A-Za-z0-9]{32,44})\/?$/);
+      return m ? { chain: m[1], pair: m[2], href: u.origin + u.pathname } : null;
+    } catch { return null; }
+  },
   /* Normalize an engagement reference (the part after LIKE:/UNLIKE:) to its
      bare lowercase post hash, stripping an optional `eip155:<chainId>:` chain
      qualifier. A post's txHash is globally unique, so a like ported onto a
@@ -418,6 +430,7 @@ const utils = {
       } catch { /* invalid URL — skip */ }
       if (xPost(url)) return 'tweet';   /* X / Twitter post → styled link card */
       if (grokPost(url)) return 'grok'; /* Grok (grok.com) → click-out link card */
+      if (dexPair(url)) return 'dex';   /* DexScreener pair → live chart embed */
       return null;
     };
     const resolveUrl = u => {
@@ -455,6 +468,7 @@ const utils = {
        linkify reads unchanged. */
     const xPost = utils.xPost;
     const grokPost = utils.grokPost;
+    const dexPair = utils.dexPair;
 
     /* ── Pass 1: extract ALL media from fullText (never truncated) ── */
     const scanText = fullText || text;
@@ -565,6 +579,24 @@ const utils = {
             </span>
             <span class="grok-card-cta">Open ↗</span>
           </a>`;
+          mediaCount++;
+        }
+      } else if (mtype === 'dex') {
+        const dx = dexPair(resolved);
+        if (dx) {
+          mediaUrls.add(resolved);
+          /* Tap-to-load facade → DexScreener's own iframe chart (?embed=1).
+             Tap-to-load (not auto) because a live trading chart is heavy; the
+             same privacy gate as the other embeds applies on load. */
+          const chain = utils.safe(dx.chain), pair = utils.safe(dx.pair), href = utils.safe(dx.href);
+          embedHtml += `<div class="dex-embed-card dex-embed-facade" data-dex-chain="${chain}" data-dex-pair="${pair}" data-dex-href="${href}" role="button" tabindex="0" aria-label="DexScreener live chart">
+            <span class="dex-embed-hdr">
+              <span class="dex-embed-logo" aria-hidden="true">📈</span>
+              <span class="dex-embed-title">DexScreener — live chart</span>
+              <span class="dex-embed-chain">${chain}</span>
+            </span>
+            <span class="dex-embed-cta">▶ Tap to load the live chart</span>
+          </div>`;
           mediaCount++;
         }
       }

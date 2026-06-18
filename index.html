@@ -30,7 +30,7 @@
      (IPFS, Arweave, any gateway) and the explorer/RPC endpoints are
      user-configurable in Settings. frame-ancestors can't be set via a meta
      tag (header-only, and GitHub Pages can't send custom headers). -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * data: blob:; connect-src *; frame-src https://www.youtube-nocookie.com https://player.vimeo.com https://platform.twitter.com; object-src 'none'; base-uri 'self'; form-action 'none'; worker-src 'self'; manifest-src 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * data: blob:; connect-src *; frame-src https://www.youtube-nocookie.com https://player.vimeo.com https://platform.twitter.com https://dexscreener.com; object-src 'none'; base-uri 'self'; form-action 'none'; worker-src 'self'; manifest-src 'self'">
 <script src="boot.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.15.0/ethers.umd.min.js" integrity="sha384-OwtfwhPoP4aGLIw192UbPWjNbSkb7AllEbIhEJ01Yp8MxhNLLNUMA+DSjh6Zct05" crossorigin="anonymous"></script>
 <!-- Twemoji (Twitter/X's own emoji images) for X-identical full-color emoji on every device.
@@ -2885,6 +2885,26 @@ body.mode-explore .sb-search { display:none; }
 /* height is a pre-resize placeholder; _sizeXEmbed sets the exact height from
    X's postMessage so the tweet is never clipped. */
 .x-embed-frame { width:100%; height:240px; border:0; display:block; }
+
+/* DexScreener live-chart embed — facade (tap to load) → iframe chart. */
+.dex-embed-card {
+  display:block; color:var(--text);
+  border:1px solid var(--border); border-radius:14px;
+  padding:12px 14px; margin:8px 0 4px;
+  background:var(--bg-dark); transition:background .15s, border-color .15s;
+}
+.dex-embed-facade { cursor:pointer; }
+.dex-embed-card:hover { background:var(--hov-1); border-color:var(--muted); }
+.dex-embed-hdr { display:flex; align-items:center; gap:8px; }
+.dex-embed-logo { font-size:16px; line-height:1; flex-shrink:0; }
+.dex-embed-title { font-size:14px; font-weight:700; }
+.dex-embed-chain { font-size:12px; color:var(--muted); margin-left:auto; text-transform:capitalize; }
+.dex-embed-cta { display:block; font-size:13px; color:var(--primary-lt); margin-top:6px; }
+.dex-embed-loaded {
+  padding:0; overflow:hidden; margin:8px 0 4px;
+  border:1px solid var(--border); border-radius:14px; background:var(--bg-dark);
+}
+.dex-embed-frame { width:100%; height:480px; border:0; display:block; }
 
 /* Grok link card — grok.com can't be iframed (X-Frame-Options: DENY), so this
    is a styled click-out card that opens Grok in a new tab. */

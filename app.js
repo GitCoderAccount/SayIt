@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260618-229';
+const SW_CACHE_VER = '20260618-230';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -835,7 +835,7 @@ class SayIt {
       /* Media elements inside actionable cards (e.g. a YouTube facade in a
          quote card) handle their own clicks — let them through instead of
          firing the card's action. */
-      if (e.target.closest('.post-yt-facade, .post-embed-playing, video.post-vid-thumb, .vid-unmute-btn, .x-embed-facade, .x-embed-loaded')) return;
+      if (e.target.closest('.post-yt-facade, .post-embed-playing, video.post-vid-thumb, .vid-unmute-btn, .x-embed-facade, .x-embed-loaded, .dex-embed-facade, .dex-embed-loaded')) return;
       const el = e.target.closest('[data-act]');
       if (!el) return;
       /* A link inside an actionable element is a link first (timestamps,
@@ -1247,6 +1247,12 @@ class SayIt {
       const card = xMore.closest('.x-embed-loaded');
       if (card) card.classList.remove('x-embed-capped');
       xMore.remove();
+      return;
+    }
+    const dexFacade = e.target.closest('.dex-embed-facade');
+    if (dexFacade) {
+      e.stopPropagation();
+      this._loadDexEmbed(dexFacade);
       return;
     }
     /* Poll vote buttons are handled before the generic post routing. */
@@ -10740,6 +10746,28 @@ class SayIt {
     el._facadeHTML = el.innerHTML; /* so scrolling away can restore the facade */
     el.classList.remove('x-embed-facade');
     el.classList.add('x-embed-loaded');
+    el.innerHTML = '';
+    el.appendChild(frame);
+  }
+
+  /* Swap a DexScreener facade for the live embedded chart (tap-to-load). Same
+     privacy gate as X/YouTube — with embeds off, open DexScreener in a tab
+     instead. Virtualization unmounts the post (and its iframe) when it scrolls
+     out of the buffer, so no explicit revert is needed to bound memory. */
+  _loadDexEmbed(el) {
+    const chain = el.dataset.dexChain, pair = el.dataset.dexPair, href = el.dataset.dexHref;
+    const ok = /^[a-z0-9-]{2,32}$/.test(chain || '') &&
+               /^(0x[a-fA-F0-9]{40}|[A-Za-z0-9]{32,44})$/.test(pair || '');
+    if (!ok || !this._embedThumbsAllowed()) { if (href) window.open(href, '_blank', 'noopener,noreferrer'); return; }
+    const theme = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+    const frame = document.createElement('iframe');
+    frame.src = `https://dexscreener.com/${encodeURIComponent(chain)}/${encodeURIComponent(pair)}?embed=1&theme=${theme}&info=0`;
+    frame.className = 'dex-embed-frame';
+    frame.setAttribute('frameborder', '0');
+    frame.setAttribute('title', 'DexScreener chart');
+    frame.setAttribute('loading', 'lazy');
+    el.classList.remove('dex-embed-facade');
+    el.classList.add('dex-embed-loaded');
     el.innerHTML = '';
     el.appendChild(frame);
   }
