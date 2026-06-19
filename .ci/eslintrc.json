@@ -7,6 +7,27 @@
     "no-dupe-keys": "error",
     "no-dupe-args": "error",
     "no-const-assign": "error",
-    "no-redeclare": ["error", { "builtinGlobals": false }]
+    "no-redeclare": ["error", { "builtinGlobals": false }],
+
+    "no-dupe-class-members": "error",
+    "no-dupe-else-if": "error",
+    "no-unreachable": "error",
+    "no-fallthrough": "error",
+    "no-cond-assign": ["error", "except-parens"],
+    "no-self-assign": "error",
+    "no-self-compare": "error",
+    "no-unsafe-negation": "error",
+    "no-unsafe-finally": "error",
+    "no-constant-binary-expression": "error",
+    "no-compare-neg-zero": "error",
+    "no-async-promise-executor": "error",
+    "no-unused-labels": "error",
+    "no-func-assign": "error",
+    "no-class-assign": "error",
+    "no-obj-calls": "error",
+    "no-setter-return": "error",
+    "getter-return": "error",
+    "use-isnan": "error",
+    "valid-typeof": "error"
   }
 }
