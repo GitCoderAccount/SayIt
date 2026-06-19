@@ -33,6 +33,7 @@ const STATIC_ASSETS = [
   './explore.js',
   './lists.js',
   './notifications.js',
+  './channels.js',
   './embeds.js',
   './dm.js',
   './boot.js',

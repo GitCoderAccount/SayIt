@@ -18,7 +18,7 @@ jobs:
         # SW_CACHE_VER lives in app.js (it was in index.html before the
         # app.js split — the fallback grep covers historical commits).
         run: |
-          if git diff --name-only HEAD^ HEAD | grep -qE '^(index.html|app.js|core.js|cache.js|settings.js|profile.js|polls.js|notes.js|spaces.js|explore.js|lists.js|notifications.js|embeds.js|dm.js|boot.js|sayit-crypto.js)$'; then
+          if git diff --name-only HEAD^ HEAD | grep -qE '^(index.html|app.js|core.js|cache.js|settings.js|profile.js|polls.js|notes.js|spaces.js|explore.js|lists.js|notifications.js|channels.js|embeds.js|dm.js|boot.js|sayit-crypto.js)$'; then
             OLD=$( (git show HEAD^:app.js 2>/dev/null || git show HEAD^:index.html) | grep -o "SW_CACHE_VER = '[^']*'" | head -1 || true)
             NEW=$(grep -o "SW_CACHE_VER = '[^']*'" app.js | head -1)
             if [ "$OLD" = "$NEW" ]; then
