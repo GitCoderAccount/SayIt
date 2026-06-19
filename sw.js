@@ -30,6 +30,7 @@ const STATIC_ASSETS = [
   './polls.js',
   './notes.js',
   './spaces.js',
+  './explore.js',
   './embeds.js',
   './dm.js',
   './boot.js',
