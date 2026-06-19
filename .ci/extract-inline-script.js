@@ -14,7 +14,7 @@ const src = process.argv[2] || 'index.html';
 const out = process.argv[3] || '.ci/app.extracted.js';
 const dir = path.dirname(src);
 
-const parts = ['core.js', 'cache.js', 'app.js', 'settings.js', 'embeds.js', 'dm.js'];
+const parts = ['core.js', 'cache.js', 'app.js', 'settings.js', 'profile.js', 'embeds.js', 'dm.js'];
 /* One leading directive for the whole bundle; per-file ones are stripped
    (a banner before 'use strict' would otherwise neuter it). */
 let bundle = "'use strict';\n";
