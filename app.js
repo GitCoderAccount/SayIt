@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260618-232';
+const SW_CACHE_VER = '20260618-233';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -13242,29 +13242,20 @@ class SayIt {
   _patchProfilesInFeed() {
     const feed = this.g('feed');
     if (!feed) return;
-    /* If feed structure doesn't match current state (new posts, different
-       mode), fall back to a full render scheduled in idle time. */
+    /* Patch ONLY the currently-mounted post-items. Virtualization keeps a
+       scrolling WINDOW mounted (everything else is a placeholder), and
+       _postMap holds every displayed post — so patching by hash works for
+       whatever window is mounted, at any scroll position.
+
+       A profile update only fills in an avatar/name; it never changes the post
+       list, so this must NOT fall back to a full renderFeed(). The old code
+       compared the mounted window against the FIRST N of state.posts and
+       rebuilt the whole feed on a mismatch — which is the normal case the
+       moment you scroll. As profiles streamed in (slow, staggered chain
+       scans), that fired renderFeed() over and over, recreating every <video>
+       and making the feed blink/flash repeatedly. */
     const items = feed.querySelectorAll('.post-item[data-txhash]');
-    if (items.length === 0) { this.renderFeed(); return; }
-    /* Quick hash-list check: if the displayed posts differ from state.posts,
-       do a full render. If they match, just patch the DOM. */
-    const displayedHashes = [...items].map(el => el.dataset.txhash);
-    const stateHashes = this.state.posts
-      .filter(p => !p.postType || p.postType === 'post' || p.postType === 'repost' || p.postType === 'poll')
-      .slice(0, displayedHashes.length)
-      .map(p => p.txHash);
-    const listsMatch = displayedHashes.length === stateHashes.length &&
-      displayedHashes.every((h, i) => h === stateHashes[i]);
-    if (!listsMatch) {
-      /* Post list changed — need full render, but defer to idle time so
-         it doesn't block the thread that triggered us. */
-      if (typeof requestIdleCallback !== 'undefined') {
-        requestIdleCallback(() => this.renderFeed(), { timeout: 2000 });
-      } else {
-        setTimeout(() => this.renderFeed(), 0);
-      }
-      return;
-    }
+    if (!items.length) return;
     /* Patch avatars and names in-place. O(n) DOM walk but no innerHTML. */
     items.forEach(item => {
       const hash = item.dataset.txhash;
