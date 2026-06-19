@@ -4,6 +4,22 @@
 
 SayIt — decentralized social on PulseChain (chain 369); no-build static-file front-end; live at sayitdefi.com; CI green.
 
+## Repo location & layout
+**Local path:** `~/SayIt`  ·  GitHub `GitCoderAccount/SayIt` (remote `origin`, branch `main`).
+
+No build pipeline — static files served as-is. One `SayIt` class lives in `app.js`; each feature subsystem is a per-file **augmenter** that copies its methods onto `SayIt.prototype`. **Load order** (index.html `<script>` tags): sayit-crypto → core → cache → app → settings → profile → polls → notes → spaces → explore → lists → notifications → channels → threads → bookmarks → banner → embeds → dm.
+
+- `index.html` — HTML + CSS (the UI shell)
+- `core.js` — constants, `utils`, `SpaceRTC`, `DMCrypto`, URL/embed parsers, the `CHAINS` registry
+- `cache.js` — IndexedDB `Cache` layer
+- `app.js` — the `SayIt` class + bootstrap; **`SW_CACHE_VER` lives here**; the feed/render/state/virtualization core + eager wiring + core posting path
+- `settings.js · profile.js · polls.js · notes.js · spaces.js · explore.js · lists.js · notifications.js · channels.js · threads.js · bookmarks.js · banner.js · embeds.js · dm.js` — feature augmenters (one subsystem each)
+- `boot.js` — pre-paint theme (in `<head>`)  ·  `sayit-crypto.js` — vendored SRI-pinned crypto  ·  `sw.js` — PWA service worker
+- `README.md` · `CRYPTO_BUILD.md` · `AUDIT.md` (this file)
+- `.ci/` — extractor + ESLint config + `node --test` suite (incl. `augment.test.js`, `render.test.js`) + `smoke.py`  ·  `.github/workflows/` — `lint.yml` (lint+smoke) + `nightly.yml` (live-site smoke)
+
+⚠ Bump **`SW_CACHE_VER`** (top of app.js, `YYYYMMDD-N`) on any app-asset change — CI enforces it. Full architecture / commands / gotchas: the **`reference-sayit-repo`** memory.
+
 ## Done (high level — git log has the per-commit detail)
 - **Feature-complete X-style client:** feed, threads, profiles, follows, channels/chat, Explore, Lists & Communities, Notifications, Bookmarks, polls, Community Notes, Audio Spaces (WebRTC), tipping, encrypted DMs (x25519 + ML-KEM-768), Twemoji, image lightbox, PWA/offline.
 - **Multichain — built & default-on:** aggregated Home feed across PulseChain + Ethereum + Base (keyless via Blockscout); writes stay on the post's chain (auto-switch); engagement on expensive chains ported via chain-qualified refs; global address identity. BSC is opt-in (needs a paid Etherscan-v2 key).
