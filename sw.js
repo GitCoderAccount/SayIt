@@ -36,6 +36,7 @@ const STATIC_ASSETS = [
   './channels.js',
   './threads.js',
   './bookmarks.js',
+  './banner.js',
   './embeds.js',
   './dm.js',
   './boot.js',
