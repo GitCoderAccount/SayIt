@@ -27,6 +27,7 @@ const STATIC_ASSETS = [
   './cache.js',
   './settings.js',
   './profile.js',
+  './polls.js',
   './embeds.js',
   './dm.js',
   './boot.js',
