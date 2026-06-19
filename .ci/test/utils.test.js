@@ -77,6 +77,30 @@ test('grokPost() parses grok.com / x.ai pages, rejects others', () => {
   assert.strictEqual(utils.grokPost('https://example.com/imagine/a'), null);
 });
 
+test('dexPair() parses DexScreener pair URLs, rejects others', () => {
+  const evm = '0x' + 'a'.repeat(40);
+  assert.deepEqual(utils.dexPair('https://dexscreener.com/ethereum/' + evm),
+    { chain: 'ethereum', pair: evm, href: 'https://dexscreener.com/ethereum/' + evm });
+  assert.deepEqual(utils.dexPair('https://www.dexscreener.com/pulsechain/' + evm),
+    { chain: 'pulsechain', pair: evm, href: 'https://www.dexscreener.com/pulsechain/' + evm });
+  /* trailing slash still parses (href keeps it — only used as a fallback link) */
+  assert.strictEqual(utils.dexPair('https://dexscreener.com/base/' + evm + '/').chain, 'base');
+  assert.strictEqual(utils.dexPair('https://dexscreener.com/solana/' + 'A'.repeat(40)).chain, 'solana');
+  assert.strictEqual(utils.dexPair('https://dexscreener.com'), null);          /* bare domain → not a chart */
+  assert.strictEqual(utils.dexPair('https://dexscreener.com/ethereum'), null); /* no pair */
+  assert.strictEqual(utils.dexPair('https://example.com/ethereum/' + evm), null);
+});
+
+test('linkCardHTML() builds a local card from the URL, no network', () => {
+  const html = utils.linkCardHTML('https://www.example.com/path/to/page?x=1');
+  assert.match(html, /class="link-card"/);
+  assert.match(html, /href="https:\/\/www\.example\.com\/path\/to\/page\?x=1"/);
+  assert.match(html, />example\.com</);            /* www stripped, domain shown */
+  assert.match(html, /\/path\/to\/page</);         /* readable path, query dropped */
+  assert.match(html, /link-card-mono[^>]*>E</);    /* monogram = first letter */
+  assert.strictEqual(utils.linkCardHTML('not a url'), '');
+});
+
 test('refHash() strips eip155 chain qualifier → bare hash (cross-chain like dedup)', () => {
   const h = '0x' + 'a'.repeat(64);
   assert.strictEqual(utils.refHash(h), h);                       /* native ref unchanged */

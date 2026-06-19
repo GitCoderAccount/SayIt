@@ -380,6 +380,31 @@ const utils = {
       return m ? { chain: m[1], pair: m[2], href: u.origin + u.pathname } : null;
     } catch { return null; }
   },
+  /* Build a link card for a plain URL — domain + readable path + a colored
+     monogram, derived ENTIRELY from the URL string. No fetch, no third party:
+     nothing is contacted until the user clicks. (Rich og:image previews would
+     require a metadata middleman that sees every link every user views, which
+     we deliberately don't do.) Returns '' for an unparseable URL. */
+  linkCardHTML(url) {
+    let host = '', path = '';
+    try {
+      const u = new URL(url);
+      host = u.hostname.replace(/^www\./, '');
+      path = decodeURIComponent(u.pathname).replace(/\/+$/, '');
+    } catch { return ''; }
+    if (!host) return '';
+    let hue = 0;
+    for (let k = 0; k < host.length; k++) hue = (hue * 31 + host.charCodeAt(k)) % 360;
+    const sU = this.safe(url), sHost = this.safe(host), sLetter = this.safe(host[0].toUpperCase());
+    const sPath = path ? this.safe(path.length > 60 ? path.slice(0, 57) + '…' : path) : '';
+    return `<a class="link-card" href="${sU}" target="_blank" rel="noopener noreferrer">
+      <span class="link-card-mono" style="background:hsl(${hue},55%,42%)" aria-hidden="true">${sLetter}</span>
+      <span class="link-card-body">
+        <span class="link-card-host">${sHost}</span>
+        ${sPath ? `<span class="link-card-path">${sPath}</span>` : ''}
+      </span>
+    </a>`;
+  },
   /* Normalize an engagement reference (the part after LIKE:/UNLIKE:) to its
      bare lowercase post hash, stripping an optional `eip155:<chainId>:` chain
      qualifier. A post's txHash is globally unique, so a like ported onto a
@@ -604,19 +629,10 @@ const utils = {
           mediaCount++;
         }
       } else if (previewsOn && !linkPreviewDone && /^https?:\/\//i.test(resolved)) {
-        /* First plain (non-media) URL → a rich link-preview card. It starts as
-           a clean clickable host chip; _fillLinkCard() fetches the og metadata
-           (title/image/description) lazily when it nears the viewport. If the
-           fetch fails — or previews are off — the host chip remains, so the
-           link is never lost. One card per post, like X. */
-        linkPreviewDone = true;
-        mediaUrls.add(resolved);
-        let host = '';
-        try { host = new URL(resolved).hostname.replace(/^www\./, ''); } catch { /* keep '' */ }
-        const sU = utils.safe(resolved), sHost = utils.safe(host) || 'link';
-        embedHtml += `<a class="link-card link-card-pending" data-lp-url="${sU}" href="${sU}" target="_blank" rel="noopener noreferrer">
-          <span class="link-card-body"><span class="link-card-host">🔗 ${sHost}</span></span>
-        </a>`;
+        /* First plain (non-media) URL → a local link card built entirely from
+           the URL (domain + path + monogram). No network, no third party. */
+        const card = utils.linkCardHTML(resolved);
+        if (card) { linkPreviewDone = true; mediaUrls.add(resolved); embedHtml += card; }
       }
     }
 
