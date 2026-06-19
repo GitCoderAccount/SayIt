@@ -1,18 +1,29 @@
 'use strict';
-/* profile.js — the profile / social-graph subsystem, split out of app.js.
-   FIRST INSTALLMENT: the follow-graph UI — following/follower lists
-   (_showFollowingList / _showFollowerList / _scanFollowers / _renderFollowList
-   / _renderFollowListMore / _renderFollowRow / _hydrateFollowRow), the
-   follow/follower counts (_showFollowingCount / _fetchFollowerCount) and the
-   follow toggle (toggleFollow). The profile *page* view/edit and the hover
-   popup are appended in later cuts.
+/* profile.js — the profile / social-graph subsystem, split out of app.js
+   in installments. Contains:
+     1. the follow-graph UI — following/follower lists (_showFollowingList /
+        _showFollowerList / _scanFollowers / _renderFollowList /
+        _renderFollowListMore / _renderFollowRow / _hydrateFollowRow), the
+        follow/follower counts (_showFollowingCount / _fetchFollowerCount) and
+        the follow toggle (toggleFollow);
+     2. the profile PAGE — entry (openProfileModal / goProfilePage), render
+        (_profilePageHTML), token-identity patches, listener wiring
+        (_wireProfilePageListeners), the tab loader + chain scans
+        (loadProfileTab / _scanProfilePages / _scanProfileExtraChains), and the
+        own-profile edit form + on-chain save (showEditForm / saveProfile).
+   Still pending in app.js for later installments: the profile-fetch helpers
+   (fetchMyProfile / fetchOtherProfile), the profile infinite-scroll engine
+   (_onProfileScroll / fetchProfileMore / _fillProfileViewport /
+   _filterProfileTxs / _updateProfileSubtitle), and the token-profile editor
+   (renderBanner / _openTokenProfileEditor / _publishTokenProfile / …).
 
    Boot-order note (same constraint that shaped settings.js): every method here
    is reached only via user navigation or a deferred event handler (onclick /
-   keydown / the profile-page render), NEVER from init()'s synchronous prefix —
-   which runs at app.js eval time, before this file loads. So splitting them out
-   is safe. Methods that ARE wired eagerly at boot (e.g. the hover popup via
-   _wireHoverPopups in wireListeners) deliberately stay in app.js.
+   keydown / the router / the profile-page render), NEVER from init()'s
+   synchronous prefix — which runs at app.js eval time, before this file loads.
+   So splitting them out is safe. Methods that ARE wired eagerly at boot (e.g.
+   the hover popup via _wireHoverPopups in wireListeners) deliberately stay in
+   app.js.
 
    These methods augment SayIt.prototype, defined in app.js; load order is
    core → cache → app → settings → profile → embeds → dm. The throwaway class
@@ -500,6 +511,793 @@ const _PROF = class {
     }
     } finally {
       this._pendingTx.delete('follow:' + addr);
+    }
+  }
+
+  /* ── Profile PAGE (installment 2): the profile view/edit screen —
+     entry (openProfileModal / goProfilePage), render (_profilePageHTML),
+     token-identity patches, listener wiring (_wireProfilePageListeners),
+     the posts/replies/etc. tab loader + chain scans (loadProfileTab /
+     _scanProfilePages / _scanProfileExtraChains), and the own-profile edit
+     form + on-chain save (showEditForm / saveProfile). All navigation- or
+     handler-triggered, never init's sync prefix. ──────────────────────── */
+  openProfileModal() {
+    /* Own profile: go to profile page */
+    if (this.state.signerAddr) {
+      this.goProfilePage(this.state.signerAddr, true);
+    } else {
+      utils.toast('Connect wallet to view your profile');
+    }
+  }
+
+  async goProfilePage(address, isOwn = false) {
+    this._setRoute('/profile/' + address);
+    this.setNav(isOwn ? 'nav-profile' : null, isOwn ? 'profile' : null);
+    /* Title placeholder until profile resolves. Refined below if cached. */
+    const cachedName = this.state.profCache[address]?.username
+      || (isOwn ? this.state.profile?.username : null);
+    this._updateTitle(cachedName ? '@' + cachedName : 'Profile');
+    this.state.mode    = 'profile';
+    this.state.channel = address; /* prevent renderFeed from overwriting this page */
+    /* Bump the fetch token so any in-flight main-feed fetchPosts becomes a
+       no-op — otherwise its guarded "Load more from chain" button write
+       (guarded only by myToken === _fetchToken) lands on top of this
+       profile page. */
+    this._fetchToken++;
+    this.state.loading = false;
+    this.g('compose-area').style.display   = 'none';
+    this.g('channel-banner').style.display = 'none';
+    this.g('feed-tabs').style.display      = 'none';
+    this.g('new-banner').classList.remove('visible');
+    this.g('loading-more').style.display   = 'none';
+    this.g('loading-more').innerHTML       = '<div class="spinner sp-feed" aria-hidden="true"></div>Scanning the chain…'; /* reset any leftover button */
+    /* Set a real title so the header isn't blank */
+    /* page header via _makePageHeader handles the title now */
+
+    /* Profile data resolution:
+       - Own profile: always start with state.profile (may be partial — has
+         picUrl + bio even without username). Then try cache. Always render
+         what we have; trigger a fresh on-chain fetch in the background. */
+    let prof;
+    if (isOwn) {
+      /* state.profile is initialized at construction so always truthy. Use
+         whatever fields are populated rather than gate-keeping on username. */
+      prof = this.state.profile || {};
+      const hasAnyData = !!(prof.username || prof.bio || prof.coverUrl ||
+                            (prof.picUrl && prof.picUrl !== 'image1.jpeg'));
+      if (!hasAnyData) {
+        /* Try IndexedDB cache fallback */
+        try {
+          const cached = await this.cache.getProfile(address);
+          if (cached) { this.applyProfile(cached); prof = this.state.profile; }
+        } catch (err) { console.warn('Profile cache miss:', err); }
+      }
+    } else {
+      /* Don't BLOCK on the profile-data fetch — render the page and start
+         loading posts immediately, then let the profile fill in async. Awaiting
+         here meant other users' profiles sat through a full profile-data scan
+         before their posts even began loading (looked like "just scanning"). */
+      prof = this.state.profCache[address] || {};
+      if (!this.state.profCache[address]) this.fetchOtherProfile(address);
+    }
+    if (!prof) prof = {};
+
+    /* Initialize profile-page pagination state. This is what enables
+       infinite scroll on profile pages — see _onProfileScroll. */
+    this._profilePageState = {
+      address: address.toLowerCase(),
+      isOwn,
+      tab: 'posts',
+      pagesScanned: 0,
+      loading: false,
+      hasMore: true,
+      rawTxs: [],
+      visibleTxHashes: new Set(),
+    };
+
+    this.g('feed-tabs').classList.remove('tabs-sticky');
+    /* Profile header: back arrow + Name + post count + search icon.
+       Post count starts empty (may not be loaded yet) and updates
+       in-place after loadProfileTab finishes. */
+    const profHeaderHTML = this._makePageHeader({
+      title: prof.username || this.trunc(address),
+      subtitle: '',   /* filled in by _updateProfileSubtitle after tab loads */
+      back: true,
+      searchAddr: address,
+    });
+    this.g('feed').innerHTML = profHeaderHTML + this._profilePageHTML(address, prof, isOwn);
+    this._wireProfilePageListeners(address, isOwn);
+    /* Fill the "On-chain since <Month Year>" line async (X's Joined parity).
+       Mirrors the prof-tips pattern: empty span, filled when the call lands. */
+    this._fillFirstSeen(address);
+    /* If this profile is a token contract, fill in its identity (logo, name,
+       banner, verified profile, links) the same way the channel banner does. */
+    if (!isOwn) this._applyTokenIdentityToProfile(address);
+
+    /* Profile scan depth comes from the global Max scan pages setting.
+       This way users who bump it to 200 or unlimited get correspondingly
+       deeper profile history without having to set per-page values.
+       Other users get scanned a bit less aggressively (half the cap) to
+       avoid pounding the API on every profile visit. */
+    const globalLimit = this._getMaxScanPages();
+    const maxPages    = isOwn ? globalLimit : Math.min(globalLimit, Math.max(50, Math.floor(globalLimit / 2)));
+    this.loadProfileTab(address, isOwn, 'posts', maxPages).then(() => {
+      this._updateProfileSubtitle(address);
+    }).catch(() => {});
+
+    /* Background-refresh own profile from chain. When it lands, re-render
+       the page header in-place. We DON'T save/restore the feed's innerHTML
+       — doing so used to capture a transient scan-progress block and freeze
+       it on screen (the "page 4 — 150 txs" bug). Instead we only touch the
+       header, leaving the already-rendered tab content untouched. */
+    if (isOwn) {
+      this.fetchMyProfile().then(() => {
+        if (this.state.mode !== 'profile' || this.state.channel !== address) return;
+        const feed = this.g('feed');
+        if (!feed || !feed.querySelector('.prof-page')) return;
+        /* Patch only the header text bits in-place — name, avatar, bio —
+           without rebuilding the whole page (which would disturb the feed
+           and any in-flight scan progress). */
+        const nameEl = feed.querySelector('.prof-display-name');
+        if (nameEl && this.state.profile.username) {
+          nameEl.textContent = this.state.profile.username;
+        }
+        const titleEl = feed.querySelector('.page-header-title');
+        if (titleEl && this.state.profile.username) {
+          titleEl.textContent = this.state.profile.username;
+        }
+        const avatarEl = feed.querySelector('.prof-page-avatar');
+        if (avatarEl && this.state.profile.picUrl && this.state.profile.picUrl !== 'image1.jpeg') {
+          avatarEl.src = this.state.profile.picUrl;
+        }
+        const bioEl = feed.querySelector('.prof-bio');
+        if (bioEl && this.state.profile.bio) {
+          bioEl.textContent = this.state.profile.bio;
+        }
+      }).catch(() => {});
+    } else {
+      /* Other user's profile: the fetch was kicked off non-blocking above —
+         when it lands, patch the header in place (name/avatar/bio). */
+      this.fetchOtherProfile(address).then(() => {
+        if (this.state.mode !== 'profile' || this.state.channel !== address) return;
+        const p = this.state.profCache[address];
+        const feed = this.g('feed');
+        if (!p || !feed || !feed.querySelector('.prof-page')) return;
+        const nameEl = feed.querySelector('.prof-display-name');
+        if (nameEl && p.username) nameEl.textContent = p.username;
+        const titleEl = feed.querySelector('.page-header-title');
+        if (titleEl && p.username) titleEl.textContent = p.username;
+        const avatarEl = feed.querySelector('.prof-page-avatar');
+        if (avatarEl && p.picUrl && p.picUrl !== 'image1.jpeg') avatarEl.src = p.picUrl;
+        const bioEl = feed.querySelector('.prof-bio');
+        if (bioEl && p.bio) bioEl.textContent = p.bio;
+      }).catch(() => {});
+    }
+  }
+
+  _profilePageHTML(address, prof, isOwn) {
+    const name     = utils.safe(prof.username || this.trunc(address));
+    const handle   = utils.safe(address);
+    const bio      = utils.safe(prof.bio || '');
+    const location = utils.safe(prof.location || '');
+    /* website handled via safeUrl below — see metaItems */
+    const joined   = prof.joinedTs
+      ? new Date(prof.joinedTs).toLocaleDateString('en-US',{month:'long',year:'numeric'})
+      : '';
+    /* picUrl: validate scheme to block javascript:/data: URIs in <img src>.
+       <img src> + javascript: doesn't execute in modern browsers but defense
+       in depth never hurts. Falls back to default avatar on invalid URL. */
+    const picUrlSafe = utils.safeUrl(prof.picUrl) || 'image1.jpeg';
+    const picUrl   = utils.safe(picUrlSafe);
+    /* coverUrl: validate AND CSS-escape for url() context */
+    const coverCss = prof.coverUrl ? utils.cssUrlValue(prof.coverUrl) : '';
+
+    const coverStyle = coverCss
+      ? `background:url('${coverCss}') center/cover no-repeat`
+      : `background:linear-gradient(135deg,rgba(124,77,255,0.55),rgba(179,136,255,0.25),rgba(43,134,197,0.15))`;
+
+    const followBtn = isOwn
+      ? `<button class="prof-edit-btn" id="prof-dash-btn" title="Creator dashboard" style="margin-right:8px">📊 Dashboard</button>
+         <button class="prof-edit-btn" id="prof-edit-trigger">Edit profile</button>`
+      : this.state.following.has(address.toLowerCase())
+        ? `<button class="prof-following-btn" id="prof-follow-btn">Following</button>`
+        : `<button class="prof-follow-btn" id="prof-follow-btn">Follow</button>`;
+
+    /* Re-validate URL at render time. Chain data is attacker-controlled
+       and client-side saveProfile validation can be bypassed by publishing
+       a PROFILE_DATA tx directly. safeUrl() blocks javascript:, data:, etc. */
+    const websiteHref = prof.website ? utils.safeUrl(prof.website) : '';
+    const websiteHrefSafe = websiteHref ? utils.safe(websiteHref) : '';
+    const websiteDisplay = websiteHref ? utils.safe(websiteHref.replace(/^https?:\/\//, '')) : '';
+    const metaItems = [
+      location ? `<span class="prof-meta-item">📍 ${location}</span>` : '',
+      websiteHrefSafe ? `<span class="prof-meta-item">🔗 <a href="${websiteHrefSafe}" target="_blank" rel="noopener noreferrer">${websiteDisplay}</a></span>` : '',
+      joined   ? `<span class="prof-meta-item">📅 Joined ${utils.safe(joined)}</span>` : '',
+      `<span class="prof-meta-item" id="prof-firstseen" style="display:none" title="First on-chain activity"></span>`,
+      `<span class="prof-meta-item" id="prof-tips" style="display:none" title="PLS tips received on posts"></span>`,
+    ].filter(Boolean).join('');
+
+    return `
+    <div class="prof-page">
+      <div class="prof-cover" style="${coverStyle}"></div>
+      <div class="prof-avatar-row">
+        <img src="${picUrl}" class="prof-page-avatar" id="prof-page-avatar"
+          alt="" data-fallback-src="image1.jpeg">
+        <div class="prof-actions">
+          <button class="prof-edit-btn" title="Share profile" aria-label="Share profile" style="padding:6px 10px"
+            data-act="share-profile" data-act-arg="${utils.safe(address)}">
+            <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.48-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>
+          </button>
+          <a class="prof-edit-btn" title="View their chat" aria-label="View their chat" style="padding:6px 10px;display:inline-flex;align-items:center"
+            href="#/channel/${utils.safe(address)}"
+            data-act="open-channel" data-act-arg="${utils.safe(address)}">
+            <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M1.998 5.5c0-1.381 1.119-2.5 2.5-2.5h15c1.381 0 2.5 1.119 2.5 2.5v13c0 1.381-1.119 2.5-2.5 2.5h-15c-1.381 0-2.5-1.119-2.5-2.5v-13zm2.5-.5a.5.5 0 00-.5.5v2.764l8 3.638 8-3.638V5.5a.5.5 0 00-.5-.5h-15zM19.998 10.236l-8 3.636-8-3.636V18.5a.5.5 0 00.5.5h15a.5.5 0 00.5-.5v-8.264z"/></svg>
+          </a>
+          <button id="prof-token-edit-btn" class="prof-edit-btn" style="display:none">Set token profile</button>
+          ${followBtn}
+        </div>
+      </div>
+      <div class="prof-info">
+        <div class="prof-display-name" id="prof-display-name">${name}</div>
+        <div class="prof-handle" id="prof-handle-addr"
+          title="Click to copy" data-addr="${handle}">${handle}</div>
+        ${bio ? `<div class="prof-bio">${bio}</div>` : ''}
+        ${metaItems ? `<div class="prof-meta-row">${metaItems}</div>` : ''}
+        <div id="prof-token-meta"></div>
+        <div class="prof-counts-row">
+          <span class="prof-count-item" id="prof-following-count">
+            <strong>—</strong> Following
+          </span>
+          <span class="prof-count-item" id="prof-follower-count">
+            <strong>?</strong> Followers
+          </span>
+        </div>
+      </div>
+      <div class="prof-tabs">
+        <button class="prof-tab active" data-ptab="posts">Posts</button>
+        <button class="prof-tab" data-ptab="replies">Replies</button>
+        <button class="prof-tab" data-ptab="highlights">Highlights</button>
+        <button class="prof-tab" data-ptab="articles">Articles</button>
+        <button class="prof-tab" data-ptab="media">Media</button>
+        ${isOwn ? `<button class="prof-tab" data-ptab="likes">Likes</button>` : ''}
+      </div>
+      <div class="prof-feed" id="prof-feed">
+        <div class="prof-empty">
+          <div class="spinner" aria-hidden="true"></div>
+          <h3>Loading…</h3>
+          <p>Fetching from chain</p>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  /* Fill in a token contract's identity on its profile page (avatar, name,
+     banner, bio, badge + links), mirroring the channel banner. The fast
+     DexScreener identity (Layer 1) is applied first; the deployer/owner
+     verified profile (Layer 2, may scan the channel) upgrades it when ready.
+     No-op for EOAs or once a human profile has loaded. */
+  async _applyTokenIdentityToProfile(address) {
+    const lc = (address || '').toLowerCase();
+    const token = await this._fetchTokenInfo(lc);
+    if (token) this._patchProfileIdentity(lc, token, null);
+    /* Fast path: reveal the "Set token profile" button for the deployer/owner
+       without waiting on the (slower) verified-profile scan. */
+    this._fetchTokenAuth(lc).then(auth => this._patchProfileTokenEdit(lc, auth));
+    const verified = await this._fetchVerifiedTokenProfile(lc);
+    if (token || verified) this._patchProfileIdentity(lc, token, verified);
+  }
+
+  /* Toggle the profile page's "Set token profile" button for the deployer/owner. */
+  _patchProfileTokenEdit(lc, auth) {
+    if (this.state.mode !== 'profile') return;
+    if (this._profilePageState && this._profilePageState.address !== lc) return;
+    const btn = document.getElementById('prof-token-edit-btn');
+    if (!btn) return;
+    const canEdit = !!(auth && this.state.signerAddr && auth.editors && auth.editors.has(this.state.signerAddr));
+    btn.style.display = canEdit ? '' : 'none';
+    if (canEdit) btn.onclick = e => { e.stopPropagation(); this._openTokenProfileEditor(lc); };
+  }
+
+  _patchProfileIdentity(lc, token, verified) {
+    /* Bail if we've navigated away or a human profile took over. */
+    if (this.state.mode !== 'profile') return;
+    if (this._profilePageState && this._profilePageState.address !== lc) return;
+    if (this.state.profCache[lc] && this.state.profCache[lc].username) return;
+    const page = document.querySelector('.prof-page');
+    if (!page) return;
+    const name = (verified && verified.username)
+      || (token ? (token.symbol ? `${token.name} (${token.symbol})` : token.name) : '');
+    if (name) {
+      const nameEl = document.getElementById('prof-display-name');
+      if (nameEl) nameEl.textContent = name;
+      const titleEl = document.querySelector('.page-header-title');
+      if (titleEl) titleEl.textContent = name;
+      this._updateTitle(name);
+    }
+    const avatar = (verified && utils.safeUrl(verified.picUrl || '')) || (token && token.logo);
+    if (avatar) { const av = document.getElementById('prof-page-avatar'); if (av) av.src = avatar; }
+    const coverSrc = (verified && verified.coverUrl) || (token && token.header) || '';
+    if (coverSrc) {
+      const css = utils.cssUrlValue(coverSrc);
+      const coverEl = page.querySelector('.prof-cover');
+      if (css && coverEl) coverEl.style.background = `url('${css}') center/cover no-repeat`;
+    }
+    const bioText = (verified && verified.bio) || (token ? 'Token on PulseChain' : '');
+    if (bioText) {
+      let bioEl = page.querySelector('.prof-bio');
+      if (!bioEl) {
+        bioEl = document.createElement('div');
+        bioEl.className = 'prof-bio';
+        document.getElementById('prof-handle-addr')?.insertAdjacentElement('afterend', bioEl);
+      }
+      bioEl.textContent = bioText;
+    }
+    const meta = document.getElementById('prof-token-meta');
+    if (meta) meta.innerHTML = this._tokenMetaHTML(token, !!verified, verified);
+  }
+
+  _wireProfilePageListeners(address, isOwn) {
+    /* Follow/Unfollow button on the full profile page header. */
+    const fbtn = document.getElementById('prof-follow-btn');
+    if (fbtn && !isOwn) {
+      fbtn.onclick = (e) => {
+        e.stopPropagation();
+        this.toggleFollowAddr(address, fbtn);
+      };
+    }
+    /* Tab switching — same depth rule as initial load. */
+    const _globalLimit = this._getMaxScanPages();
+    const maxPages = isOwn ? _globalLimit : Math.min(_globalLimit, Math.max(50, Math.floor(_globalLimit / 2)));
+    document.querySelectorAll('.prof-tab').forEach(btn => {
+      btn.onclick = () => {
+        document.querySelectorAll('.prof-tab').forEach(t => t.classList.remove('active'));
+        btn.classList.add('active');
+        /* Update pagination state's current tab so fetchProfileMore filters
+           correctly. Reset visibleTxHashes since the new tab has a different
+           filtered set of the same raw txs. */
+        if (this._profilePageState) {
+          this._profilePageState.tab = btn.dataset.ptab;
+          this._profilePageState.visibleTxHashes = new Set();
+        }
+        /* Clear the previous tab's count immediately so it can't linger stale
+           while the new tab loads; refresh it once the load resolves. */
+        const sub = this.g('feed')?.querySelector('.page-header-subtitle');
+        if (sub) sub.textContent = '';
+        this.loadProfileTab(address, isOwn, btn.dataset.ptab, maxPages)
+          .then(() => this._updateProfileSubtitle(address)).catch(() => {});
+      };
+    });
+
+    /* Address copy */
+    const handleEl = document.getElementById('prof-handle-addr');
+    if (handleEl) {
+      handleEl.onclick = () => utils.copyToClipboard(address, 'Address copied!');
+    }
+
+    /* Edit profile button (own profile) */
+    const editBtn = document.getElementById('prof-edit-trigger');
+    if (editBtn) editBtn.onclick = () => this.showEditForm();
+    const dashBtn = document.getElementById('prof-dash-btn');
+    if (dashBtn) dashBtn.onclick = () => this.goDashboard();
+
+    /* Follow/Unfollow (other profiles) */
+    const followBtn = document.getElementById('prof-follow-btn');
+    if (followBtn) {
+      followBtn.onclick = () => this.toggleFollow(address, followBtn);
+    }
+
+    /* Count following and fetch follower count. Following count is
+       address-aware: own profile reads state.following; others are scanned. */
+    this._showFollowingCount(address, isOwn);
+    this._fetchFollowerCount(address);
+
+    /* Follower/Following counts → open list screen (Twitter/X pattern) */
+    const followingCountEl = document.getElementById('prof-following-count');
+    const followerCountEl  = document.getElementById('prof-follower-count');
+    if (followingCountEl) followingCountEl.onclick = () => this._showFollowingList(address, isOwn);
+    if (followerCountEl)  followerCountEl.onclick  = () => this._showFollowerList(address);
+  }
+
+  /* ── Profile tab content ────────────────────────────────────────────── */
+  /* Returns a Promise that resolves when the initial tab content is rendered */
+  async loadProfileTab(address, isOwn, tab, maxPages = 50) {
+    const feedEl = document.getElementById('prof-feed');
+    if (!feedEl) return;
+    feedEl.innerHTML = `<div class="prof-empty"><div class="spinner" aria-hidden="true"></div><h3>Loading…</h3></div>`;
+
+    if (tab === 'likes' && !isOwn) {
+      feedEl.innerHTML = `<div class="prof-empty"><span>🔒</span><h3>Private</h3><p>Likes are only visible to the account holder.</p></div>`;
+      /* Non-paginated placeholder tab — stop infinite-scroll from paging in
+         the owner's real posts under this placeholder. */
+      if (this._profilePageState) { this._profilePageState.tab = tab; this._profilePageState.hasMore = false; }
+      return;
+    }
+
+    /* Highlights / Articles — placeholders for now. Articles will be a Premium
+       feature for long-form, on-chain posts (essays, guides, even books);
+       Highlights will let users pin standout posts. */
+    if (tab === 'highlights' || tab === 'articles') {
+      const isArt = tab === 'articles';
+      feedEl.innerHTML = `<div class="prof-empty"><span>${isArt ? '📰' : '✨'}</span>
+        <h3>${isArt ? 'Articles' : 'Highlights'}</h3>
+        <p>${isArt
+          ? 'Long-form articles are coming soon — a Premium feature for posting essays, guides, or even whole books on-chain.'
+          : 'Highlighted posts are coming soon.'}</p></div>`;
+      if (this._profilePageState) { this._profilePageState.tab = tab; this._profilePageState.hasMore = false; }
+      return;
+    }
+
+    try {
+      let posts = [];
+      let scannedHasMore = false; /* set below: were there more pages past the initial scan? */
+      let pinnedHash = null;      /* resolved pinned-post hash for the Posts tab, or null */
+      const addrLc = address.toLowerCase();
+
+      if (tab === 'likes') {
+        /* Likes: resolve txHashes from state.likes */
+        const fromCache = this.state.posts.filter(p => this.state.likes.has(p.txHash));
+        const cachedSet = new Set(fromCache.map(p => p.txHash));
+        posts = fromCache;
+        const missing = [...this.state.likes].filter(h => !cachedSet.has(h)).slice(0, 20);
+        for (const hash of missing) {
+          try {
+            const cached = await this.cache.getPost(hash);
+            if (cached) posts.push(cached);
+          } catch { /* skip */ }
+        }
+        posts.sort((a,b) => (b._tsMs ??= new Date(b.timestamp).getTime()) - (a._tsMs ??= new Date(a.timestamp).getTime()));
+      } else {
+        /* Posts / Replies / Media: scan once, cache, reuse across tabs */
+        this._profileScanCache = this._profileScanCache || {};
+        /* Use settings-derived limit as cache key (maxPages may be null) */
+        const _limit  = this._getMaxScanPages();
+        const cacheKey = `${address}_${_limit}`;
+        let raw = this._profileScanCache[cacheKey];
+        if (!raw) {
+          /* Initial paint: a sent-only fetch (guarantees the profile's own
+             latest posts even when received engagement floods the mixed
+             txlist pages) merged with a shallow page scan; deeper history
+             streams in via fetchProfileMore (scroll / fill). */
+          const [sent, paged, extra] = await Promise.all([
+            this._apiFetchSentTxs(address),
+            this._scanProfilePages(address, PROFILE_INIT_PAGES),
+            this._scanProfileExtraChains(address, PROFILE_INIT_PAGES),
+          ]);
+          if (sent?.length) {
+            const seen = new Set(sent.map(t => t.hash.toLowerCase()));
+            raw = [...sent, ...(paged || []).filter(t => !seen.has(t.hash?.toLowerCase()))];
+          } else {
+            raw = paged || [];
+          }
+          /* Merge in the enabled non-canonical chains' posts (chain-tagged),
+             deduped by hash, then sort all by time. */
+          if (extra && extra.length) {
+            const seen2 = new Set(raw.map(t => t.hash?.toLowerCase()));
+            for (const t of extra) {
+              const h = t.hash?.toLowerCase();
+              if (h && !seen2.has(h)) { raw.push(t); seen2.add(h); }
+            }
+          }
+          raw.sort((a, b) => Number(b.timeStamp || 0) - Number(a.timeStamp || 0));
+          /* Cache for 60s — covers all tab switching */
+          this._profileScanCache[cacheKey] = raw;
+          setTimeout(() => { delete this._profileScanCache[cacheKey]; }, 60_000);
+        }
+        /* If the initial scan filled all its pages, there's likely more. */
+        scannedHasMore = raw.length >= PROFILE_INIT_PAGES * 50;
+
+        /* Pinned-post resolution (Posts tab only): self-sent PIN:/UNPIN: txs
+           where from === to === address. Last action wins via the composite
+           block*1e5+txIndex order (same pattern as the follower scan). */
+        let pinResolved; /* { hash, order } | undefined */
+        raw.forEach(tx => {
+          const from = tx.from?.toLowerCase();
+          const to   = tx.to?.toLowerCase();
+          if (from !== address.toLowerCase()) return;
+          if (!tx.input || tx.input === '0x') return;
+          /* Pins resolve from canonical-chain txs only — block numbers aren't
+             comparable across chains, so the last-wins ordering would be wrong
+             if pins existed on multiple chains. */
+          if (tab === 'posts' && to === addrLc && (!tx._chainId || tx._chainId === CANONICAL_CHAIN_ID)) {
+            try {
+              const t = ethers.toUtf8String(tx.input).trim();
+              let pinHash = null, isUnpin = false;
+              if (t.startsWith(UNPIN_PREFIX)) { pinHash = t.slice(UNPIN_PREFIX.length).trim().toLowerCase(); isUnpin = true; }
+              else if (t.startsWith(PIN_PREFIX)) { pinHash = t.slice(PIN_PREFIX.length).trim().toLowerCase(); }
+              if (pinHash && /^0x[a-f0-9]{64}$/.test(pinHash)) {
+                const order = (Number(tx.blockNumber) || 0) * 100000 + (Number(tx.transactionIndex) || 0);
+                if (!pinResolved || order >= pinResolved.order) {
+                  pinResolved = { hash: isUnpin ? null : pinHash, order };
+                }
+              }
+            } catch { /* skip malformed pin tx */ }
+          }
+          try {
+            /* Canonical parse — identical poll/vote/repost/reply handling
+               to the main feed. Returns null for non-post txs (profile,
+               reactions, votes). chainId from the tx's origin chain tag. */
+            const parsed = this._parsePostTx(tx, { mode: 'profile', chainId: tx._chainId || CANONICAL_CHAIN_ID });
+            if (!parsed) return;
+            const isReply = !!parsed.parentTx;
+            if (tab === 'posts'   &&  isReply) return;
+            if (tab === 'replies' && !isReply) return;
+            if (tab === 'media' && !this._postHasMedia(parsed.display)) return;
+            posts.push(parsed);
+          } catch { /* skip */ }
+        });
+        /* Reconcile the pin: on-chain scan is authoritative when it found any
+           PIN/UNPIN marker; otherwise fall back to the optimistic localStorage
+           value for our own profile (the just-pinned post may post-date the
+           cached scan). */
+        if (tab === 'posts') {
+          if (pinResolved) pinnedHash = pinResolved.hash;
+          else if (addrLc === this.state.signerAddr) pinnedHash = this._getMyPin();
+          /* Keep our own optimistic record in sync with the chain. */
+          if (pinResolved && addrLc === this.state.signerAddr) this._setMyPin(pinResolved.hash);
+        }
+      }
+
+      if (!posts.length && !pinnedHash) {
+        /* No matching posts in the initial pages, but more history remains —
+           don't show the empty state yet; keep scanning deeper pages. */
+        if (scannedHasMore && tab !== 'likes') {
+          if (this._profilePageState) {
+            this._profilePageState.tab = tab;
+            this._profilePageState.pagesScanned = Math.max(this._profilePageState.pagesScanned, PROFILE_INIT_PAGES);
+            this._profilePageState.hasMore = true;
+            this._profilePageState.visibleTxHashes = new Set();
+          }
+          feedEl.innerHTML = `<div class="prof-empty" id="prof-loading-deep"><div class="spinner" aria-hidden="true"></div><h3>Loading…</h3></div>`;
+          this._fillProfileViewport();
+          return;
+        }
+        const empties = {
+          posts:   ['📝','No posts yet',   'Posts will appear here.'],
+          replies: ['💬','No replies yet', 'Replies to others appear here.'],
+          media:   ['🖼','No media yet',   'Posts with images appear here.'],
+          likes:   ['🤍','No likes yet',   'Posts you like appear here.'],
+        };
+        const [icon, title, desc] = empties[tab] || ['📡','Nothing here',''];
+        feedEl.innerHTML = `<div class="prof-empty"><span>${icon}</span><h3>${title}</h3><p>${desc}</p></div>`;
+        return;
+      }
+
+      if (tab === 'media') {
+        const items = [];
+        posts.forEach(p => {
+          this._postMediaItems(p.display).forEach(it => items.push({ ...it, txHash: p.txHash }));
+        });
+        feedEl.innerHTML = `<div class="prof-media-grid">${
+          items.slice(0, 60).map(it => this._mediaGridCellHTML(it)).join('')
+        }</div>`;
+        return;
+      }
+
+      /* Posts / Replies / Likes: standard post list */
+      const replyMap = new Map();
+      posts.forEach(p => { if (p.parentTx) replyMap.set(p.parentTx, (replyMap.get(p.parentTx)||0)+1); });
+      /* Pinned post (Posts tab): hoist it to the top under a 📌 label and
+         remove its natural occurrence so it isn't shown twice. If it wasn't in
+         the scanned set, fetch it by hash; skip silently if unfetchable. */
+      let pinnedPost = null;
+      if (tab === 'posts' && pinnedHash) {
+        pinnedPost = posts.find(p => p.txHash === pinnedHash) || null;
+        if (pinnedPost) posts = posts.filter(p => p.txHash !== pinnedHash);
+        else {
+          try {
+            const fetched = await this._fetchTxByHash(pinnedHash);
+            /* Only honor a pin that points at one of this author's own posts. */
+            if (fetched && fetched.reporter === addrLc && !fetched.parentTx) pinnedPost = fetched;
+          } catch { /* unfetchable — skip silently */ }
+        }
+      }
+      const frag = document.createDocumentFragment();
+      const renderPost = (p, pinned) => {
+        this._postMap.set(p.txHash, p);
+        const el = document.createElement('div');
+        el.className      = 'post-item' + (pinned ? ' prof-pinned-post' : '');
+        el.dataset.txhash = p.txHash;
+        el.innerHTML      = (pinned ? '<div class="prof-pinned-label">📌 Pinned</div>' : '')
+          + this.postHTML(p, false, replyMap, null);
+        frag.appendChild(el);
+        if (p.reporter !== this.state.signerAddr) this.fetchOtherProfile(p.reporter);
+      };
+      /* Pin hash was set but the post couldn't be resolved AND there are no
+         other posts — show the normal empty state rather than a blank list. */
+      if (!pinnedPost && !posts.length) {
+        feedEl.innerHTML = `<div class="prof-empty"><span>📝</span><h3>No posts yet</h3><p>Posts will appear here.</p></div>`;
+        if (this._profilePageState) { this._profilePageState.tab = tab; this._profilePageState.hasMore = scannedHasMore; }
+        return;
+      }
+      if (pinnedPost) renderPost(pinnedPost, true);
+      posts.forEach(p => renderPost(p, false));
+      feedEl.innerHTML = '';
+      feedEl.appendChild(frag);
+      /* Tally any polls just rendered so their results fill in. */
+      if (posts.some(pp => pp.poll)) {
+        setTimeout(() => this._tallyVisiblePolls(), 100);
+      }
+      /* Gather community notes for these posts (covers profile view). */
+      this._scanChannelNotes();
+      /* Seed pagination state so infinite scroll won't re-show these posts. */
+      if (this._profilePageState) {
+        this._profilePageState.tab = tab;
+        this._profilePageState.pagesScanned = Math.max(this._profilePageState.pagesScanned, PROFILE_INIT_PAGES);
+        this._profilePageState.hasMore = scannedHasMore;
+        this._profilePageState.visibleTxHashes = new Set(posts.map(p => p.txHash));
+        if (pinnedPost) this._profilePageState.visibleTxHashes.add(pinnedPost.txHash);
+      }
+      /* If the initial posts don't fill the screen, auto-load more so the user
+         sees a full feed without having to scroll a short page. */
+      if (tab !== 'likes' && scannedHasMore) this._fillProfileViewport();
+
+    } catch (err) {
+      feedEl.innerHTML = `<div class="prof-empty"><span>⚠️</span><h3>Error loading tab</h3><p>${utils.safe(err.message)}</p></div>`;
+    }
+  }
+
+  async _scanProfilePages(address, maxPages = null) {
+    /* null means "use settings". Caller can pass explicit value to override. */
+    const limit = (maxPages !== null && maxPages !== undefined)
+      ? maxPages
+      : this._getMaxScanPages();
+    const all = [];
+    /* Show progress as a small sticky pill at the top of the profile feed
+       — never a big block that displaces posts. The pill is inserted once,
+       updated in place, and removed when the scan completes. */
+    const feedEl = document.getElementById('prof-feed');
+    let pill = null, pillStatus = null;
+    const showPill = (feedEl && (limit > 30 || limit === Infinity));
+    if (showPill) {
+      /* If the feed only has the "Loading…" placeholder, clear it so the
+         pill sits above real content as it streams in. */
+      const ph = feedEl.querySelector('.prof-empty');
+      if (ph && /Loading…/.test(ph.textContent)) feedEl.innerHTML = '';
+      pill = document.getElementById('prof-scan-pill');
+      if (!pill) {
+        pill = document.createElement('div');
+        pill.id = 'prof-scan-pill';
+        pill.className = 'scan-pill';
+        pill.innerHTML = `<span class="scan-spin"></span><span id="prof-scan-status">Scanning chain…</span>`;
+        feedEl.prepend(pill);
+      }
+      pillStatus = document.getElementById('prof-scan-status');
+    }
+    for (let page = 1; (limit === Infinity || page <= limit); page++) {
+      if (pillStatus) pillStatus.textContent = `Scanning chain… ${all.length} posts`;
+      let raw;
+      try { raw = await this.apiFetch(address, page); }
+      catch { break; }
+      all.push(...raw);
+      if (raw.length < 50) break; /* last page */
+      await this._scanDelay(150);
+    }
+    /* Remove the pill — loadProfileTab will render the final post list. */
+    const donePill = document.getElementById('prof-scan-pill');
+    if (donePill) donePill.remove();
+    return all;
+  }
+
+  /* Scan an address's posts on the user's enabled NON-canonical chains for the
+     profile's initial paint. One identity across EVM chains, so a profile
+     should show its posts everywhere. Each tx is tagged with its origin chain
+     (_chainId) so _parsePostTx stamps it. Bounded to a few pages per chain;
+     empty enabled set → [] (canonical-only profile, unchanged). Deeper scroll
+     still pages the canonical chain only — see AUDIT follow-up. */
+  async _scanProfileExtraChains(address, pagesPerChain = 2) {
+    const extra = (this._getSettings().enabledChains || [])
+      .map(Number).filter(id => id !== CANONICAL_CHAIN_ID && chainCfg(id));
+    if (!extra.length) return [];
+    const out = [];
+    await Promise.all(extra.map(async cid => {
+      for (let page = 1; page <= pagesPerChain; page++) {
+        let raw;
+        try { raw = await this.apiFetch(address, page, cid); }
+        catch { break; }
+        raw.forEach(t => { t._chainId = cid; });
+        out.push(...raw);
+        if (raw.length < 50) break;
+      }
+    }));
+    return out;
+  }
+
+  /* ── Edit profile modal ─────────────────────────────────────────────── */
+  showEditForm() {
+    const p = this.state.profile;
+    const g = this.g.bind(this);
+    g('pe-name').value     = p.username  || '';
+    g('pe-bio').value      = p.bio       || '';
+    g('pe-location').value = p.location  || '';
+    g('pe-website').value  = p.website   || '';
+    g('pe-pic').value      = (p.picUrl && p.picUrl !== 'image1.jpeg') ? p.picUrl : '';
+    g('pe-cover').value    = p.coverUrl  || '';
+    g('pe-preview').src    = p.picUrl    || 'image1.jpeg';
+    /* Reset the NFT sub-form fully so a prior session's contract/token-id don't
+       linger (only the status line was being cleared). */
+    g('nft-contract').value = '';
+    g('nft-token-id').value = '';
+    g('nft-status').textContent = '';
+
+    /* Bio counter */
+    const n = g('pe-bio').value.length;
+    g('pe-bio-count').textContent = n ? `${n}/160` : '';
+
+    /* Cover preview */
+    const prev = g('pe-cover-preview');
+    if (p.coverUrl) {
+      prev.style.backgroundImage    = `url('${utils.cssUrlValue(p.coverUrl)}')`;
+      prev.style.backgroundSize     = 'cover';
+      prev.style.backgroundPosition = 'center';
+      prev.classList.add('has-cover');
+    } else {
+      prev.style.backgroundImage = '';
+      prev.classList.remove('has-cover');
+    }
+
+    g('profile-modal').classList.add('open');
+    this._trapFocus(g('profile-modal'));
+  }
+
+  async saveProfile() {
+    const g = this.g.bind(this);
+    const username = g('pe-name').value.trim();
+    let   picUrl   = g('pe-pic').value.trim();
+    let   coverUrl = g('pe-cover').value.trim();
+    const bio      = g('pe-bio').value.trim().slice(0, 160);
+    const location = g('pe-location').value.trim().slice(0, 30);
+    const website  = g('pe-website').value.trim().slice(0, 100);
+
+    if (picUrl && !picUrl.startsWith('https://')) {
+      utils.toast('Profile picture must be an https:// URL'); return;
+    }
+    if (coverUrl && !coverUrl.startsWith('https://')) {
+      utils.toast('Cover photo must be an https:// URL'); return;
+    }
+    /* Website: must be http(s)://, or empty. Renders are defensively
+       sanitized via utils.safeUrl in round 34, but catching it here gives
+       the user feedback instead of silently dropping their entry. */
+    if (website && !/^https?:\/\//i.test(website)) {
+      utils.toast('Website must start with http:// or https://'); return;
+    }
+    if (picUrl) {
+      /* Check image loads AND is not excessively large (> 8MB of pixels) */
+      const loadOk = await new Promise(r => {
+        const img = new Image(); img.onload = ()=>r(true); img.onerror = ()=>r(false); img.src = picUrl;
+      });
+      if (!loadOk) {
+        picUrl = ''; utils.toast('Profile image could not load -- using default');
+      } else {
+        const sizeOk = await utils.checkImageSize(picUrl);
+        if (!sizeOk) { picUrl = ''; utils.toast('Profile image is too large (> 8 MB) -- using default'); }
+      }
+    }
+    picUrl = picUrl || 'image1.jpeg';
+
+    const joinedTs = this.state.profile.joinedTs || Date.now();
+    const data = { username, picUrl, coverUrl, bio, location, website, joinedTs };
+    this.applyProfile(data);
+    await this.cache.saveProfile({ address: this.state.signerAddr, ...data });
+    /* Keep profCache in sync so the popup reflects the new profile immediately
+       without waiting for the next fetchOtherProfile scan. */
+    if (this.state.signerAddr) {
+      this.state.profCache[this.state.signerAddr] = {
+        username: data.username || '',
+        picUrl:   data.picUrl   || 'image1.jpeg',
+        bio:      data.bio      || '',
+        coverUrl: data.coverUrl || '',
+        location: data.location || '',
+        website:  data.website  || '',
+      };
+    }
+    const ok = await this.publish(PROFILE_PREFIX + JSON.stringify(data), null, this.state.signerAddr);
+    if (ok) {
+      this.closeModal('profile-modal');
+      /* Refresh profile page if currently on it */
+      if (this.state.mode === 'profile') {
+        this.goProfilePage(this.state.signerAddr, true);
+      }
+      utils.toast('Profile saved on-chain ✓');
     }
   }
 };
