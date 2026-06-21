@@ -19,6 +19,11 @@
  */
 
 const CACHE_NAME_PREFIX = 'sayitdefi-';
+/* Diagnostic logging — off by default so a normal install stays quiet in the
+   console. Flip to true when debugging cache-versioning behavior. Warnings and
+   errors are never gated. */
+const SW_DEBUG = false;
+const swLog = (...args) => { if (SW_DEBUG) console.log(...args); };
 const STATIC_ASSETS = [
   './',
   './index.html',
@@ -119,12 +124,12 @@ self.addEventListener('activate', event => {
           return 0;
         };
         currentCacheName = ours.slice().sort(cmpVer)[ours.length - 1];
-        console.log('[SW] Recovered current cache:', currentCacheName);
+        swLog('[SW] Recovered current cache:', currentCacheName);
       }
       return Promise.all(
         keys
           .filter(k => k.startsWith(CACHE_NAME_PREFIX) && k !== currentCacheName)
-          .map(k => { console.log('[SW] Deleting old cache:', k); return caches.delete(k); })
+          .map(k => { swLog('[SW] Deleting old cache:', k); return caches.delete(k); })
       );
     }).then(() => self.clients.claim())
   );
@@ -266,7 +271,7 @@ self.addEventListener('message', event => {
      appear when a genuinely newer version supersedes a known older one. */
   const wasPlaceholder = currentCacheName === CACHE_NAME_PREFIX + 'v1';
 
-  console.log(`[SW] Cache version changed: ${currentCacheName} -> ${newCacheName}`);
+  swLog(`[SW] Cache version changed: ${currentCacheName} -> ${newCacheName}`);
   const oldName = currentCacheName;
   currentCacheName = newCacheName;
 

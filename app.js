@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260621-248';
+const SW_CACHE_VER = '20260621-249';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -7317,7 +7317,7 @@ class SayIt {
       : queued.content;
     el.innerHTML = `
       <div style="padding:12px 16px;display:flex;gap:10px;align-items:flex-start">
-        <img src="${utils.safe(utils.safeUrl(this.state.profile.picUrl) || 'image1.jpeg')}" style="width:40px;height:40px;border-radius:50%;flex-shrink:0;object-fit:cover" data-fallback-src="image1.jpeg">
+        <img src="${utils.safe(utils.safeUrl(this.state.profile.picUrl) || 'image1.jpeg')}" alt="" style="width:40px;height:40px;border-radius:50%;flex-shrink:0;object-fit:cover" data-fallback-src="image1.jpeg">
         <div style="flex:1;min-width:0">
           <div style="font-size:13px;color:var(--primary-lt);margin-bottom:4px">
             ⌛ Publishing… <span style="color:var(--muted);font-size:12px">(saved offline)</span>
@@ -7959,10 +7959,10 @@ class SayIt {
         return `<div class="prof-media-cell prof-media-private" ${open}><span class="prof-media-play">▶</span></div>`;
       }
       return `<div class="prof-media-cell" ${open}>
-        <img src="${utils.safe(it.thumb)}" class="prof-media-thumb" loading="lazy" data-fallback="hide">
+        <img src="${utils.safe(it.thumb)}" class="prof-media-thumb" alt="" loading="lazy" data-fallback="hide">
         <span class="prof-media-play">▶</span></div>`;
     }
-    return `<img src="${utils.safe(it.thumb)}" class="prof-media-thumb" loading="lazy" data-fallback="hide" ${open}>`;
+    return `<img src="${utils.safe(it.thumb)}" class="prof-media-thumb" alt="" loading="lazy" data-fallback="hide" ${open}>`;
   }
 
   /* Every media item a post carries, for the profile Media grid:
