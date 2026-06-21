@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260618-247';
+const SW_CACHE_VER = '20260621-248';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -180,7 +180,17 @@ class SayIt {
     } catch (err) { console.warn('Muted IDB load:', err); }
     this._restoreDraft();
     await this.loadCached();
-    await this.tryAutoReconnect();
+    /* Wallet reconnect must NOT block first feed paint. Home-feed reads are
+       wallet-independent (they scan MAIN_CHANNEL through a keyless explorer
+       API), but a wallet that's installed-but-locked can leave the injected
+       provider's eth_accounts / eth_chainId request pending until the user
+       unlocks it — which previously stalled the whole feed for anyone who
+       hadn't connected (the common case: a crypto user with MetaMask/Rabby
+       installed but not yet connected to SayIt). Run reconnect in the
+       background instead; afterConnect() re-renders the feed in place with
+       the user's reactions once it resolves. A visitor with no wallet at all
+       is unaffected — tryAutoReconnect() early-returns and the feed paints. */
+    this.tryAutoReconnect().catch(err => console.warn('Auto-reconnect failed', err));
     /* Skip the home-feed scan when the page was opened on a deep link that
        loads its own data (post / profile / channel) — otherwise that view
        waits behind a full home scan before its own scan even starts. The
