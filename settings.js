@@ -126,7 +126,7 @@ const _SET = class {
           <span style="font-size:13px;color:var(--muted);line-height:1.6">
             SayIt is multichain — your feed can aggregate posts across EVM chains, and your address is the same identity on all of them.
             <strong>PulseChain is always on.</strong> Enable others below; reads use Etherscan's unified API (one key covers Ethereum, Base &amp; BNB Chain).
-            New posts and ported engagement go to your <strong>default chain</strong>. Changes apply on the next reload.
+            New posts and ported engagement go to your <strong>default chain</strong>. Ethereum &amp; Base are on by default; the composer's chain picker updates as soon as you save (newly-enabled feeds appear after a reload).
           </span>
         </div>
         ${chainList().filter(c => !c.canonical).map(c => `
@@ -135,7 +135,7 @@ const _SET = class {
               <span class="chain-badge" style="--chain-color:${chainColor(c.id)};margin-left:4px">${utils.safe(c.badge)}</span></strong>
               <span>${c.social ? 'Social chain — can host ported likes/follows' : 'Content chain (engagement ports to your default)'} · via ${utils.safe(c.explorer.name)}</span></div>
             <label class="settings-switch">
-              <input type="checkbox" class="set-chain-toggle" data-chain-id="${c.id}" ${(s.enabledChains || []).map(Number).includes(c.id) ? 'checked' : ''}>
+              <input type="checkbox" class="set-chain-toggle" data-chain-id="${c.id}" ${this._effectiveEnabledChains().includes(c.id) ? 'checked' : ''}>
               <span class="settings-switch-slider"></span>
             </label>
           </div>`).join('')}
@@ -149,7 +149,7 @@ const _SET = class {
           <div class="settings-row-label"><strong>Default chain</strong>
             <span>Where new posts are published, and where engagement (likes/follows/reposts) is routed for expensive chains.</span></div>
           <select class="settings-input" id="set-default-chain">
-            ${[CHAINS[CANONICAL_CHAIN_ID], ...chainList().filter(c => !c.canonical && (s.enabledChains || []).map(Number).includes(c.id))]
+            ${[CHAINS[CANONICAL_CHAIN_ID], ...chainList().filter(c => !c.canonical && this._effectiveEnabledChains().includes(c.id))]
               .map(c => `<option value="${c.id}" ${Number(s.defaultChain || CANONICAL_CHAIN_ID) === c.id ? 'selected' : ''}>${utils.safe(c.name)}</option>`).join('')}
           </select>
         </div>
@@ -531,10 +531,13 @@ const _SET = class {
       if (dc !== CANONICAL_CHAIN_ID && !enabled.includes(dc)) dc = CANONICAL_CHAIN_ID;
       s.defaultChain = dc;
       this._saveSettings(s);
+      /* Update the composer's "post to" picker right away — no reload needed to
+         start posting to a newly-enabled chain. */
+      this._initComposerChains();
       const changed = enabled.slice().sort().join(',') !== prevEnabled;
-      /* connect-src + the chain set are read at boot, so a reload is needed to
-         actually fetch a newly-enabled chain. */
-      utils.toast(changed ? 'Networks saved — reload to apply' : 'Networks saved ✓');
+      /* The feed's chain set + connect-src are read at boot, so READING a
+         newly-enabled chain's posts still needs a reload. */
+      utils.toast(changed ? 'Networks saved — reload to refresh the feed' : 'Networks saved ✓');
     });
     /* Export / Import data backup. */
     g('set-export')?.addEventListener('click', () => this._exportData());

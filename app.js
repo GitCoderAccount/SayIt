@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260621-250';
+const SW_CACHE_VER = '20260621-251';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -2738,10 +2738,11 @@ class SayIt {
            guard against here anymore. */
         this.signer = await prov.getSigner();
         this.state.signerAddr = (await this.signer.getAddress()).toLowerCase();
-        // Set defaultChain from first wallet connection if not already set
+        // Set defaultChain from first wallet connection if not already set.
+        // ethers v6 removed Signer.getChainId(); read it off the provider.
         const s = this._getSettings();
         if (!s.defaultChain) {
-          s.defaultChain = await this.signer.getChainId();
+          s.defaultChain = Number((await prov.getNetwork()).chainId);
           this._saveSettings(s);
         }
         this._registerWalletListeners();
@@ -3532,25 +3533,30 @@ class SayIt {
     return this.apiFetch(addr, page);
   }
 
+  /* The non-canonical chains active for this user. Multichain is ON by DEFAULT:
+     with no explicit Settings choice (enabledChains unset), this is the
+     registry's keyless-readable chains — every enabled:true chain except the
+     canonical one (BSC stays out; it needs a key). An explicit selection in
+     Settings is honored as-is, INCLUDING an empty one (uncheck-all = Pulse
+     only). Shared by the feed reader, the composer "post to" selector, and the
+     Settings checkboxes so reads and writes never disagree. */
+  _effectiveEnabledChains() {
+    const sel = this._getSettings().enabledChains;
+    if (!Array.isArray(sel)) {
+      return chainList({ enabledOnly: true }).map(c => c.id).filter(id => id !== CANONICAL_CHAIN_ID);
+    }
+    return sel.map(Number).filter(id => id !== CANONICAL_CHAIN_ID && chainCfg(id));
+  }
+
   /* The chains the current feed should read. Only the Home feed (main channel)
-     aggregates across the user's enabled chains; every other surface (profiles,
+     aggregates across the user's active chains; every other surface (profiles,
      token channels, notifications, threads) stays single-chain on the canonical
-     chain. Returns [369] by default, so with no extra chains enabled this is a
-     no-op and the single-chain path below is used unchanged. */
+     chain. Returns [369] when no extra chains are active, so the single-chain
+     path is used unchanged. */
   _activeFeedChains() {
     if (this.state.mode === 'main'
         && (this.state.channel || '').toLowerCase() === MAIN_CHANNEL.toLowerCase()) {
-      let enabled = this._getSettings().enabledChains;
-      if (!Array.isArray(enabled) || enabled.length === 0) {
-        /* No explicit choice → aggregate the registry's enabled chains
-           (canonical + any keyless-readable chain). enabled:false chains like
-           BSC stay out, so a broken/keyed explorer never fires on first load. */
-        enabled = chainList({ enabledOnly: true }).map(c => c.id).filter(id => id !== CANONICAL_CHAIN_ID);
-      } else {
-        /* Explicit user selection is honored as-is — including an opt-in
-           keyed chain like BSC the user enabled in Settings. */
-        enabled = enabled.map(Number).filter(id => id !== CANONICAL_CHAIN_ID && chainCfg(id));
-      }
+      const enabled = this._effectiveEnabledChains();
       if (enabled.length) return [CANONICAL_CHAIN_ID, ...enabled];
     }
     return [CANONICAL_CHAIN_ID];
@@ -5494,9 +5500,7 @@ class SayIt {
      user has >1 chain enabled; otherwise hidden (single-chain users see no
      change). Default selection = the user's default chain. */
   _initComposerChains() {
-    const enabled = (this._getSettings().enabledChains || [])
-      .map(Number).filter(id => id !== CANONICAL_CHAIN_ID && chainCfg(id));
-    const ids = [CANONICAL_CHAIN_ID, ...enabled];
+    const ids = [CANONICAL_CHAIN_ID, ...this._effectiveEnabledChains()];
     const def = Number(this._getSettings().defaultChain) || CANONICAL_CHAIN_ID;
     ['compose-chain', 'modal-compose-chain'].forEach(selId => {
       const el = this.g(selId);

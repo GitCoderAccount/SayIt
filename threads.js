@@ -282,7 +282,11 @@ const _THREADS = class {
   async _postThreadPageReply(post, inputEl) {
     const text = inputEl?.value.trim();
     if (!text) return;
-    const ok = await this.publish(text, post.txHash, post.to);
+    /* Reply stays NATIVE on the parent post's chain (same as the modal reply
+       path). Without the explicit chain id, an inline reply to a non-Pulse post
+       forced the wallet back to PulseChain — the "switches then flips back" bug. */
+    const cid = Number(post.chainId) || CANONICAL_CHAIN_ID;
+    const ok = await this.publish(text, post.txHash, post.to, cid);
     if (ok) {
       inputEl.value = '';
       inputEl.style.height = '';
