@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260621-252';
+const SW_CACHE_VER = '20260621-253';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -468,7 +468,13 @@ class SayIt {
     g('post-btn').onclick           = () => this.publishPost();
     g('expand-compose-btn').onclick = () => this.openComposeModal();
     this._syncPostBtn(); /* initial: disabled while the box is empty */
-    this._initComposerChains(); /* multichain "posting to" selectors */
+    /* Composer chain indicator (where this post lands = the wallet's network).
+       Tapping it explains the model; it updates on connect / chainChanged. */
+    ['compose-chain-hint', 'modal-compose-chain-hint'].forEach(id => {
+      const el = g(id);
+      if (el) el.onclick = () => utils.toast('SayIt posts on whatever network your wallet is set to. Switch networks in your wallet to post on another chain.');
+    });
+    this._updateComposerChainHint();
 
     g('close-compose-modal').onclick = () => this.closeModal('compose-modal');
     g('modal-compose-text').oninput  = () => {
@@ -1575,7 +1581,7 @@ class SayIt {
     const text = this.g('modal-compose-text').value.trim();
     if (!text) return;
     this.g('compose-text').value = text;
-    const ok = await this.publishPost(this._composerChainFrom('modal-compose-chain'));
+    const ok = await this.publishPost();
     if (ok) {
       this.closeModal('compose-modal');
       this.g('modal-compose-text').value = '';
@@ -1670,11 +1676,14 @@ class SayIt {
         the above, and you agree that the creators and operators are not liable
         for anything posted or done on the underlying decentralized network.
 
-        <strong>Default Network.</strong> Your default posting network is set
-        automatically the first time you connect your wallet. You can change
-        it anytime in <strong>Settings → Networks</strong>. The main feed
-        aggregates posts from all supported networks regardless of your
-        default.</p>
+        <strong>Which network you post on.</strong> It's simple: SayIt posts,
+        replies, and reposts on <strong>whatever network your wallet is
+        currently connected to</strong> — the app never switches your network
+        for you. To post on a different chain, just change the network inside
+        your wallet, and everything you do is on that chain. The composer shows
+        your current network (and warns when its gas is pricey). The main feed
+        aggregates posts from all supported networks regardless. (PulseChain is
+        recommended — near-free gas.)</p>
       </div>
       <div class="btn-row" style="margin-top:16px;justify-content:flex-end">
         ${alreadyAck
@@ -2696,6 +2705,10 @@ class SayIt {
       }
     });
     eth.on('chainChanged', chainId => {
+      /* The wallet's chain genuinely changed — reflect it in the composer
+         indicator (where a post will land) regardless of who triggered it. */
+      this._walletChainId = parseInt(chainId, 16) || null;
+      this._updateComposerChainHint();
       /* Ignore switches WE triggered (connect / _ensurePulseChain). Reacting to
          our own switch — plus hard-disconnecting on any non-369 chain — is what
          made the wallet connect then disconnect repeatedly on mobile. */
@@ -2933,6 +2946,9 @@ class SayIt {
     this.g('ap-addr').textContent        = this.trunc(addr);
     this.g('ch-self').style.display      = 'block';
     this._syncNavLinks();
+    /* Show which network the wallet is on in the composer (where posts land). */
+    this._walletChainId = await this._currentWalletChain();
+    this._updateComposerChainHint();
     /* Retry any posts that failed while offline */
     setTimeout(() => this._retryPendingPosts(), 2000);
     const cached = await this.cache.getProfile(addr);
@@ -3024,6 +3040,8 @@ class SayIt {
   disconnect() {
     this.signer = null;
     this.state.signerAddr = null;
+    this._walletChainId = null;
+    this._updateComposerChainHint();
     this._wrongChain = false;
     this._reflectChainState();
     this.state.profile    = { username:'', picUrl:'image1.jpeg', bio:'' };
@@ -5376,10 +5394,19 @@ class SayIt {
   async publish(content, parentTx = null, toAddress = null, chainId = CANONICAL_CHAIN_ID) {
     if (!this.signer)     { utils.toast('Connect wallet first'); return false; }
     if (!content?.trim()) { utils.toast('Message cannot be empty'); return false; }
-    /* Guard the chain: switch the wallet to the target chain (default = the
-       canonical chain, so every existing caller is unchanged). The composer
-       passes the user's chosen chain; replies pass the parent post's chain. */
-    if (!(await this._ensureOnChain(chainId))) return false;
+    /* Destination chain. Feed content (posts / replies / reposts / quotes) passes
+       'wallet': the tx lands on whatever chain the wallet is currently on and we
+       NEVER switch the user's network — reads aggregate across all chains, so it
+       shows up regardless. Identity & reaction actions (follow, profile, like,
+       bookmark, vote, note, DM, …) pass an explicit chain (the canonical chain),
+       because their read-state is canonical-pinned, so those still switch to it. */
+    let cid;
+    if (chainId === 'wallet') {
+      cid = await this._currentWalletChain();
+    } else {
+      if (!(await this._ensureOnChain(chainId))) return false;
+      cid = Number(chainId) || CANONICAL_CHAIN_ID;
+    }
     let body = content.trim();
     /* No character limit — users can post articles, essays, or books.
        The feed truncates long posts with a "Show more" expand link. */
@@ -5430,7 +5457,7 @@ class SayIt {
           reporter: this.state.signerAddr, to: to.toLowerCase(),
           timestamp: new Date().toISOString(),
           txHash: hash, channel: this.state.channel, mode: this.state.mode,
-          chainId: Number(chainId) || CANONICAL_CHAIN_ID,
+          chainId: cid,
         };
         this.state.posts.unshift(post);
         /* Add to the dedup set so the next poll doesn't treat our own
@@ -5489,39 +5516,51 @@ class SayIt {
 
   /* The chain a composer should post to: its selector value, falling back to
      the user's default chain (or canonical). */
-  _composerChainFrom(selId) {
-    const el = this.g(selId);
-    const v  = el ? Number(el.value) : NaN;
-    if (v && chainCfg(v)) return v;
-    return Number(this._getSettings().defaultChain) || CANONICAL_CHAIN_ID;
+  /* The wallet's CURRENT chain id (live read), or the canonical chain when
+     there's no wallet / it's unreadable. This is where a content post lands —
+     SayIt never switches the network for you. */
+  async _currentWalletChain() {
+    const eth = this._getEthereum();
+    if (!eth) return CANONICAL_CHAIN_ID;
+    const id = await this._readChainId(eth);
+    return id || CANONICAL_CHAIN_ID;
   }
 
-  /* Populate + show the composer "posting to" selectors. Only shown when the
-     user has >1 chain enabled; otherwise hidden (single-chain users see no
-     change). Default selection = the user's default chain. */
-  _initComposerChains() {
-    const ids = [CANONICAL_CHAIN_ID, ...this._effectiveEnabledChains()];
-    const def = Number(this._getSettings().defaultChain) || CANONICAL_CHAIN_ID;
-    ['compose-chain', 'modal-compose-chain'].forEach(selId => {
-      const el = this.g(selId);
+  /* Update the composer chain INDICATOR (replaces the old "post to" selector):
+     shows which network the wallet is on — where the post will land — plus a
+     passive warning when that chain has pricey gas or isn't indexed by SayIt.
+     Hidden while disconnected. Driven by _walletChainId, refreshed on connect /
+     chainChanged / disconnect. */
+  _updateComposerChainHint() {
+    const cid = this._walletChainId;
+    ['compose-chain-hint', 'modal-compose-chain-hint'].forEach(id => {
+      const el = this.g(id);
       if (!el) return;
-      if (ids.length <= 1) { el.hidden = true; el.innerHTML = ''; return; }
-      el.innerHTML = ids.map(id =>
-        `<option value="${id}"${id === def ? ' selected' : ''}>${utils.safe(chainName(id))}</option>`).join('');
+      if (!this.signer || !cid) { el.hidden = true; return; }
+      const cfg = chainCfg(cid);
+      let warn = '';
+      if (!cfg)             warn = " · not indexed — won't show in feed";
+      else if (!cfg.social) warn = ' · gas can be pricey';
+      const name = cfg ? cfg.name : `chain ${cid}`;
+      el.className = 'cmp-chain-hint' + (warn ? ' warn' : '');
+      el.innerHTML = `Posting on <strong>${utils.safe(name)}</strong>` +
+        (warn ? `<span class="cmp-chain-warn">${utils.safe(warn)}</span>` : '');
+      el.title = warn
+        ? `This post will land on ${name}. Switch your wallet to PulseChain for near-free, indexed posts.`
+        : `This post will land on ${name}. Change your wallet's network to post on another chain — SayIt never switches it for you.`;
       el.hidden = false;
     });
   }
 
-  async publishPost(chainId) {
+  async publishPost() {
     const text = this.g('compose-text').value.trim();
     if (!text) return false;
-    const cid = chainId != null ? chainId : this._composerChainFrom('compose-chain');
     /* Disable the Post button during the publish round-trip so users can't
        double-click and fire two transactions. Re-enable in finally. */
     const btn = this.g('post-btn');
     if (btn) btn.disabled = true;
     try {
-      const ok = await this.publish(text, null, null, cid);
+      const ok = await this.publish(text, null, null, 'wallet');
       if (ok) {
         this.g('compose-text').value = '';
         this.g('compose-text').style.height = '';
@@ -5815,10 +5854,9 @@ class SayIt {
       if (!this.signer) { utils.toast('Connect wallet to repost'); return; }
       if (!this._reactionBusy('repost:' + post.txHash)) return;
       try {
-        /* Publish on the user's default chain; the ref is chain-qualified when
+        /* Lands on the wallet's current chain; the ref is chain-qualified when
            the original lives elsewhere, so the quote card can locate it. */
-        const cid = Number(this._getSettings().defaultChain) || CANONICAL_CHAIN_ID;
-        const ok = await this.publish(`REPOST:${this._repostRef(post)}`, null, null, cid);
+        const ok = await this.publish(`REPOST:${this._repostRef(post)}`, null, null, 'wallet');
         if (ok) utils.toast('Reposted');
       } finally {
         this._pendingTx.delete('repost:' + post.txHash);
@@ -5880,12 +5918,11 @@ class SayIt {
     if (!this.state.repostTarget) return;
     const comment = this.g('repost-input').value.trim();
     if (!comment) { utils.toast('Add some text to quote this post'); return; }
-    /* Quote format: REPOST:{ref}\n\n{comment}. A quote is a fresh post →
-       publish on the user's default chain; the ref is chain-qualified when the
+    /* Quote format: REPOST:{ref}\n\n{comment}. A quote is a fresh post → lands
+       on the wallet's current chain; the ref is chain-qualified when the
        original lives on another chain so the quote card can locate it. */
     const content = `REPOST:${this._repostRef(this.state.repostTarget)}\n\n${comment}`;
-    const cid = Number(this._getSettings().defaultChain) || CANONICAL_CHAIN_ID;
-    const ok = await this.publish(content, null, null, cid);
+    const ok = await this.publish(content, null, null, 'wallet');
     if (ok) {
       this.closeModal('repost-modal');
       this.g('repost-input').value = '';
@@ -5896,11 +5933,10 @@ class SayIt {
   async postReply() {
     const text = this.g('reply-input').value.trim();
     if (!text || !this.state.replyTarget) return;
-    /* Replies stay NATIVE — published on the parent post's own chain (the same
-       channel address exists on every EVM chain), so the thread stays on-chain
-       where the post lives. */
-    const cid = Number(this.state.replyTarget.chainId) || CANONICAL_CHAIN_ID;
-    const ok = await this.publish(text, this.state.replyTarget.txHash, this.state.replyTarget.to, cid);
+    /* Reply lands on the wallet's current chain (SayIt never switches networks).
+       Threading matches by bare tx hash across the aggregated feed, so the reply
+       still stitches to its parent even if they live on different chains. */
+    const ok = await this.publish(text, this.state.replyTarget.txHash, this.state.replyTarget.to, 'wallet');
     if (ok) { this.closeModal('reply-modal'); this.g('reply-input').value = ''; }
   }
 

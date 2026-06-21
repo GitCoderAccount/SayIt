@@ -124,9 +124,9 @@ const _SET = class {
         <div class="settings-section-title">Networks</div>
         <div class="settings-row" style="display:block">
           <span style="font-size:13px;color:var(--muted);line-height:1.6">
-            SayIt is multichain — your feed can aggregate posts across EVM chains, and your address is the same identity on all of them.
-            <strong>PulseChain is always on.</strong> Enable others below; reads use Etherscan's unified API (one key covers Ethereum, Base &amp; BNB Chain).
-            New posts and ported engagement go to your <strong>default chain</strong>. Ethereum &amp; Base are on by default; the composer's chain picker updates as soon as you save (newly-enabled feeds appear after a reload).
+            SayIt is multichain — your feed aggregates posts across EVM chains, and your address is the same identity on all of them.
+            <strong>PulseChain is always on;</strong> Ethereum &amp; Base are on by default. These toggles control which chains your <strong>feed reads</strong> (reads use Etherscan's unified API — one key covers Ethereum, Base &amp; BNB Chain).
+            <strong>You post on whatever network your wallet is set to</strong> — SayIt never switches it for you; just change networks in your wallet to post on another chain. (Newly-enabled feeds appear after a reload.)
           </span>
         </div>
         ${chainList().filter(c => !c.canonical).map(c => `
@@ -147,7 +147,7 @@ const _SET = class {
         </div>
         <div class="settings-row" style="flex-direction:column;align-items:flex-start;margin-top:12px">
           <div class="settings-row-label"><strong>Default chain</strong>
-            <span>Where new posts are published, and where engagement (likes/follows/reposts) is routed for expensive chains.</span></div>
+            <span>Where ported engagement (likes on expensive chains) is routed. Your <em>posts</em> always go to your wallet's current network, not this.</span></div>
           <select class="settings-input" id="set-default-chain">
             ${[CHAINS[CANONICAL_CHAIN_ID], ...chainList().filter(c => !c.canonical && this._effectiveEnabledChains().includes(c.id))]
               .map(c => `<option value="${c.id}" ${Number(s.defaultChain || CANONICAL_CHAIN_ID) === c.id ? 'selected' : ''}>${utils.safe(c.name)}</option>`).join('')}
@@ -531,12 +531,10 @@ const _SET = class {
       if (dc !== CANONICAL_CHAIN_ID && !enabled.includes(dc)) dc = CANONICAL_CHAIN_ID;
       s.defaultChain = dc;
       this._saveSettings(s);
-      /* Update the composer's "post to" picker right away — no reload needed to
-         start posting to a newly-enabled chain. */
-      this._initComposerChains();
       const changed = enabled.slice().sort().join(',') !== prevEnabled;
-      /* The feed's chain set + connect-src are read at boot, so READING a
-         newly-enabled chain's posts still needs a reload. */
+      /* These settings only control which chains the FEED reads (you post on
+         whatever network your wallet is on). The chain set + connect-src are
+         read at boot, so reading a newly-enabled chain's posts needs a reload. */
       utils.toast(changed ? 'Networks saved — reload to refresh the feed' : 'Networks saved ✓');
     });
     /* Export / Import data backup. */

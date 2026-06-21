@@ -282,11 +282,10 @@ const _THREADS = class {
   async _postThreadPageReply(post, inputEl) {
     const text = inputEl?.value.trim();
     if (!text) return;
-    /* Reply stays NATIVE on the parent post's chain (same as the modal reply
-       path). Without the explicit chain id, an inline reply to a non-Pulse post
-       forced the wallet back to PulseChain — the "switches then flips back" bug. */
-    const cid = Number(post.chainId) || CANONICAL_CHAIN_ID;
-    const ok = await this.publish(text, post.txHash, post.to, cid);
+    /* Reply lands on the wallet's current chain (same as the modal reply path).
+       SayIt never switches networks; threading matches by bare tx hash, so the
+       reply stitches to its parent regardless of which chain each lives on. */
+    const ok = await this.publish(text, post.txHash, post.to, 'wallet');
     if (ok) {
       inputEl.value = '';
       inputEl.style.height = '';

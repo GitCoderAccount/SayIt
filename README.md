@@ -146,16 +146,12 @@ Likes, follows, votes, tips, etc. are derived by scanning and applying these in 
 
 ## Multichain
 
-SayIt's protocol is chain-agnostic — a post is just a transaction with a UTF-8 `input`, so the **same protocol runs on any EVM chain**, and your wallet address is the **same identity everywhere**. PulseChain (369) is the canonical, default chain; Ethereum, Base, and BNB Chain are built in and opt-in.
+SayIt's protocol is chain-agnostic — a post is just a transaction with a UTF-8 `input`, so the **same protocol runs on any EVM chain**, and your wallet address is the **same identity everywhere**. PulseChain (369) is the canonical chain; Ethereum and Base are on by default, BNB Chain is opt-in.
 
-- **Turn chains on** in **Settings → Networks**: enable the chains you want, paste a free **Etherscan v2 API key** (one key covers Ethereum/Base/BNB Chain reads via the unified API), and pick your **default chain**. PulseChain reads need no key (Blockscout).
-- **One aggregated feed.** Your Home feed reads the main channel on every enabled chain in parallel and time-merges the results; each post shows a small **chain badge** (PLS / ETH / BASE / BSC) and links to that chain's explorer.
-- **Posting** uses a "posting to" selector (default = your default chain); the wallet auto-switches to the target chain. **Replies stay native** — published on the parent post's own chain. Quotes go to your default chain.
-- **Engagement routing.** On cheap (social) chains, likes are recorded natively. On an expensive chain (e.g. Ethereum L1), a like is **ported** to your social chain with a chain-qualified ref `LIKE:eip155:<chainId>:0x<hash>`. Because a tx hash is globally unique, native and ported likes for the same post **collapse to one count** when aggregating across chains.
-- **Global follows.** A followed address is the same person on every chain, so the **Following feed** gathers their posts from all enabled chains. (Follow txs themselves stay on the canonical chain.)
-- **Tips stay native** (they carry real value and can't be ported).
-
-Everything multichain is gated by your enabled chains: with none enabled, SayIt behaves exactly as the single-chain PulseChain app.
+- **You post on whatever chain your wallet is on.** There's no chain picker. SayIt reads your wallet's **current network** and posts/replies/reposts there — it **never switches your network for you**. Want to post on another chain? Just change the network inside your wallet, and everything you do is on that chain. The composer shows your current network and passively warns when its gas is pricey (or when it isn't indexed). **PulseChain is recommended** — near-free gas.
+- **Reads vs. writes.** **Settings → Networks** controls which chains your **feed reads** (enable chains, paste a free **Etherscan v2 API key** — one key covers Ethereum/Base/BNB Chain reads; PulseChain needs no key via Blockscout). Reads aggregate across those chains regardless of which chain you're posting from.
+- **One aggregated feed.** Your Home feed reads the main channel on every enabled chain in parallel and time-merges the results; each post shows a small **chain badge** (PLS / ETH / BASE / BSC) and links to that chain's explorer. **Replies thread by tx hash**, so a reply stitches to its parent even if they live on different chains.
+- **Engagement & identity stay on PulseChain.** Likes/follows/profiles are read from the canonical chain (your identity is global), so those actions are recorded there. A like on an expensive-chain post is **ported** with a chain-qualified ref `LIKE:eip155:<chainId>:0x<hash>`; because a tx hash is globally unique, native and ported likes for the same post **collapse to one count**. Follows are global (the **Following feed** gathers a followed address's posts from all enabled chains). **Tips stay native** (they carry real value and can't be ported).
 
 ---
 
