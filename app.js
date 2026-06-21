@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260621-251';
+const SW_CACHE_VER = '20260621-252';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -5471,7 +5471,7 @@ class SayIt {
         const queued = {
           queueId, content, parentTx, toAddress: toAddress || this.state.channel,
           channel: this.state.channel, mode: this.state.mode,
-          signerAddr: this.state.signerAddr,
+          signerAddr: this.state.signerAddr, chainId,
           queuedAt: new Date().toISOString(),
         };
         try {
@@ -7354,7 +7354,10 @@ class SayIt {
         if (queued.signerAddr !== this.state.signerAddr) continue;
         utils.toast(`↺ Retrying queued post…`);
         try {
-          const ok = await this.publish(queued.content, queued.parentTx, queued.toAddress);
+          /* Retry on the post's original chain (older queued items predate this
+             field and fall back to the canonical chain). */
+          const ok = await this.publish(queued.content, queued.parentTx, queued.toAddress,
+            Number(queued.chainId) || CANONICAL_CHAIN_ID);
           if (ok) {
             await this.cache.deletePendingPost(queued.queueId);
             /* Remove pending indicator from feed */
