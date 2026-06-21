@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260621-249';
+const SW_CACHE_VER = '20260621-250';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -4706,6 +4706,10 @@ class SayIt {
           const tag = n.tagName;
           if (tag === 'TEXTAREA' || tag === 'INPUT') continue;
           if (n.closest?.('textarea, input')) continue;
+          /* The emoji picker colorizes its own large grid lazily, one visible
+             category-section at a time (see toggleEmojiPicker). Skip it here so
+             we never synchronously image its ~1200 glyphs on open. */
+          if (n.id === 'emoji-picker-pop' || n.closest?.('#emoji-picker-pop')) continue;
           this._twemojiQueue.add(n);
         }
       }
@@ -6537,7 +6541,7 @@ class SayIt {
       { name: 'Travel & Places', emojis: ['🚗','🚕','🚙','🚌','🚎','🏎️','🚓','🚑','🚒','🚐','🛻','🚚','🚛','🚜','🦯','🦽','🦼','🛴','🚲','🛵','🏍️','🛺','🚨','🚔','🚍','🚘','🚖','🚡','🚠','🚟','🚃','🚋','🚞','🚝','🚄','🚅','🚈','🚂','🚆','🚇','🚊','🚉','✈️','🛫','🛬','🛩️','💺','🛰️','🚀','🛸','🚁','🛶','⛵','🚤','🛥️','🛳️','⛴️','🚢','⚓','🪝','⛽','🚧','🚦','🚥','🗺️','🗿','🗽','🗼','🏰','🏯','🏟️','🎡','🎢','🎠','⛲','⛱️','🏖️','🏝️','🏜️','🌋','⛰️','🏔️','🗻','🏕️','⛺','🛖','🏠','🏡','🏘️','🏚️','🏗️','🏭','🏢','🏬','🏣','🏤','🏥','🏦','🏨','🏪','🏫','🏩','💒','🏛️','⛪','🕌','🕍','🛕','🕋','⛩️','🌁','🌃','🏙️','🌄','🌅','🌆','🌇','🌉','🎑','🌌','🧭'] },
       { name: 'Objects', emojis: ['⌚','📱','📲','💻','⌨️','🖥️','🖨️','🖱️','🖲️','🕹️','🗜️','💽','💾','💿','📀','📼','📷','📸','📹','🎥','📽️','🎞️','📞','☎️','📟','📠','📺','📻','🎙️','🎚️','🎛️','🧭','⏱️','⏲️','⏰','🕰️','⌛','⏳','📡','🔋','🪫','🔌','💡','🔦','🕯️','🪔','🧯','🛢️','💸','💵','💴','💶','💷','🪙','💰','💳','🧾','💎','⚖️','🪜','🧰','🪛','🔧','🔨','⚒️','🛠️','⛏️','🪚','🔩','⚙️','🪤','🧲','🔫','💣','🧨','🪓','🔪','🗡️','⚔️','🛡️','🚬','⚰️','🪦','⚱️','🏺','🔮','📿','🧿','💈','⚗️','🔭','🔬','🕳️','🩹','🩺','💊','💉','🩸','🧬','🦠','🧫','🧪','🌡️','🧹','🪠','🧺','🧻','🚽','🚰','🚿','🛁','🛀','🧼','🪥','🪒','🧽','🪣','🧴','🛎️','🔑','🗝️','🚪','🪑','🛋️','🛏️','🛌','🧸','🪆','🖼️','🪞','🪟','🛍️','🛒','🎁','🎈','🎏','🎀','🪄','🪅','🎊','🎉','🎎','🏮','🎐','🧧','✉️','📩','📨','📧','💌','📥','📤','📦','🏷️','📪','📫','📬','📭','📮','📯','📜','📃','📄','📑','📊','📈','📉','🗒️','🗓️','📆','📅','🗑️','📇','🗃️','🗳️','🗄️','📋','📁','📂','🗂️','🗞️','📰','📓','📔','📒','📕','📗','📘','📙','📚','📖','🔖','🧷','🔗','📎','🖇️','📐','📏','🧮','📌','📍','✂️','🖊️','🖋️','✒️','🖌️','🖍️','📝','✏️','🔍','🔎','🔏','🔐','🔒','🔓'] },
       { name: 'Symbols', emojis: ['❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💟','♥️','💌','💋','💯','💢','💥','💫','💦','💨','🕳️','💬','👁️‍🗨️','🗨️','🗯️','💭','💤','✅','❌','⭕','🚫','💮','♨️','🛑','🕛','✔️','☑️','✖️','➕','➖','➗','✳️','✴️','❇️','‼️','⁉️','❓','❔','❕','❗','〰️','©️','®️','™️','#️⃣','*️⃣','0️⃣','1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟','🔢','▶️','⏸️','⏯️','⏹️','⏺️','⏭️','⏮️','⏩','⏪','🔼','🔽','⏫','⏬','◀️','🔀','🔁','🔂','🔃','🔄','➡️','⬅️','⬆️','⬇️','↗️','↘️','↙️','↖️','↕️','↔️','↩️','↪️','⤴️','⤵️','🔝','🔚','🔙','🔛','🔜','🆗','🆕','🆒','🆓','🆙','🆖','🆎','🅰️','🅱️','🅾️','🆔','💲','💱','♻️','⚜️','🔱','📛','🔰','✨','🌟','⭐','🌠','♈','♉','♊','♋','♌','♍','♎','♏','♐','♑','♒','♓','⛎','☮️','✝️','☪️','🕉️','☸️','✡️','🔯','🕎','☯️','☦️','🛐','⛓️','♾️','⚡','⚠️','🚸','🔔','🔕','🎵','🎶','〽️','⚛️','🉑','☢️','☣️','📴','📳','🆚','🅿️','🔣','ℹ️','🔤','🔡','🔠','💠','🔘','🔳','🔲','◾','◽','◼️','◻️','⬛','⬜','🟥','🟧','🟨','🟩','🟦','🟪','🟫','🔴','🟠','🟡','🟢','🔵','🟣','🟤','⚫','⚪'] },
-      { name: 'Flags', emojis: ['🏁','🚩','🎌','🏴','🏳️','🏳️‍🌈','🏳️‍⚧️','🏴‍☠️','🇺🇸','🇬🇧','🇨🇦','🇦🇺','🇩🇪','🇫🇷','🇪🇸','🇮🇹','🇯🇵','🇰🇷','🇨🇳','🇮🇳','🇧🇷','🇲🇽','🇷🇺','🇳🇱','🇸🇪','🇳🇴','🇨🇭','🇸🇬','🇦🇪','🇸🇦','🇿🇦','🇦🇷','🇵🇹','🇮🇪','🇵🇱','🇹🇷','🇮🇩','🇹🇭','🇵🇭','🇻🇳','🇳🇿','🇧🇪','🇦🇹','🇩🇰','🇫🇮','🇬🇷'] },
+      { name: 'Flags', emojis: ['🏁','🚩','🎌','🏴','🏳️','🏳️‍🌈','🏳️‍⚧️','🏴‍☠️','🇺🇸','🇬🇧','🇨🇦','🇦🇺','🇩🇪','🇫🇷','🇪🇸','🇮🇹','🇯🇵','🇰🇷','🇨🇳','🇮🇳','🇧🇷','🇲🇽','🇷🇺','🇳🇱','🇸🇪','🇳🇴','🇨🇭','🇸🇬','🇦🇪','🇸🇦','🇿🇦','🇦🇷','🇵🇹','🇮🇪','🇵🇱','🇹🇷','🇮🇩','🇹🇭','🇵🇭','🇻🇳','🇳🇿','🇧🇪','🇦🇹','🇩🇰','🇫🇮','🇬🇷','🇨🇱','🇨🇴','🇵🇪','🇻🇪','🇪🇨','🇺🇾','🇵🇾','🇧🇴','🇨🇷','🇵🇦','🇩🇴','🇬🇹','🇨🇺','🇯🇲','🇭🇰','🇹🇼','🇲🇾','🇵🇰','🇧🇩','🇱🇰','🇳🇵','🇰🇿','🇺🇿','🇮🇱','🇶🇦','🇰🇼','🇧🇭','🇴🇲','🇯🇴','🇱🇧','🇮🇶','🇮🇷','🇪🇬','🇲🇦','🇩🇿','🇹🇳','🇳🇬','🇰🇪','🇬🇭','🇪🇹','🇹🇿','🇺🇬','🇨🇿','🇸🇰','🇭🇺','🇷🇴','🇧🇬','🇷🇸','🇭🇷','🇸🇮','🇺🇦','🇧🇾','🇱🇹','🇱🇻','🇪🇪','🇮🇸','🇱🇺','🇲🇹','🇨🇾','🇪🇺'] },
     ];
 
     /* Lightweight keyword → emoji index for search. Emoji carry no names in
@@ -6683,50 +6687,28 @@ class SayIt {
 
     categories.forEach(cat => {
       const section = document.createElement('div');
-
-      const label = document.createElement('div');
-      label.className = 'emoji-cat-label';
-      label.textContent = cat.name;
-      label.style.cssText = `
-        font-size:11px; font-weight:700; color:var(--muted);
-        text-transform:uppercase; letter-spacing:0.5px;
-        margin:8px 2px 4px;`;
-      section.appendChild(label);
-
-      const grid = document.createElement('div');
-      grid.style.cssText = `display:grid; grid-template-columns:repeat(8,1fr); gap:2px;`;
-      const btns = [];
-      cat.emojis.forEach(em => {
-        const btn = document.createElement('button');
-        btn.textContent = em;
-        btn.type = 'button';
-        btn.dataset.emoji = em;
-        btn.style.cssText = `
-          width:100%; aspect-ratio:1; border:none; background:transparent;
-          border-radius:8px; font-size:20px; cursor:pointer;
-          transition:background 0.1s; line-height:1; padding:0;`;
-        btn.onmouseenter = () => btn.style.background = 'var(--surface-2)';
-        btn.onmouseleave = () => btn.style.background = 'transparent';
-        btn.onclick = (e) => { e.stopPropagation(); insertEmoji(em); };
-        grid.appendChild(btn);
-        btns.push(btn);
-      });
-      section.appendChild(grid);
+      /* Build the whole category as ONE HTML string — far cheaper than
+         createElement-per-button. Hover is CSS (.emoji-pick-btn:hover) and
+         clicks are delegated (one listener on the body, below), so there are
+         zero per-button listeners no matter how many emoji a category holds.
+         data-emoji carries the glyph so insertion still works after twemoji
+         swaps the button text for an <img>. */
+      section.innerHTML =
+        `<div class="emoji-cat-label">${cat.name}</div>` +
+        `<div class="emoji-pick-grid">` +
+        cat.emojis.map(em =>
+          `<button class="emoji-pick-btn" type="button" data-emoji="${em}">${em}</button>`).join('') +
+        `</div>`;
       body.appendChild(section);
-      sections.push({ name: cat.name, section, btns });
+      sections.push({ name: cat.name, section, btns: [...section.querySelectorAll('.emoji-pick-btn')] });
 
       /* Quick-jump tab for this category. */
       const tab = document.createElement('button');
       tab.type = 'button';
+      tab.className = 'emoji-pick-tab';
       tab.textContent = cat.emojis[0] || cat.name.slice(0, 1);
       tab.title = cat.name;
       tab.setAttribute('aria-label', cat.name);
-      tab.style.cssText = `
-        flex:0 0 auto; border:none; background:transparent; cursor:pointer;
-        font-size:17px; line-height:1; padding:5px 7px; border-radius:8px;
-        transition:background 0.1s;`;
-      tab.onmouseenter = () => tab.style.background = 'var(--surface-2)';
-      tab.onmouseleave = () => tab.style.background = 'transparent';
       tab.onclick = (e) => {
         e.stopPropagation();
         search.value = '';
@@ -6734,6 +6716,13 @@ class SayIt {
         section.scrollIntoView({ block: 'start' });
       };
       tabs.appendChild(tab);
+    });
+    /* Single delegated click handler for every emoji button in the grid. */
+    body.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-emoji]');
+      if (!btn || !body.contains(btn)) return;
+      e.stopPropagation();
+      insertEmoji(btn.dataset.emoji);
     });
     picker.appendChild(body);
 
@@ -6800,13 +6789,26 @@ class SayIt {
     picker.style.left = left + 'px';
     picker.style.top  = (top + window.scrollY) + 'px';
     document.body.appendChild(picker);
-    /* Render the picker grid with color Twemoji images too (otherwise the
-       buttons show the platform's monochrome/box glyphs). Explicit call so the
-       grid is colorized synchronously rather than waiting on the observer. */
-    this._twemojify(picker);
+    /* Colorize the glyphs to Twitter images LAZILY — one category-section at a
+       time as it scrolls into view — instead of converting all ~1200 at once.
+       The old eager parse built ~1200 <img> nodes (+ CDN fetches) synchronously
+       on every open, which janked the main thread for ~1s (the "takes forever
+       to load / can't click outside yet" symptom). Now only the visible
+       section(s) get images; the rest colorize on scroll. */
+    const colorize = new IntersectionObserver((entries, obs) => {
+      for (const en of entries) {
+        if (!en.isIntersecting) continue;
+        this._twemojify(en.target);
+        obs.unobserve(en.target);
+      }
+    }, { root: body, rootMargin: '150px' });
+    sections.forEach(s => colorize.observe(s.section));
+    this._emojiColorizeObs = colorize;
 
     /* Teardown helper + dismiss wiring */
     const removePicker = () => {
+      this._emojiColorizeObs?.disconnect();
+      this._emojiColorizeObs = null;
       picker.remove();
       document.removeEventListener('click', close, true);
       document.removeEventListener('keydown', onKey, true);
