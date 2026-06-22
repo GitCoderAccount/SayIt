@@ -84,17 +84,37 @@ function fetchWithTimeout(request, ms = 10000) {
     .finally(() => clearTimeout(timer));
 }
 
+/* Build (or refresh) a cache with every app asset, version-consistently.
+   Same-origin shell files are ALL-OR-NOTHING: Cache.addAll is transactional —
+   if any request fails it rejects and writes nothing — so a half-populated
+   cache can never be served. This is what prevents the mixed-version boot
+   (e.g. a new app.js paired with stale augmenter files), which surfaces as
+   "this._noteHTML is not a function" → "Startup failed".
+   The cross-origin CDN (ethers) is best-effort: a CDN hiccup must not fail a
+   deploy, so it's filled here when reachable and lazily on first fetch
+   otherwise. Throws iff a same-origin shell asset can't be fetched. */
+async function buildCache(name) {
+  const cache = await caches.open(name);
+  const sameOrigin = [], crossOrigin = [];
+  for (const url of STATIC_ASSETS) {
+    (/^https?:/i.test(url) ? crossOrigin : sameOrigin).push(url);
+  }
+  await cache.addAll(sameOrigin.map(url => new Request(url, { cache: 'reload' })));
+  await Promise.allSettled(
+    crossOrigin.map(url => cache.add(new Request(url, { cache: 'reload' }))));
+  return cache;
+}
+
 /* ── Install: pre-cache the shell ───────────────────────────────────────── */
 self.addEventListener('install', event => {
   event.waitUntil(
-    caches.open(currentCacheName).then(cache =>
-      cache.addAll(STATIC_ASSETS.map(url => new Request(url, { cache: 'reload' })))
-        .catch(err => {
-          /* If CDN is unreachable during install, continue without it —
-             it will be cached on first network fetch instead. */
-          console.warn('[SW] Pre-cache partial failure:', err);
-        })
-    ).then(() => self.skipWaiting())
+    buildCache(currentCacheName)
+      .catch(err => {
+        /* Shell fetch failed during install — don't block the install; the
+           CACHE_VER handshake rebuilds the cache on first load. */
+        console.warn('[SW] Pre-cache failed (will rebuild on first load):', err);
+      })
+      .then(() => self.skipWaiting())
   );
 });
 
@@ -273,28 +293,29 @@ self.addEventListener('message', event => {
 
   swLog(`[SW] Cache version changed: ${currentCacheName} -> ${newCacheName}`);
   const oldName = currentCacheName;
-  currentCacheName = newCacheName;
 
-  if (wasPlaceholder) {
-    /* Silently adopt — pre-cache under the new name, drop the old, no toast. */
-    caches.open(newCacheName).then(cache =>
-      cache.addAll(STATIC_ASSETS.map(url => new Request(url, { cache: 'reload' })))
-        .catch(err => console.warn('[SW] Silent adopt pre-fetch partial:', err))
-    ).then(() => { if (oldName !== newCacheName) caches.delete(oldName); });
-    return;
-  }
-
-  /* Pre-cache with the new name */
-  caches.open(newCacheName).then(cache =>
-    cache.addAll(STATIC_ASSETS.map(url => new Request(url, { cache: 'reload' })))
-      .catch(err => console.warn('[SW] New cache pre-fetch partial failure:', err))
-  ).then(() =>
-    /* Delete the old cache */
-    caches.delete(oldName)
-  ).then(() => {
-    /* Tell all open tabs that a new version is ready */
-    self.clients.matchAll({ includeUncontrolled: true }).then(clients =>
-      clients.forEach(c => c.postMessage({ type: 'NEW_VERSION_READY' }))
-    );
-  });
+  /* Atomic switch: fully build the new cache FIRST, and only then flip
+     currentCacheName + drop the old one. Until the flip, every fetch keeps
+     being served from the old (consistent) cache, so a returning visitor
+     can't load a half-migrated mix. If the build fails (a shell asset is
+     unreachable), abort: discard the partial new cache and leave
+     currentCacheName pointing at the old, known-good cache — the switch
+     retries on the next load instead of stranding the user on broken assets. */
+  event.waitUntil((async () => {
+    try {
+      await buildCache(newCacheName);
+    } catch (err) {
+      console.warn('[SW] New version build failed; keeping current cache:', err);
+      await caches.delete(newCacheName).catch(() => {});
+      return; /* currentCacheName unchanged — stay on the old cache */
+    }
+    currentCacheName = newCacheName;
+    if (oldName !== newCacheName) await caches.delete(oldName);
+    /* Silent adopt (first-seen version after the 'v1' placeholder) shows no
+       toast; a genuine upgrade tells open tabs a new version is ready. */
+    if (!wasPlaceholder) {
+      const clients = await self.clients.matchAll({ includeUncontrolled: true });
+      clients.forEach(c => c.postMessage({ type: 'NEW_VERSION_READY' }));
+    }
+  })());
 });
