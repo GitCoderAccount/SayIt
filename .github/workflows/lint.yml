@@ -29,7 +29,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Extract inline scripts
         run: node .ci/extract-inline-script.js index.html .ci/app.extracted.js

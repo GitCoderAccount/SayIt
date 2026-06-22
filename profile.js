@@ -90,13 +90,13 @@ const _PROF = class {
                 const prev = lastAction.get(tgt);
                 if (!prev || order >= prev.order) lastAction.set(tgt, { action, order });
               }
-            } catch {}
+            } catch { /* best-effort follow-graph scan: ignore a failed/malformed tx row, keep partial results */ }
           });
           if (raw.length < 50) break;
           await this._scanDelay(150);
         }
         addrs = [...lastAction.entries()].filter(([,v]) => v.action === 'follow').map(([a]) => a);
-      } catch {}
+      } catch { /* best-effort follow-graph scan: ignore a failed/malformed tx row, keep partial results */ }
     }
     this._renderFollowList(feed, headerHTML, address, isOwn, addrs, 'Following', backBtn);
   }
@@ -192,12 +192,12 @@ const _PROF = class {
               const prev = lastAction.get(from);
               if (!prev || order >= prev.order) lastAction.set(from, { action, order });
             }
-          } catch {}
+          } catch { /* best-effort follow-graph scan: ignore a failed/malformed tx row, keep partial results */ }
         });
         if (raw.length < 50) break;
         await this._scanDelay(150);
       }
-    } catch {}
+    } catch { /* best-effort follow-graph scan: ignore a failed/malformed tx row, keep partial results */ }
     return [...lastAction.entries()].filter(([,v]) => v.action === 'follow').map(([a]) => a);
   }
 
@@ -356,7 +356,7 @@ const _PROF = class {
               const prev = lastAction.get(tgt);
               if (!prev || order >= prev.order) lastAction.set(tgt, { action, order });
             }
-          } catch {}
+          } catch { /* best-effort follow-graph scan: ignore a failed/malformed tx row, keep partial results */ }
         });
         /* Live update as pages come in (only while still on this profile). */
         if (this.state.mode === 'profile' && this.state.channel === navAddr) {
@@ -367,7 +367,7 @@ const _PROF = class {
         if (raw.length < 50) break;
         await this._scanDelay(150);
       }
-    } catch {}
+    } catch { /* best-effort follow-graph scan: ignore a failed/malformed tx row, keep partial results */ }
     if (this.state.mode === 'profile' && this.state.channel === navAddr) {
       const n = [...lastAction.values()].filter(v => v.action === 'follow').length;
       const elNow = document.getElementById('prof-following-count');
@@ -436,7 +436,7 @@ const _PROF = class {
               const prev = lastAction.get(from);
               if (!prev || order >= prev.order) lastAction.set(from, { action, order });
             }
-          } catch {}
+          } catch { /* best-effort follow-graph scan: ignore a failed/malformed tx row, keep partial results */ }
         });
 
         /* Rebuild the follows map from latest actions; update live count. */

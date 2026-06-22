@@ -30,7 +30,7 @@
      (IPFS, Arweave, any gateway) and the explorer/RPC endpoints are
      user-configurable in Settings. frame-ancestors can't be set via a meta
      tag (header-only, and GitHub Pages can't send custom headers). -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * data: blob:; connect-src *; frame-src https://www.youtube-nocookie.com https://player.vimeo.com https://platform.twitter.com https://dexscreener.com; object-src 'none'; base-uri 'self'; form-action 'none'; worker-src 'self'; manifest-src 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * data: blob:; connect-src 'self' https: wss:; frame-src https://www.youtube-nocookie.com https://player.vimeo.com https://platform.twitter.com https://dexscreener.com; object-src 'none'; base-uri 'self'; form-action 'none'; worker-src 'self'; manifest-src 'self'">
 <script src="boot.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.15.0/ethers.umd.min.js" integrity="sha384-OwtfwhPoP4aGLIw192UbPWjNbSkb7AllEbIhEJ01Yp8MxhNLLNUMA+DSjh6Zct05" crossorigin="anonymous"></script>
 <!-- Twemoji (Twitter/X's own emoji images) for X-identical full-color emoji on every device.

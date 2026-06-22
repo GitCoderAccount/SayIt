@@ -214,7 +214,7 @@ This application was **built from scratch** as free, open-source software. It is
 
 ## License
 
-See the repository for license details.
+Released under the [MIT License](LICENSE) — free to inspect, share, fork, and build upon.
 
 ---
 
