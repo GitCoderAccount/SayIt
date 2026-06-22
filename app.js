@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260621-254';
+const SW_CACHE_VER = '20260621-255';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -8828,24 +8828,42 @@ if ('serviceWorker' in navigator) {
       .catch(err => console.warn('[SW] Registration failed:', err));
   });
 }
-pulse.init({ skipHomeFetch: DEEP_SELF_LOADING || !!BOOT_VIEW }).then(() => {
-  /* Wire back/forward + manual hash edits, then honor any deep link the page
-     was opened with (otherwise the normal Home bootstrap, or the user's chosen
-     launch tab, stands). */
-  pulse._initRouter();
-  if (INITIAL_HASH && !/^#\/?(home)?$/.test(INITIAL_HASH)) {
-    /* The Home bootstrap above may have pushed '#/home'; restore the original
-       deep-link hash (no event) before routing to it. */
-    history.replaceState(null, '', INITIAL_HASH);
-    pulse._routeTo();
-  } else if (BOOT_VIEW) {
-    pulse._goDefaultView(BOOT_VIEW);
-  }
-}).catch(err => {
-  console.error('Init error:', err);
-  if (err.stack) console.error('Stack:', err.stack);
-  utils.toast('Startup failed — reload and check console');
-});
+/* Boot AFTER every augmenter <script> that follows app.js (notes.js,
+   explore.js, … dm.js) has executed and copied its methods onto
+   SayIt.prototype. init() paints cached posts synchronously inside its async
+   body (loadCached → renderFeed), and that render calls augmenter methods such
+   as _noteHTML (notes.js) and _computeTrends (explore.js). Calling init()
+   during app.js eval raced those later scripts: on a warm reload init's first
+   IndexedDB await could resolve and render before the augmenters loaded,
+   throwing "this._noteHTML is not a function" → "Startup failed" (and aborting
+   init before the background wallet reconnect, so the wallet looked
+   disconnected). DOMContentLoaded fires only after all classic scripts run, so
+   the whole prototype is guaranteed present. */
+function _bootPulse() {
+  pulse.init({ skipHomeFetch: DEEP_SELF_LOADING || !!BOOT_VIEW }).then(() => {
+    /* Wire back/forward + manual hash edits, then honor any deep link the page
+       was opened with (otherwise the normal Home bootstrap, or the user's chosen
+       launch tab, stands). */
+    pulse._initRouter();
+    if (INITIAL_HASH && !/^#\/?(home)?$/.test(INITIAL_HASH)) {
+      /* The Home bootstrap above may have pushed '#/home'; restore the original
+         deep-link hash (no event) before routing to it. */
+      history.replaceState(null, '', INITIAL_HASH);
+      pulse._routeTo();
+    } else if (BOOT_VIEW) {
+      pulse._goDefaultView(BOOT_VIEW);
+    }
+  }).catch(err => {
+    console.error('Init error:', err);
+    if (err.stack) console.error('Stack:', err.stack);
+    utils.toast('Startup failed — reload and check console');
+  });
+}
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', _bootPulse, { once: true });
+} else {
+  _bootPulse(); /* scripts already parsed (e.g. deferred app.js) — safe now */
+}
 /* PWA install prompt — captures the beforeinstallprompt event on
    Chromium-based browsers so we can offer Install via our own UI later.
    Hidden if the user already installed or dismissed the prompt. */
