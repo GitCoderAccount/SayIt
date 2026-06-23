@@ -2974,6 +2974,22 @@ body.mode-explore .sb-search { display:none; }
 .grok-card-title { font-size:14px; font-weight:700; }
 .grok-card-sub { font-size:13px; color:var(--muted); }
 .grok-card-cta { flex-shrink:0; font-size:13px; font-weight:600; color:var(--primary-lt); }
+/* "Watch on Facebook" card — for share short-links the video plugin can't embed */
+.fb-watch-card {
+  display:flex; align-items:center; gap:12px; text-decoration:none; color:var(--text);
+  border:1px solid var(--border); border-radius:14px;
+  padding:12px 14px; margin:8px 0 4px;
+  background:var(--bg-dark); transition:background 0.15s, border-color 0.15s;
+}
+.fb-watch-card:hover { background:var(--hov-1); border-color:var(--muted); }
+.fb-watch-logo {
+  display:flex; align-items:center; justify-content:center; flex-shrink:0;
+  width:40px; height:40px; border-radius:10px; background:#1877F2;
+}
+.fb-watch-body { display:flex; flex-direction:column; min-width:0; flex:1; }
+.fb-watch-title { font-size:14px; font-weight:700; }
+.fb-watch-sub { font-size:13px; color:var(--muted); }
+.fb-watch-cta { flex-shrink:0; font-size:13px; font-weight:600; color:var(--primary-lt); }
 
 /* Community notes */
 .note-slot:empty { display:none; }

@@ -91,19 +91,24 @@ test('dexPair() parses DexScreener pair URLs, rejects others', () => {
   assert.strictEqual(utils.dexPair('https://example.com/ethereum/' + evm), null);
 });
 
-test('fbVideo() parses Facebook video/Reel/Watch URLs, rejects others', () => {
+test('fbVideo() classifies FB videos: canonical = embeddable, share-links = click-out', () => {
+  /* Canonical id-in-URL forms → embeddable (plugin can resolve them). */
   assert.deepEqual(utils.fbVideo('https://www.facebook.com/reel/1234567890'),
-    { href: 'https://www.facebook.com/reel/1234567890' });
+    { href: 'https://www.facebook.com/reel/1234567890', embeddable: true });
   assert.deepEqual(utils.fbVideo('https://web.facebook.com/somepage/videos/9876543210/'),
-    { href: 'https://web.facebook.com/somepage/videos/9876543210/' });
+    { href: 'https://web.facebook.com/somepage/videos/9876543210/', embeddable: true });
   /* watch?v= → tracking params dropped, v preserved */
   assert.deepEqual(utils.fbVideo('https://www.facebook.com/watch/?v=555&fbclid=xyz'),
-    { href: 'https://www.facebook.com/watch/?v=555' });
+    { href: 'https://www.facebook.com/watch/?v=555', embeddable: true });
   assert.deepEqual(utils.fbVideo('https://m.facebook.com/video.php?v=42'),
-    { href: 'https://m.facebook.com/video.php?v=42' });
-  assert.strictEqual(utils.fbVideo('https://www.facebook.com/share/r/abcDEF/').href,
-    'https://www.facebook.com/share/r/abcDEF/');
-  assert.strictEqual(utils.fbVideo('https://fb.watch/aBcD1234/').href, 'https://fb.watch/aBcD1234/');
+    { href: 'https://m.facebook.com/video.php?v=42', embeddable: true });
+  /* Redirect-wrapper share links → NOT embeddable (plugin can't follow them) → click-out card */
+  assert.deepEqual(utils.fbVideo('https://www.facebook.com/share/r/abcDEF/'),
+    { href: 'https://www.facebook.com/share/r/abcDEF/', embeddable: false });
+  assert.deepEqual(utils.fbVideo('https://www.facebook.com/share/v/1BQDYKy2hM/'),
+    { href: 'https://www.facebook.com/share/v/1BQDYKy2hM/', embeddable: false });
+  assert.deepEqual(utils.fbVideo('https://fb.watch/aBcD1234/'),
+    { href: 'https://fb.watch/aBcD1234/', embeddable: false });
   /* non-video facebook paths fall through to a normal link card */
   assert.strictEqual(utils.fbVideo('https://www.facebook.com/zuck'), null);          /* profile */
   assert.strictEqual(utils.fbVideo('https://www.facebook.com/watch/'), null);        /* no v= */

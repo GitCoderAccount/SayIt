@@ -380,29 +380,34 @@ const utils = {
       return m ? { chain: m[1], pair: m[2], href: u.origin + u.pathname } : null;
     } catch { return null; }
   },
-  /* Parse a Facebook video / Reel / Watch URL → { href } or null. Facebook has
-     no public thumbnail API and short fb.watch links can't be expanded
-     client-side, so the player is its official iframe plugin
-     (plugins/video.php?href=<canonical url>) — the canonical href returned here
-     is what we hand to that plugin. We only match real video paths (reel,
-     watch?v=, /<page>/videos/<id>, video.php?v=, share/v|r) so plain profile
-     links still fall through to a normal link card. Tracking params dropped. */
+  /* Parse a Facebook video / Reel / Watch URL → { href, embeddable } or null.
+     The official iframe plugin (plugins/video.php?href=<url>) embeds a video
+     ONLY when the URL carries the canonical video id inline — `/reel/<id>`,
+     `/<page>/videos/<id>`, `/watch?v=`, `/video.php?v=`. **Share short-links
+     (`/share/v|r/<token>`, `fb.watch/<code>`) are redirect WRAPPERS the plugin
+     does NOT follow** → it shows "Video Unavailable"; and we can't expand the
+     redirect client-side (server-side at FB + CORS-blocked). So those are
+     marked `embeddable:false` and rendered as a tap-to-open "Watch on Facebook"
+     card instead of a broken embed (verified live 2026-06-23: canonical /reel/
+     embeds & plays; the /share/v/ form of the same video shows Unavailable).
+     Plain profile/page links return null → normal link card. Tracking dropped. */
   fbVideo(url) {
     try {
       const u = new URL(url);
       const h = u.hostname.replace(/^(www|web|m|mobile)\./, '');
-      if (h === 'fb.watch') return u.pathname.length > 1 ? { href: u.origin + u.pathname } : null;
+      if (h === 'fb.watch') return u.pathname.length > 1 ? { href: u.origin + u.pathname, embeddable: false } : null;
       if (h !== 'facebook.com') return null;
       const p = u.pathname, v = u.searchParams.get('v');
-      const isVid =
+      /* Redirect-wrapper share links: can't be embedded → click-out card. */
+      if (/^\/share\/[rv]\/[^/]+/.test(p)) return { href: u.origin + p, embeddable: false };
+      const embeddable =
         /^\/reel\/\d+/.test(p) ||
-        (/^\/watch\/?$/.test(p) && v) ||
         /^\/[^/]+\/videos\/(?:[^/]+\/)?\d+/.test(p) ||
-        (/^\/video\.php\/?$/.test(p) && v) ||
-        /^\/share\/[rv]\/[^/]+/.test(p);
-      if (!isVid) return null;
+        (/^\/watch\/?$/.test(p) && v) ||
+        (/^\/video\.php\/?$/.test(p) && v);
+      if (!embeddable) return null;
       const href = v ? `${u.origin}${p}?v=${encodeURIComponent(v)}` : u.origin + p;
-      return { href };
+      return { href, embeddable: true };
     } catch { return null; }
   },
   /* Build a link card for a plain URL — domain + readable path + a colored
@@ -428,6 +433,23 @@ const utils = {
         <span class="link-card-host">${sHost}</span>
         ${sPath ? `<span class="link-card-path">${sPath}</span>` : ''}
       </span>
+    </a>`;
+  },
+  /* Tap-to-open "Watch on Facebook" card for a FB video URL the embed plugin
+     can't resolve (share short-links). Opens the post in a new tab — no
+     third-party fetch until the user clicks. Shared by linkify + quote cards. */
+  fbWatchCardHTML(href) {
+    const sHref = this.safe(this.safeUrl(href) || '');
+    if (!sHref) return '';
+    return `<a class="fb-watch-card" href="${sHref}" target="_blank" rel="noopener noreferrer">
+      <span class="fb-watch-logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path fill="#fff" d="M24 12.07C24 5.4 18.63 0 12 0S0 5.4 0 12.07c0 6.02 4.39 11.01 10.13 11.93v-8.44H7.08v-3.49h3.05V9.41c0-3.02 1.79-4.69 4.53-4.69 1.31 0 2.68.24 2.68.24v2.97h-1.51c-1.49 0-1.96.93-1.96 1.89v2.25h3.33l-.53 3.49h-2.8V24C19.61 23.08 24 18.09 24 12.07z"/></svg>
+      </span>
+      <span class="fb-watch-body">
+        <span class="fb-watch-title">Facebook video</span>
+        <span class="fb-watch-sub">Watch on Facebook</span>
+      </span>
+      <span class="fb-watch-cta">Open ↗</span>
     </a>`;
   },
   /* Normalize an engagement reference (the part after LIKE:/UNLIKE:) to its
@@ -604,14 +626,15 @@ const utils = {
         }
       } else if (mtype === 'facebook') {
         const fb = fbVideo(resolved);
-        if (fb) {
+        if (fb && fb.embeddable) {
           mediaUrls.add(resolved);
-          /* No public FB thumbnail API → a branded local placeholder (no
-             third-party fetch until play). Reuses the post-yt-facade machinery:
-             the media observer auto-loads it muted on scroll-in (autoplay
-             setting permitting), tap plays with sound, scroll-away reverts —
-             identical to YouTube/Vimeo. The real player is FB's plugin iframe,
-             built in _playFacade from data-fb-href. */
+          /* Canonical FB video/Reel — embeds & plays. No public FB thumbnail
+             API → a branded local placeholder (no third-party fetch until
+             play). Reuses the post-yt-facade machinery: the media observer
+             auto-loads it muted on scroll-in (autoplay setting permitting),
+             tap plays with sound, scroll-away reverts — identical to
+             YouTube/Vimeo. The real player is FB's plugin iframe, built in
+             _playFacade from data-fb-href. */
           const sHref = utils.safe(fb.href);
           embedHtml += `<div class="post-vid-wrap post-yt-facade post-fb-facade yt-facade-private" data-fb-href="${sHref}">
             <div class="post-yt-private-label">
@@ -624,6 +647,13 @@ const utils = {
               <svg viewBox="0 0 68 48" width="68" height="48"><rect width="68" height="48" rx="10" fill="#1877F2" opacity="0.92"/><path d="M45 24 27 14v20" fill="#fff"/></svg>
             </div>
           </div>`;
+          mediaCount++;
+        } else if (fb) {
+          mediaUrls.add(resolved);
+          /* Share short-link (/share/v|r/, fb.watch) — the embed plugin can't
+             resolve the redirect, so an embed would show "Video Unavailable".
+             Render a tap-to-open card that goes to the post on Facebook. */
+          embedHtml += utils.fbWatchCardHTML(fb.href);
           mediaCount++;
         }
       } else if (mtype === 'tweet') {

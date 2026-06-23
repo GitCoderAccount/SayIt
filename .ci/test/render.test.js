@@ -51,10 +51,18 @@ test('linkify escapes the # in a hashtag chip', () => {
   assert.ok(!/<b>/.test(out), 'no raw markup leaks via a hashtag');
 });
 
-test('linkify renders a Facebook Reel as a play facade, not a bare link', () => {
+test('linkify renders a canonical Facebook Reel as a play facade, not a bare link', () => {
   const out = body('look at this https://www.facebook.com/reel/1234567890');
-  assert.ok(/post-fb-facade/.test(out), 'FB video → facade (reuses the post-yt-facade player)');
-  assert.ok(/data-fb-href="[^"]*facebook\.com%2Freel%2F1234567890|data-fb-href="https:\/\/www\.facebook\.com\/reel\/1234567890"/.test(out),
+  assert.ok(/post-fb-facade/.test(out), 'canonical FB video → facade (reuses the post-yt-facade player)');
+  assert.ok(/data-fb-href="https:\/\/www\.facebook\.com\/reel\/1234567890"/.test(out),
     'facade carries the canonical href for the plugin iframe');
   assert.ok(!/class="link-card"/.test(out), 'no fallback plain link card for a video URL');
+});
+
+test('linkify renders a Facebook SHARE short-link as a tap-to-open card, not a broken embed', () => {
+  const out = body('look at this https://www.facebook.com/share/v/1BQDYKy2hM/');
+  assert.ok(/fb-watch-card/.test(out), 'share short-link → click-out card (plugin can\'t embed it)');
+  assert.ok(!/post-fb-facade/.test(out), 'no autoplay facade for an unembeddable share link');
+  assert.ok(/href="https:\/\/www\.facebook\.com\/share\/v\/1BQDYKy2hM\/"/.test(out), 'card opens the FB post');
+  assert.ok(!/class="link-card"/.test(out), 'not a generic link card');
 });

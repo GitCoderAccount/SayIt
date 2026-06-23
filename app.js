@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260623-257';
+const SW_CACHE_VER = '20260623-258';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -4877,12 +4877,14 @@ class SayIt {
           <svg viewBox="0 0 68 48" width="68" height="48"><rect width="68" height="48" rx="10" fill="#17a2e6"/><path d="M45 24 27 14v20" fill="#fff"/></svg>
         </div>
       </div>`;
-    } else if (fbVid) {
+    } else if (fbVid && fbVid.embeddable) {
       mediaHtml = `<div class="post-vid-wrap post-yt-facade post-fb-facade yt-facade-private repost-card-vidwrap" data-fb-href="${utils.safe(fbVid.href)}">
         <div class="post-yt-play" style="position:static;margin:40px auto">
           <svg viewBox="0 0 68 48" width="68" height="48"><rect width="68" height="48" rx="10" fill="#1877F2"/><path d="M45 24 27 14v20" fill="#fff"/></svg>
         </div>
       </div>`;
+    } else if (fbVid) {
+      mediaHtml = utils.fbWatchCardHTML(fbVid.href);
     } else if (imgs.length) {
       mediaHtml = `<img class="repost-card-thumb" src="${utils.safe(imgs[0])}" alt="" loading="lazy" data-fallback="hide">`;
     } else if (xTw) {
