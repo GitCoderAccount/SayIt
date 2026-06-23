@@ -91,6 +91,27 @@ test('dexPair() parses DexScreener pair URLs, rejects others', () => {
   assert.strictEqual(utils.dexPair('https://example.com/ethereum/' + evm), null);
 });
 
+test('fbVideo() parses Facebook video/Reel/Watch URLs, rejects others', () => {
+  assert.deepEqual(utils.fbVideo('https://www.facebook.com/reel/1234567890'),
+    { href: 'https://www.facebook.com/reel/1234567890' });
+  assert.deepEqual(utils.fbVideo('https://web.facebook.com/somepage/videos/9876543210/'),
+    { href: 'https://web.facebook.com/somepage/videos/9876543210/' });
+  /* watch?v= → tracking params dropped, v preserved */
+  assert.deepEqual(utils.fbVideo('https://www.facebook.com/watch/?v=555&fbclid=xyz'),
+    { href: 'https://www.facebook.com/watch/?v=555' });
+  assert.deepEqual(utils.fbVideo('https://m.facebook.com/video.php?v=42'),
+    { href: 'https://m.facebook.com/video.php?v=42' });
+  assert.strictEqual(utils.fbVideo('https://www.facebook.com/share/r/abcDEF/').href,
+    'https://www.facebook.com/share/r/abcDEF/');
+  assert.strictEqual(utils.fbVideo('https://fb.watch/aBcD1234/').href, 'https://fb.watch/aBcD1234/');
+  /* non-video facebook paths fall through to a normal link card */
+  assert.strictEqual(utils.fbVideo('https://www.facebook.com/zuck'), null);          /* profile */
+  assert.strictEqual(utils.fbVideo('https://www.facebook.com/watch/'), null);        /* no v= */
+  assert.strictEqual(utils.fbVideo('https://fb.watch'), null);                       /* bare host */
+  assert.strictEqual(utils.fbVideo('https://example.com/reel/1'), null);             /* wrong host */
+  assert.strictEqual(utils.fbVideo('not a url'), null);
+});
+
 test('linkCardHTML() builds a local card from the URL, no network', () => {
   const html = utils.linkCardHTML('https://www.example.com/path/to/page?x=1');
   assert.match(html, /class="link-card"/);

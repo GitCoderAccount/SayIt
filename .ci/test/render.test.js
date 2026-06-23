@@ -50,3 +50,11 @@ test('linkify escapes the # in a hashtag chip', () => {
   const out = body('gm #"><b>tag');
   assert.ok(!/<b>/.test(out), 'no raw markup leaks via a hashtag');
 });
+
+test('linkify renders a Facebook Reel as a play facade, not a bare link', () => {
+  const out = body('look at this https://www.facebook.com/reel/1234567890');
+  assert.ok(/post-fb-facade/.test(out), 'FB video → facade (reuses the post-yt-facade player)');
+  assert.ok(/data-fb-href="[^"]*facebook\.com%2Freel%2F1234567890|data-fb-href="https:\/\/www\.facebook\.com\/reel\/1234567890"/.test(out),
+    'facade carries the canonical href for the plugin iframe');
+  assert.ok(!/class="link-card"/.test(out), 'no fallback plain link card for a video URL');
+});

@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260622-256';
+const SW_CACHE_VER = '20260623-257';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -1195,10 +1195,11 @@ class SayIt {
   }
 
   _playFacade(el, muted = false) {
-    const yt = el.dataset.ytId, vm = el.dataset.vimeoId;
+    const yt = el.dataset.ytId, vm = el.dataset.vimeoId, fb = el.dataset.fbHref;
     let src = '';
     if (yt)      src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(yt)}?autoplay=1&rel=0${muted ? '&mute=1&playsinline=1' : ''}`;
     else if (vm) src = `https://player.vimeo.com/video/${encodeURIComponent(vm)}?autoplay=1&dnt=1${muted ? '&muted=1' : ''}`;
+    else if (fb) src = `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(fb)}&show_text=false&autoplay=true&mute=${muted ? 1 : 0}`;
     if (!src) return;
     /* One playing media at a time — stop everything else first. */
     this._stopOtherMedia(el);
@@ -1206,19 +1207,20 @@ class SayIt {
        an off-screen embed is stopped — iframes can't be paused reliably). */
     el._facadeHTML = el.innerHTML;
     el._facadeWasVimeo = el.classList.contains('post-vimeo-facade');
+    el._facadeWasFb = el.classList.contains('post-fb-facade');
     const frame = document.createElement('iframe');
     frame.src = src;
     frame.className = 'post-yt-frame';
     /* fullscreen rides the allow list; setting allowFullscreen too makes
        Chrome warn that allow takes precedence. */
     frame.setAttribute('allow', 'autoplay;accelerometer;clipboard-write;encrypted-media;gyroscope;picture-in-picture;fullscreen');
-    frame.setAttribute('title', yt ? 'YouTube video' : 'Vimeo video');
+    frame.setAttribute('title', yt ? 'YouTube video' : vm ? 'Vimeo video' : 'Facebook video');
     el.innerHTML = '';
     el.appendChild(frame);
     /* Drop the facade affordances and give the container a 16:9 box so the
        absolutely-positioned iframe has height (emptying the thumbnail would
        otherwise collapse the wrapper to 0 and hide the player). */
-    el.classList.remove('post-yt-facade', 'post-vimeo-facade');
+    el.classList.remove('post-yt-facade', 'post-vimeo-facade', 'post-fb-facade', 'yt-facade-private');
     el.classList.add('post-embed-playing');
   }
 
@@ -1230,6 +1232,7 @@ class SayIt {
     el.classList.remove('post-embed-playing');
     el.classList.add('post-yt-facade');
     if (el._facadeWasVimeo) el.classList.add('post-vimeo-facade');
+    if (el._facadeWasFb) el.classList.add('post-fb-facade', 'yt-facade-private');
   }
 
   /* Strict one-playing-media rule (owner requirement): starting ANY media —
@@ -4824,19 +4827,21 @@ class SayIt {
     const imgs   = this._mediaImageUrls(orig.display);
     const words  = orig.display.split(/\s+/);
     const vidUrl = words.find(w => _LK_VID_RE.test(w) && /^(https?:|ipfs:|ar:|arweave:)/.test(w));
-    let ytVid = null, vmVid = null, xTw = null, grok = null;
+    let ytVid = null, vmVid = null, xTw = null, grok = null, fbVid = null;
     for (const w of words) {
       if (!ytVid) ytVid = utils.ytId(w);
       if (!vmVid) vmVid = utils.vimeoId(w);
       if (!xTw)   xTw   = utils.xPost(w);
       if (!grok)  grok  = utils.grokPost(w);
-      if (ytVid || vmVid || xTw || grok) break;
+      if (!fbVid) fbVid = utils.fbVideo(w);
+      if (ytVid || vmVid || xTw || grok || fbVid) break;
     }
     /* Strip media + embed URLs (incl. X / Grok) from the preview text; what
        remains is the author's own words. Without the X/Grok cases a reposted
        X share left its raw x.com URL in the body (looked like "raw data"). */
     const isEmbedUrl = u => this._postHasMedia(u) || _LK_VID_RE.test(u)
-      || !!utils.ytId(u) || !!utils.vimeoId(u) || !!utils.xPost(u) || !!utils.grokPost(u);
+      || !!utils.ytId(u) || !!utils.vimeoId(u) || !!utils.xPost(u) || !!utils.grokPost(u)
+      || !!utils.fbVideo(u);
     let text = orig.display.replace(_LK_RE, m =>
       (/^(https?:|ipfs:|ar:|arweave:)/.test(m) && isEmbedUrl(m)) ? '' : m);
     text = text.replace(/\s{2,}/g, ' ').trim();
@@ -4870,6 +4875,12 @@ class SayIt {
       mediaHtml = `<div class="post-vid-wrap post-yt-facade post-vimeo-facade repost-card-vidwrap" data-vimeo-id="${utils.safe(vmVid)}">
         <div class="post-yt-play" style="position:static;margin:40px auto">
           <svg viewBox="0 0 68 48" width="68" height="48"><rect width="68" height="48" rx="10" fill="#17a2e6"/><path d="M45 24 27 14v20" fill="#fff"/></svg>
+        </div>
+      </div>`;
+    } else if (fbVid) {
+      mediaHtml = `<div class="post-vid-wrap post-yt-facade post-fb-facade yt-facade-private repost-card-vidwrap" data-fb-href="${utils.safe(fbVid.href)}">
+        <div class="post-yt-play" style="position:static;margin:40px auto">
+          <svg viewBox="0 0 68 48" width="68" height="48"><rect width="68" height="48" rx="10" fill="#1877F2"/><path d="M45 24 27 14v20" fill="#fff"/></svg>
         </div>
       </div>`;
     } else if (imgs.length) {
@@ -8007,6 +8018,10 @@ class SayIt {
         <img src="${utils.safe(it.thumb)}" class="prof-media-thumb" alt="" loading="lazy" data-fallback="hide">
         <span class="prof-media-play">▶</span></div>`;
     }
+    if (it.type === 'fb') {
+      /* No public FB thumbnail → neutral private-style cell, like strict YT. */
+      return `<div class="prof-media-cell prof-media-private" ${open}><span class="prof-media-play">▶</span></div>`;
+    }
     return `<img src="${utils.safe(it.thumb)}" class="prof-media-thumb" alt="" loading="lazy" data-fallback="hide" ${open}>`;
   }
 
@@ -8023,7 +8038,8 @@ class SayIt {
         continue;
       }
       const yt = utils.ytId(w);
-      if (yt) items.push({ type: 'yt', url: w, thumb: `https://i.ytimg.com/vi/${yt}/hqdefault.jpg` });
+      if (yt) { items.push({ type: 'yt', url: w, thumb: `https://i.ytimg.com/vi/${yt}/hqdefault.jpg` }); continue; }
+      if (utils.fbVideo(w)) items.push({ type: 'fb', url: w, thumb: '' });
     }
     return items;
   }

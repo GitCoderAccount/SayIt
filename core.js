@@ -380,6 +380,31 @@ const utils = {
       return m ? { chain: m[1], pair: m[2], href: u.origin + u.pathname } : null;
     } catch { return null; }
   },
+  /* Parse a Facebook video / Reel / Watch URL → { href } or null. Facebook has
+     no public thumbnail API and short fb.watch links can't be expanded
+     client-side, so the player is its official iframe plugin
+     (plugins/video.php?href=<canonical url>) — the canonical href returned here
+     is what we hand to that plugin. We only match real video paths (reel,
+     watch?v=, /<page>/videos/<id>, video.php?v=, share/v|r) so plain profile
+     links still fall through to a normal link card. Tracking params dropped. */
+  fbVideo(url) {
+    try {
+      const u = new URL(url);
+      const h = u.hostname.replace(/^(www|web|m|mobile)\./, '');
+      if (h === 'fb.watch') return u.pathname.length > 1 ? { href: u.origin + u.pathname } : null;
+      if (h !== 'facebook.com') return null;
+      const p = u.pathname, v = u.searchParams.get('v');
+      const isVid =
+        /^\/reel\/\d+/.test(p) ||
+        (/^\/watch\/?$/.test(p) && v) ||
+        /^\/[^/]+\/videos\/(?:[^/]+\/)?\d+/.test(p) ||
+        (/^\/video\.php\/?$/.test(p) && v) ||
+        /^\/share\/[rv]\/[^/]+/.test(p);
+      if (!isVid) return null;
+      const href = v ? `${u.origin}${p}?v=${encodeURIComponent(v)}` : u.origin + p;
+      return { href };
+    } catch { return null; }
+  },
   /* Build a link card for a plain URL — domain + readable path + a colored
      monogram, derived ENTIRELY from the URL string. No fetch, no third party:
      nothing is contacted until the user clicks. (Rich og:image previews would
@@ -456,6 +481,7 @@ const utils = {
       if (xPost(url)) return 'tweet';   /* X / Twitter post → styled link card */
       if (grokPost(url)) return 'grok'; /* Grok (grok.com) → click-out link card */
       if (dexPair(url)) return 'dex';   /* DexScreener pair → live chart embed */
+      if (fbVideo(url)) return 'facebook'; /* FB video/Reel → official iframe plugin facade */
       return null;
     };
     const resolveUrl = u => {
@@ -494,6 +520,7 @@ const utils = {
     const xPost = utils.xPost;
     const grokPost = utils.grokPost;
     const dexPair = utils.dexPair;
+    const fbVideo = utils.fbVideo;
 
     /* ── Pass 1: extract ALL media from fullText (never truncated) ── */
     const scanText = fullText || text;
@@ -571,6 +598,30 @@ const utils = {
                 <rect width="68" height="48" rx="8" fill="#1AB7EA" opacity="0.9"/>
                 <path d="M45 24 27 14v20" fill="#fff"/>
               </svg>
+            </div>
+          </div>`;
+          mediaCount++;
+        }
+      } else if (mtype === 'facebook') {
+        const fb = fbVideo(resolved);
+        if (fb) {
+          mediaUrls.add(resolved);
+          /* No public FB thumbnail API → a branded local placeholder (no
+             third-party fetch until play). Reuses the post-yt-facade machinery:
+             the media observer auto-loads it muted on scroll-in (autoplay
+             setting permitting), tap plays with sound, scroll-away reverts —
+             identical to YouTube/Vimeo. The real player is FB's plugin iframe,
+             built in _playFacade from data-fb-href. */
+          const sHref = utils.safe(fb.href);
+          embedHtml += `<div class="post-vid-wrap post-yt-facade post-fb-facade yt-facade-private" data-fb-href="${sHref}">
+            <div class="post-yt-private-label">
+              <span class="post-fb-logo" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="22" height="22"><path fill="#1877F2" d="M24 12.07C24 5.4 18.63 0 12 0S0 5.4 0 12.07c0 6.02 4.39 11.01 10.13 11.93v-8.44H7.08v-3.49h3.05V9.41c0-3.02 1.79-4.69 4.53-4.69 1.31 0 2.68.24 2.68.24v2.97h-1.51c-1.49 0-1.96.93-1.96 1.89v2.25h3.33l-.53 3.49h-2.8V24C19.61 23.08 24 18.09 24 12.07z"/></svg>
+              </span>
+              ▶ Facebook video<span>Tap to play — connects to Facebook</span>
+            </div>
+            <div class="post-yt-play">
+              <svg viewBox="0 0 68 48" width="68" height="48"><rect width="68" height="48" rx="10" fill="#1877F2" opacity="0.92"/><path d="M45 24 27 14v20" fill="#fff"/></svg>
             </div>
           </div>`;
           mediaCount++;
