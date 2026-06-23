@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260623-258';
+const SW_CACHE_VER = '20260623-259';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -3150,11 +3150,14 @@ class SayIt {
              coverUrl, location, website — not just username + picUrl. */
           this.state.profCache[address] = {
             username: db.username  || '',
-            picUrl:   db.picUrl    || 'image1.jpeg',
+            /* Sanitize URL fields at the cache boundary (other users' on-chain
+               profiles are attacker-controlled) — mirrors applyProfile, so no
+               render site has to remember safeUrl(). */
+            picUrl:   utils.safeUrl(db.picUrl) || 'image1.jpeg',
             bio:      db.bio       || '',
-            coverUrl: db.coverUrl  || '',
+            coverUrl: utils.safeUrl(db.coverUrl) || '',
             location: db.location  || '',
-            website:  db.website   || '',
+            website:  utils.safeUrl(db.website) || '',
           };
           this._pruneProfileCache();
           this._debouncedRender();
@@ -3189,11 +3192,13 @@ class SayIt {
               const data = JSON.parse(text.slice(PROFILE_PREFIX.length).trim());
               this.state.profCache[address] = {
                 username: data.username || '',
-                picUrl:   data.picUrl   || 'image1.jpeg',
+                /* Sanitize URL fields at the cache boundary (attacker-controlled
+                   on-chain profile JSON) — mirrors applyProfile. */
+                picUrl:   utils.safeUrl(data.picUrl) || 'image1.jpeg',
                 bio:      data.bio      || '',
-                coverUrl: data.coverUrl || '',
+                coverUrl: utils.safeUrl(data.coverUrl) || '',
                 location: data.location || '',
-                website:  data.website  || '',
+                website:  utils.safeUrl(data.website) || '',
                 _cachedAt: Date.now(),   /* TTL: re-fetch after 1h */
               };
               await this.cache.saveProfile({ address, ...data });

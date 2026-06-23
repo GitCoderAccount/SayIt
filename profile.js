@@ -1283,11 +1283,13 @@ const _PROF = class {
     if (this.state.signerAddr) {
       this.state.profCache[this.state.signerAddr] = {
         username: data.username || '',
-        picUrl:   data.picUrl   || 'image1.jpeg',
+        /* Sanitize URL fields at the cache boundary, same as applyProfile and
+           the fetchOtherProfile cache writes — keeps profCache safe-by-default. */
+        picUrl:   utils.safeUrl(data.picUrl) || 'image1.jpeg',
         bio:      data.bio      || '',
-        coverUrl: data.coverUrl || '',
+        coverUrl: utils.safeUrl(data.coverUrl) || '',
         location: data.location || '',
-        website:  data.website  || '',
+        website:  utils.safeUrl(data.website) || '',
       };
     }
     const ok = await this.publish(PROFILE_PREFIX + JSON.stringify(data), null, this.state.signerAddr);
