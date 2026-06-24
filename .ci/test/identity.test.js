@@ -101,3 +101,28 @@ test('_identityWriteChain: flag off → Base falls back to canonical; Pulse stay
   assert.strictEqual(await writeChainWith(8453, { crossChainIdentity: false }), 369);
   assert.strictEqual(await writeChainWith(369, { crossChainIdentity: false }), 'wallet');
 });
+
+/* The cross-chain reaction merge (fetchMyReactions Phase 2a): newest TIMESTAMP
+   wins per target, regardless of which chain the action landed on. This is the
+   correctness keystone — concatenating per-chain newest-first lists would let an
+   older action on one chain override a newer action on another. */
+test('_applyReactionEvents: newest timestamp wins per target across chains (global last-write-wins)', () => {
+  pulse.state.likes.clear(); pulse.state.bookmarks.clear(); pulse.state.following.clear();
+  pulse._applyReactionEvents([
+    /* post A: LIKED on Base (ts 5000), later UNLIKED on Pulse (ts 6000) → not liked */
+    { cat: 'like', key: 'a', on: true,  ts: 5000 },
+    { cat: 'like', key: 'a', on: false, ts: 6000 },
+    /* post B: UNLIKED long ago (ts 1000), later LIKED on another chain (ts 2000) → liked */
+    { cat: 'like', key: 'b', on: false, ts: 1000 },
+    { cat: 'like', key: 'b', on: true,  ts: 2000 },
+    { cat: 'follow', key: '0xcc', on: true, ts: 3000 },          /* followed */
+    /* bookmark D: bookmarked (ts 1000), later un-bookmarked (ts 4000) → not bookmarked */
+    { cat: 'bm', key: 'd', on: true,  ts: 1000 },
+    { cat: 'bm', key: 'd', on: false, ts: 4000 },
+  ]);
+  assert.ok(!pulse.state.likes.has('a'), 'newer cross-chain UNLIKE wins → A not liked');
+  assert.ok(pulse.state.likes.has('b'),  'newer cross-chain LIKE wins → B liked');
+  assert.ok(pulse.state.following.has('0xcc'), 'C followed');
+  assert.ok(!pulse.state.bookmarks.has('d'), 'newer UNBOOKMARK wins → D not bookmarked');
+  pulse.state.likes.clear(); pulse.state.bookmarks.clear(); pulse.state.following.clear();
+});

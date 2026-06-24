@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260623-262';
+const SW_CACHE_VER = '20260623-263';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -2990,59 +2990,71 @@ class SayIt {
   /* Load likes, bookmarks, follows from chain */
   async fetchMyReactions() {
     if (!this.state.signerAddr) return;
+    const me = this.state.signerAddr;
     this.state.likes.clear();
     this.state.bookmarks.clear();
     this.state.following.clear();
-    /* Last-write-wins resolution. API returns newest-first; we mark the
-       first action seen per target as authoritative and skip older actions
-       for the same target. This makes UNLIKE/UNBOOKMARK/UNFOLLOW work
-       correctly — the most recent decision wins.
-
-       Previously: UNFOLLOW followed by an older FOLLOW (newest-first iteration)
-       would re-add to following. That was a pre-existing bug. */
-    const seenLike     = new Set();
-    const seenBookmark = new Set();
-    const seenFollow   = new Set();
-    try {
-      /* Cap at 40 pages (2000 txs) — covers heavy reactors generously */
+    /* Gather every reaction tx the wallet sent across the identity chains as
+       { cat, key, on, ts } events, then resolve last-write-wins by GLOBAL
+       timestamp (see _applyReactionEvents). The global sort is what makes
+       cross-chain correct: per-chain "newest-first" order isn't comparable
+       across chains, so an UNLIKE on one chain could otherwise be overridden by
+       an older LIKE on another. With cross-chain identity off, _identityChains()
+       = [canonical], so this is exactly the old single-chain scan. */
+    const events = [];
+    const scanChain = async (chainId) => {
+      /* Cap at 40 pages (2000 txs) per chain — covers heavy reactors generously;
+         low-activity chains exit early via the short-page break. */
       const rxLimit = Math.min(this._getMaxScanPages(), 40);
       for (let page = 1; page <= rxLimit; page++) {
         let raw;
-        try { raw = await this.apiFetch(this.state.signerAddr, page); }
+        try { raw = await this.apiFetch(me, page, chainId); }
         catch { break; }
-        raw.forEach(tx => {
-          const from = tx.from?.toLowerCase();
-          const to   = tx.to?.toLowerCase();
-          if (from !== this.state.signerAddr) return; /* only my sent txs */
-          if (!tx.input || tx.input === '0x') return;
-          try {
-            const text = ethers.toUtf8String(tx.input).trim();
-            /* UNLIKE check before LIKE (defensive ordering — neither
-               startsWith would clash but readability matters). */
-            if (text.startsWith(UNLIKE_PREFIX)) {
-              const h = utils.refHash(text.slice(UNLIKE_PREFIX.length));
-              if (!seenLike.has(h)) seenLike.add(h);
-            } else if (text.startsWith(LIKE_PREFIX)) {
-              const h = utils.refHash(text.slice(LIKE_PREFIX.length));
-              if (!seenLike.has(h)) { seenLike.add(h); this.state.likes.add(h); }
-            } else if (text.startsWith(UNBOOKMARK_PREFIX) && to === from) {
-              const h = text.slice(UNBOOKMARK_PREFIX.length).trim().toLowerCase();
-              if (!seenBookmark.has(h)) seenBookmark.add(h);
-            } else if (text.startsWith(BOOKMARK_PREFIX) && to === from) {
-              const h = text.slice(BOOKMARK_PREFIX.length).trim().toLowerCase();
-              if (!seenBookmark.has(h)) { seenBookmark.add(h); this.state.bookmarks.add(h); }
-            } else if (text.startsWith(UNFOLLOW_PREFIX)) {
-              const a = text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase();
-              if (!seenFollow.has(a)) seenFollow.add(a);
-            } else if (text.startsWith(FOLLOW_PREFIX)) {
-              const a = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
-              if (!seenFollow.has(a)) { seenFollow.add(a); this.state.following.add(a); }
-            }
-          } catch { /* skip */ }
-        });
-        if (raw.length < 50) break;
+        for (const tx of raw) {
+          if (tx.from?.toLowerCase() !== me) continue; /* only my sent txs */
+          if (!tx.input || tx.input === '0x') continue;
+          const to = tx.to?.toLowerCase();
+          let text; try { text = ethers.toUtf8String(tx.input).trim(); } catch { continue; }
+          const ts = Number(tx.timeStamp) || 0;
+          /* UNLIKE before LIKE etc. — readability only (no startsWith clash). */
+          if (text.startsWith(UNLIKE_PREFIX)) {
+            events.push({ cat: 'like', key: utils.refHash(text.slice(UNLIKE_PREFIX.length)), on: false, ts });
+          } else if (text.startsWith(LIKE_PREFIX)) {
+            events.push({ cat: 'like', key: utils.refHash(text.slice(LIKE_PREFIX.length)), on: true, ts });
+          } else if (text.startsWith(UNBOOKMARK_PREFIX) && to === me) {
+            events.push({ cat: 'bm', key: text.slice(UNBOOKMARK_PREFIX.length).trim().toLowerCase(), on: false, ts });
+          } else if (text.startsWith(BOOKMARK_PREFIX) && to === me) {
+            events.push({ cat: 'bm', key: text.slice(BOOKMARK_PREFIX.length).trim().toLowerCase(), on: true, ts });
+          } else if (text.startsWith(UNFOLLOW_PREFIX)) {
+            events.push({ cat: 'follow', key: text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase(), on: false, ts });
+          } else if (text.startsWith(FOLLOW_PREFIX)) {
+            events.push({ cat: 'follow', key: text.slice(FOLLOW_PREFIX.length).trim().toLowerCase(), on: true, ts });
+          }
+        }
+        if (raw.length < 50) break; /* last page on this chain */
       }
+    };
+    try {
+      await Promise.all(this._identityChains().map(scanChain));
+      this._applyReactionEvents(events);
     } catch (err) { console.warn('Reactions fetch error', err); }
+  }
+
+  /* Resolve reaction events into the like/bookmark/following sets: newest
+     timestamp wins per (category, key) — so an UNLIKE/UNFOLLOW/UNBOOKMARK that
+     is globally newest beats an older positive on any chain. Separated from the
+     scan so the cross-chain ordering rule is unit-testable without mocking the
+     explorer. `on` = true for like/bookmark/follow, false for the un- actions. */
+  _applyReactionEvents(events) {
+    events.sort((a, b) => b.ts - a.ts); /* global newest-first */
+    const sets = { like: this.state.likes, bm: this.state.bookmarks, follow: this.state.following };
+    const seen = new Set();
+    for (const e of events) {
+      const id = e.cat + ' ' + e.key;
+      if (seen.has(id)) continue; /* an older action for this target — ignore */
+      seen.add(id);
+      if (e.on) sets[e.cat].add(e.key);
+    }
   }
 
   disconnect() {
