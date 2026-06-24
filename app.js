@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260623-263';
+const SW_CACHE_VER = '20260623-264';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -5784,12 +5784,16 @@ class SayIt {
       const icon = btn?.querySelector('.act-icon');
       const bmFull  = this.icon('ic-bookmark-full');
       const bmEmpty = this.icon('ic-bookmark-empty');
+      /* Bookmarks are personal self-sends with no public count, so they land on
+         the wallet's current chain when it's an identity chain (cross-chain
+         reaction reads resolve them) — no forced switch back to PulseChain. */
+      const writeChain = await this._identityWriteChain();
       if (this.state.bookmarks.has(hash)) {
         /* Toggle off — publish UNBOOKMARK so the change persists. */
         this.state.bookmarks.delete(hash);
         if (btn)  btn.classList.remove('bookmarked');
         if (icon) icon.innerHTML = bmEmpty;
-        const ok = await this.publish(UNBOOKMARK_PREFIX + hash, null, this.state.signerAddr);
+        const ok = await this.publish(UNBOOKMARK_PREFIX + hash, null, this.state.signerAddr, writeChain);
         if (!ok) {
           this.state.bookmarks.add(hash);
           if (btn)  btn.classList.add('bookmarked');
@@ -5801,7 +5805,7 @@ class SayIt {
         this.state.bookmarks.add(hash);
         if (btn)  btn.classList.add('bookmarked');
         if (icon) icon.innerHTML = bmFull;
-        const ok = await this.publish(BOOKMARK_PREFIX + hash, null, this.state.signerAddr);
+        const ok = await this.publish(BOOKMARK_PREFIX + hash, null, this.state.signerAddr, writeChain);
         if (!ok) {
           this.state.bookmarks.delete(hash);
           if (btn)  btn.classList.remove('bookmarked');

@@ -475,7 +475,11 @@ const _PROF = class {
       btn.disabled    = true;
       btn.textContent = isFollowing ? 'Unfollowing…' : 'Following…';
     }
-    const ok = await this.publish(prefix + addr, null, addr);
+    /* Follow on the wallet's current chain when it's an identity chain — your
+       own following set reads cross-chain (no forced switch to PulseChain).
+       Caveat: public follower COUNTS undercount off-Pulse follows until Phase 3
+       makes _lazyFollowCounts cross-chain; most follows still land on Pulse. */
+    const ok = await this.publish(prefix + addr, null, addr, await this._identityWriteChain());
     if (btn) btn.disabled = false;
     if (ok) {
       /* Toggle the .following modifier — don't replace className, which stripped
