@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260623-261';
+const SW_CACHE_VER = '20260623-262';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -3615,6 +3615,19 @@ class SayIt {
     return this._getSettings().crossChainIdentity !== false;
   }
 
+  /* Which chain an IDENTITY write (profile now; follows/reactions in Phase 2)
+     should target. Returns the 'wallet' sentinel — land on the wallet's current
+     chain with NO network switch — when that chain is in the identity read-set
+     (_identityChains), so the write is actually resolvable. Otherwise (an
+     unindexed chain, or cross-chain identity off) it returns the canonical
+     chain, which forces a switch to PulseChain so the write stays visible.
+     This is what lets you save a profile on Base while staying on Base, instead
+     of being bounced back to PulseChain. */
+  async _identityWriteChain() {
+    const walletCid = await this._currentWalletChain();
+    return this._identityChains().includes(walletCid) ? 'wallet' : CANONICAL_CHAIN_ID;
+  }
+
   /* Aggregated fetch: pull the next page from every active chain in parallel,
      parse each with its own chainId, and return the merged posts. Per-chain
      page cursors + end-of-history live in state.chainPages / chainHasMore so
@@ -5442,9 +5455,11 @@ class SayIt {
     /* Destination chain. Feed content (posts / replies / reposts / quotes) passes
        'wallet': the tx lands on whatever chain the wallet is currently on and we
        NEVER switch the user's network — reads aggregate across all chains, so it
-       shows up regardless. Identity & reaction actions (follow, profile, like,
-       bookmark, vote, note, DM, …) pass an explicit chain (the canonical chain),
-       because their read-state is canonical-pinned, so those still switch to it. */
+       shows up regardless. Profile saves pass 'wallet' too when the wallet is on
+       a cross-chain identity chain (profile reads are cross-chain since Phase 1 —
+       see _identityWriteChain). The remaining reaction actions (follow, like,
+       bookmark, vote, note, DM, …) still pass an explicit canonical chain because
+       their read-state is canonical-pinned, so those switch to it. */
     let cid;
     if (chainId === 'wallet') {
       cid = await this._currentWalletChain();

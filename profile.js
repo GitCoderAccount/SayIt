@@ -1292,7 +1292,12 @@ const _PROF = class {
         website:  utils.safeUrl(data.website) || '',
       };
     }
-    const ok = await this.publish(PROFILE_PREFIX + JSON.stringify(data), null, this.state.signerAddr);
+    /* Save on the wallet's current chain when it's a cross-chain identity chain
+       (so the cross-chain profile read resolves it) — no forced switch back to
+       PulseChain. Falls back to canonical on an unindexed chain / when the flag
+       is off. */
+    const ok = await this.publish(PROFILE_PREFIX + JSON.stringify(data), null,
+      this.state.signerAddr, await this._identityWriteChain());
     if (ok) {
       this.closeModal('profile-modal');
       /* Refresh profile page if currently on it */

@@ -73,3 +73,31 @@ test('_findLatestProfile: returns null when no identity chain has a profile', as
     pulse._identityChains = origChains;
   }
 });
+
+/* _identityWriteChain: which chain a profile SAVE targets. 'wallet' (no forced
+   switch) when the wallet is on an identity chain; canonical otherwise so the
+   write stays resolvable. This is the fix for "saving a profile on Base
+   switches back to PulseChain". */
+async function writeChainWith(walletCid, settings) {
+  const origWallet = pulse._currentWalletChain;
+  const origSettings = pulse._getSettings;
+  pulse._currentWalletChain = async () => walletCid;
+  pulse._getSettings = () => settings;
+  try { return await pulse._identityWriteChain(); }
+  finally { pulse._currentWalletChain = origWallet; pulse._getSettings = origSettings; }
+}
+
+test('_identityWriteChain: wallet on an identity chain (Base/Pulse/ETH) → "wallet", no forced switch', async () => {
+  assert.strictEqual(await writeChainWith(8453, {}), 'wallet');
+  assert.strictEqual(await writeChainWith(369, {}), 'wallet');
+  assert.strictEqual(await writeChainWith(1, {}), 'wallet');
+});
+
+test('_identityWriteChain: wallet on a non-identity chain (Polygon) → canonical (visibility fallback)', async () => {
+  assert.strictEqual(await writeChainWith(137, {}), 369);
+});
+
+test('_identityWriteChain: flag off → Base falls back to canonical; Pulse stays "wallet" (lands on Pulse, no switch)', async () => {
+  assert.strictEqual(await writeChainWith(8453, { crossChainIdentity: false }), 369);
+  assert.strictEqual(await writeChainWith(369, { crossChainIdentity: false }), 'wallet');
+});
