@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260623-260';
+const SW_CACHE_VER = '20260623-261';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -3068,57 +3068,83 @@ class SayIt {
     utils.toast('Wallet disconnected');
   }
 
+  /* Scan ONE chain's history for this address's most-recent PROFILE_DATA
+     self-send. txlist is newest-first, so the first match is the latest on THIS
+     chain. Returns { data, ts } (ts = unix seconds) or null. Low-activity chains
+     exit fast via the empty-/short-page break, so non-canonical scans are cheap
+     for users who never set a profile there. */
+  async _scanProfileTxOnChain(address, chainId, maxPages) {
+    for (let page = 1; page <= maxPages; page++) {
+      let raw;
+      try { raw = await this.apiFetch(address, page, chainId); }
+      catch { break; }
+      if (!raw || !raw.length) break;
+      for (const tx of raw) {
+        if (tx.from?.toLowerCase() !== address || tx.to?.toLowerCase() !== address) continue;
+        if (!tx.input || tx.input === '0x') continue;
+        let text; try { text = ethers.toUtf8String(tx.input).trim(); } catch { continue; }
+        if (!text.startsWith(PROFILE_PREFIX)) continue;
+        let data; try { data = JSON.parse(text.slice(PROFILE_PREFIX.length).trim()); } catch { continue; }
+        return { data, ts: Number(tx.timeStamp) || 0 };
+      }
+      if (raw.length < 50) break;
+    }
+    return null;
+  }
+
+  /* Resolve the globally-latest PROFILE_DATA for an address across the identity
+     chains (parallel; newest TIMESTAMP wins — the cross-chain last-write-wins
+     rule, since block order isn't comparable across chains). Canonical keeps the
+     deep scan the single-chain path always used; non-canonical chains are
+     page-bounded (a profile set there sits in recent history; a heavy
+     non-canonical wallet that never set one just costs a bounded scan). With the
+     flag off, _identityChains() = [canonical], so this is exactly the old
+     single-chain behavior. Returns { data, ts } | null. */
+  async _findLatestProfile(address) {
+    address = (address || '').toLowerCase();
+    const chains = this._identityChains();
+    const CANON_MAX = 2000, OTHER_MAX = 40;
+    const results = await Promise.all(chains.map(cid =>
+      this._scanProfileTxOnChain(address, cid, cid === CANONICAL_CHAIN_ID ? CANON_MAX : OTHER_MAX)));
+    let best = null;
+    for (const r of results) if (r && (!best || r.ts > best.ts)) best = r;
+    return best;
+  }
+
   async fetchMyProfile() {
     if (!this.state.signerAddr) return;
-    /* Scan every page of this wallet's tx history until we either find the
-       PROFILE_DATA self-send or exhaust all pages. Profile-save txs are
-       self-sends (from === to === signerAddr) so they only appear once in
-       history; on an active wallet it could be many pages deep. */
+    /* Resolve this wallet's latest PROFILE_DATA self-send. With cross-chain
+       identity ON, this is the newest profile across the keyless identity chains
+       (a profile set on Base/ETH now shows up — latest-wins); OFF, it scans the
+       canonical chain only. Same single (global-identity) IndexedDB cache. */
     try {
-      /* Hard cap as defense-in-depth against an API that returns stale
-         pages forever. 2000 pages = 100k txs — covers anyone realistic. */
-      const MAX_PROFILE_SCAN = 2000;
-      for (let page = 1; page <= MAX_PROFILE_SCAN; page++) {
-        let raw;
-        try { raw = await this.apiFetch(this.state.signerAddr, page); }
-        catch (err) { console.warn('fetchMyProfile API error (p' + page + '):', err); break; }
-        if (!raw || !raw.length) break; /* end of tx history */
-        for (const tx of raw) {
-          if (tx.from?.toLowerCase() !== this.state.signerAddr) continue;
-          if (tx.to?.toLowerCase()   !== this.state.signerAddr) continue;
-          try {
-            const text = ethers.toUtf8String(tx.input).trim();
-            if (!text.startsWith(PROFILE_PREFIX)) continue;
-            const data = JSON.parse(text.slice(PROFILE_PREFIX.length).trim());
-            this.applyProfile(data);
-            await this.cache.saveProfile({ address: this.state.signerAddr, ...data });
-            /* Profile found — update the open profile page header in-place
-               without a full re-render (preserves the already-loaded feed). */
-            if (this.state.mode === 'profile' &&
-                this.state.channel === this.state.signerAddr) {
-              const nameEl   = document.getElementById('prof-display-name');
-              const avatarEl = document.getElementById('prof-page-avatar');
-              if (nameEl)   nameEl.textContent = data.username || this.trunc(this.state.signerAddr);
-              if (avatarEl) avatarEl.src = data.picUrl || 'image1.jpeg';
-              const bioEl = document.querySelector('.prof-bio');
-              if (bioEl && data.bio) bioEl.textContent = data.bio;
-              const coverEl = document.querySelector('.prof-cover');
-              if (coverEl && data.coverUrl) {
-                const safeCover = utils.cssUrlValue(data.coverUrl);
-                if (safeCover) coverEl.style.background = `url('${safeCover}') center/cover no-repeat`;
-              }
-            }
-            /* Update My Channel page-header title if user is on that page */
-            if (this.state.mode === 'self' && data.username) {
-              const hdrTitle = this.g('feed')?.querySelector('.page-header-title');
-              if (hdrTitle && (hdrTitle.textContent === 'My Chat' || hdrTitle.textContent === 'My Channel' || !hdrTitle.textContent)) {
-                hdrTitle.textContent = data.username;
-              }
-            }
-            return; /* found — stop */
-          } catch { continue; }
+      const found = await this._findLatestProfile(this.state.signerAddr);
+      if (!found) return;
+      const data = found.data;
+      this.applyProfile(data);
+      await this.cache.saveProfile({ address: this.state.signerAddr, ...data });
+      /* Profile found — update the open profile page header in-place without a
+         full re-render (preserves the already-loaded feed). */
+      if (this.state.mode === 'profile' &&
+          this.state.channel === this.state.signerAddr) {
+        const nameEl   = document.getElementById('prof-display-name');
+        const avatarEl = document.getElementById('prof-page-avatar');
+        if (nameEl)   nameEl.textContent = data.username || this.trunc(this.state.signerAddr);
+        if (avatarEl) avatarEl.src = data.picUrl || 'image1.jpeg';
+        const bioEl = document.querySelector('.prof-bio');
+        if (bioEl && data.bio) bioEl.textContent = data.bio;
+        const coverEl = document.querySelector('.prof-cover');
+        if (coverEl && data.coverUrl) {
+          const safeCover = utils.cssUrlValue(data.coverUrl);
+          if (safeCover) coverEl.style.background = `url('${safeCover}') center/cover no-repeat`;
         }
-        if (raw.length < 50) break; /* last page — stop regardless */
+      }
+      /* Update My Channel page-header title if user is on that page */
+      if (this.state.mode === 'self' && data.username) {
+        const hdrTitle = this.g('feed')?.querySelector('.page-header-title');
+        if (hdrTitle && (hdrTitle.textContent === 'My Chat' || hdrTitle.textContent === 'My Channel' || !hdrTitle.textContent)) {
+          hdrTitle.textContent = data.username;
+        }
       }
     } catch (err) { console.warn('fetchMyProfile error:', err); }
   }
@@ -3168,53 +3194,29 @@ class SayIt {
           this._debouncedRender();
           return;
         }
-        /* 2. Scan the FULL tx history of this address until we find
-              a PROFILE_DATA self-send or run out of pages.
-              - profInFlight cap (3 concurrent) prevents API flooding.
-              - _debouncedRender() fires immediately on find, so the UI
-                updates progressively — user sees names/avatars appear
-                as each profile is located rather than waiting for all.
-              - Cached permanently in IndexedDB so subsequent sessions
-                are instant regardless of how deep the scan went. */
-        /* Hard cap as defense-in-depth. 2000 pages = 100k txs.
-           Real history will exit via the empty-page break long before this. */
-        const MAX_PROFILE_SCAN = 2000;
-        for (let page = 1; page <= MAX_PROFILE_SCAN; page++) {
-          let raw;
-          try { raw = await this.apiFetch(address, page); }
-          catch (err) {
-            console.warn(`fetchOtherProfile(${this.trunc(address)}) API err p${page}:`, err);
-            break;
-          }
-          if (!raw || !raw.length) break; /* end of tx history */
-          let found = false;
-          for (const tx of raw) {
-            if (tx.from?.toLowerCase() !== address ||
-                tx.to?.toLowerCase()   !== address) continue;
-            try {
-              const text = ethers.toUtf8String(tx.input).trim();
-              if (!text.startsWith(PROFILE_PREFIX)) continue;
-              const data = JSON.parse(text.slice(PROFILE_PREFIX.length).trim());
-              this.state.profCache[address] = {
-                username: data.username || '',
-                /* Sanitize URL fields at the cache boundary (attacker-controlled
-                   on-chain profile JSON) — mirrors applyProfile. */
-                picUrl:   utils.safeUrl(data.picUrl) || 'image1.jpeg',
-                bio:      data.bio      || '',
-                coverUrl: utils.safeUrl(data.coverUrl) || '',
-                location: data.location || '',
-                website:  utils.safeUrl(data.website) || '',
-                _cachedAt: Date.now(),   /* TTL: re-fetch after 1h */
-              };
-              await this.cache.saveProfile({ address, ...data });
-              this._pruneProfileCache();
-              this._debouncedRender();
-              found = true;
-              break;
-            } catch { continue; }
-          }
-          if (found) return;
-          if (raw.length < 50) break; /* last page — stop */
+        /* 2. Resolve the latest PROFILE_DATA across the keyless identity chains
+              (cross-chain: newest timestamp wins; canonical-only when the flag
+              is off). _debouncedRender fires on find so names/avatars pop in
+              progressively; cached in the single (global-identity) IndexedDB
+              store so future sessions are instant. */
+        const found = await this._findLatestProfile(address);
+        if (found) {
+          const data = found.data;
+          this.state.profCache[address] = {
+            username: data.username || '',
+            /* Sanitize URL fields at the cache boundary (attacker-controlled
+               on-chain profile JSON) — mirrors applyProfile. */
+            picUrl:   utils.safeUrl(data.picUrl) || 'image1.jpeg',
+            bio:      data.bio      || '',
+            coverUrl: utils.safeUrl(data.coverUrl) || '',
+            location: data.location || '',
+            website:  utils.safeUrl(data.website) || '',
+            _cachedAt: Date.now(),   /* TTL: re-fetch after 1h */
+          };
+          await this.cache.saveProfile({ address, ...data });
+          this._pruneProfileCache();
+          this._debouncedRender();
+          return;
         }
         /* No profile found — store empty placeholder with timestamp so we can
            re-scan after 24h (user may publish a profile in the future). */
@@ -3591,6 +3593,26 @@ class SayIt {
       if (enabled.length) return [CANONICAL_CHAIN_ID, ...enabled];
     }
     return [CANONICAL_CHAIN_ID];
+  }
+
+  /* The FIXED chain-set for resolving cross-chain IDENTITY (profiles now;
+     follows/reactions later). It MUST be viewer-independent — derived purely
+     from the KEYLESS chains in the registry, NOT from the viewer's enabledChains
+     (_effectiveEnabledChains) — or two viewers would resolve a different "latest"
+     profile for the same address. Keyless (needsKey falsy) guarantees every
+     viewer reads the exact same set. Canonical first. The crossChainIdentity
+     flag (default ON) collapses it to canonical-only for an instant,
+     behavior-preserving revert. */
+  _identityChains() {
+    if (!this._crossChainIdentityEnabled()) return [CANONICAL_CHAIN_ID];
+    const others = chainList({ enabledOnly: true })
+      .filter(c => !c.needsKey && c.id !== CANONICAL_CHAIN_ID)
+      .map(c => c.id)
+      .sort((a, b) => a - b);
+    return [CANONICAL_CHAIN_ID, ...others];
+  }
+  _crossChainIdentityEnabled() {
+    return this._getSettings().crossChainIdentity !== false;
   }
 
   /* Aggregated fetch: pull the next page from every active chain in parallel,

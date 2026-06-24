@@ -154,6 +154,14 @@ const _SET = class {
           </select>
         </div>
         <div class="settings-row" style="margin-top:12px">
+          <div class="settings-row-label"><strong>Cross-chain identity</strong>
+            <span>Resolve your profile across PulseChain, Ethereum &amp; Base (newest wins), so a profile you set on any of them shows up — independent of the feed toggles above. Off = PulseChain only (fewer reads). Applies on the next profile load.</span></div>
+          <label class="settings-switch">
+            <input type="checkbox" id="set-crosschain-identity" ${s.crossChainIdentity === false ? '' : 'checked'}>
+            <span class="settings-switch-slider"></span>
+          </label>
+        </div>
+        <div class="settings-row" style="margin-top:12px">
           <button class="settings-btn primary" id="set-save-networks">Save Networks</button>
         </div>
       </div>
@@ -526,6 +534,9 @@ const _SET = class {
         .filter(id => !!chainCfg(id));
       s.enabledChains = enabled;
       s.etherscanKey  = g('set-etherscan-key').value.trim();
+      /* Cross-chain IDENTITY (profiles/follows) resolves across the fixed
+         keyless chain-set, independent of the feed toggles above. Default on. */
+      s.crossChainIdentity = g('set-crosschain-identity').checked;
       /* Default chain must be the canonical chain or one that's enabled. */
       let dc = Number(g('set-default-chain').value) || CANONICAL_CHAIN_ID;
       if (dc !== CANONICAL_CHAIN_ID && !enabled.includes(dc)) dc = CANONICAL_CHAIN_ID;
