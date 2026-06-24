@@ -129,10 +129,10 @@
       </div>
       ${startBar}
       <div class="chat-toggle" role="tablist">
-        <button class="chat-toggle-btn${tab === 'following' ? ' active' : ''}" data-recip-tab="following" role="tab">Following</button>
-        <button class="chat-toggle-btn${tab === 'followers' ? ' active' : ''}" data-recip-tab="followers" role="tab">Followers</button>
+        <button class="chat-toggle-btn${tab === 'following' ? ' active' : ''}" data-recip-tab="following" role="tab" aria-selected="${tab === 'following' ? 'true' : 'false'}">Following</button>
+        <button class="chat-toggle-btn${tab === 'followers' ? ' active' : ''}" data-recip-tab="followers" role="tab" aria-selected="${tab === 'followers' ? 'true' : 'false'}">Followers</button>
       </div>
-      <input id="dm-pick-search" class="dm-pick-search" placeholder="Search by name or address…" autocomplete="off">
+      <input id="dm-pick-search" class="dm-pick-search" placeholder="Search by name or address…" aria-label="Search people by name or address" autocomplete="off">
       <div id="dm-pick-list" class="dm-pick-list"></div>`;
     const inp = this.g('dm-pick-addr'), go = this.g('dm-pick-go');
     const submit = () => {

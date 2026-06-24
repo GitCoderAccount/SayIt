@@ -47,7 +47,7 @@ const _EXPLORE = class {
   _renderExplorePage(_headerHTML = '') {
     const tab = this.state.exploreTab || 'trending';
     const tabBtn = (id, label) =>
-      `<button class="explore-tab${tab === id ? ' active' : ''}" data-explore-tab="${id}" role="tab">${label}</button>`;
+      `<button class="explore-tab${tab === id ? ' active' : ''}" data-explore-tab="${id}" role="tab" aria-selected="${tab === id ? 'true' : 'false'}">${label}</button>`;
     this.g('feed').innerHTML = _headerHTML + `
       <div class="explore-page">
         <div class="explore-search-bar">

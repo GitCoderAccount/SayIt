@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260623-259';
+const SW_CACHE_VER = '20260623-260';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -741,18 +741,21 @@ class SayIt {
       const items = Array.from(dd.querySelectorAll('.search-dd-item'));
       if (!items.length) return;
       let idx = items.findIndex(el => el.classList.contains('active'));
+      const setActive = (el) => {
+        items.forEach(it => { it.classList.remove('active'); it.setAttribute('aria-selected', 'false'); });
+        el.classList.add('active');
+        el.setAttribute('aria-selected', 'true');
+        e.target.setAttribute('aria-activedescendant', el.id);
+        el.scrollIntoView({ block: 'nearest' });
+      };
       if (e.key === 'ArrowDown') {
         e.preventDefault();
         idx = (idx + 1) % items.length;
-        items.forEach(el => el.classList.remove('active'));
-        items[idx].classList.add('active');
-        items[idx].scrollIntoView({ block: 'nearest' });
+        setActive(items[idx]);
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
         idx = idx <= 0 ? items.length - 1 : idx - 1;
-        items.forEach(el => el.classList.remove('active'));
-        items[idx].classList.add('active');
-        items[idx].scrollIntoView({ block: 'nearest' });
+        setActive(items[idx]);
       } else if (e.key === 'Enter') {
         /* If an item is highlighted, activate it. Otherwise: a pasted tx
            hash or address jumps straight to the post / profile (no need to
@@ -953,7 +956,7 @@ class SayIt {
          this Escape could never close them while you're typing (X parity). */
       if (e.key === 'Escape') {
         if (this.g('generic-modal')) { this._closeGenericModal(); return; }
-        const openModal = ['compose-modal','reply-modal','repost-modal','media-modal','share-modal','profile-modal']
+        const openModal = ['compose-modal','reply-modal','repost-modal','media-modal','profile-modal']
           .find(id => this.g(id)?.classList.contains('open'));
         if (openModal) { this.closeModal(openModal); return; }
       }
@@ -1049,13 +1052,13 @@ class SayIt {
         /* Generic modal is built on the fly and sits topmost when present —
            close it first (it removes itself + releases focus). */
         if (this.g('generic-modal')) { this._closeGenericModal(); return; }
-        ['compose-modal','profile-modal','reply-modal','repost-modal','media-modal','share-modal'].forEach(id => {
+        ['compose-modal','profile-modal','reply-modal','repost-modal','media-modal'].forEach(id => {
           if (g(id).classList.contains('open')) this.closeModal(id);
         });
       }
     });
 
-    ['compose-modal','profile-modal','reply-modal','repost-modal','media-modal','share-modal'].forEach(id => {
+    ['compose-modal','profile-modal','reply-modal','repost-modal','media-modal'].forEach(id => {
       g(id).addEventListener('click', e => { if (e.target === g(id)) this.closeModal(id); });
     });
 
@@ -1090,7 +1093,6 @@ class SayIt {
     };
     g('fetch-nft-btn').onclick = () => this.fetchNFTImage();
 
-    w('close-share-modal', 'onclick', () => this.closeModal('share-modal'));
     g('close-reply').onclick      = () => this.closeModal('reply-modal');
     g('cancel-reply-btn').onclick = () => this.closeModal('reply-modal');
     g('post-reply-btn').onclick   = () => this.postReply();
@@ -1217,11 +1219,13 @@ class SayIt {
     frame.setAttribute('title', yt ? 'YouTube video' : vm ? 'Vimeo video' : 'Facebook video');
     el.innerHTML = '';
     el.appendChild(frame);
-    /* Drop the facade affordances and give the container a 16:9 box so the
+    /* Drop the facade affordances and give the container a box so the
        absolutely-positioned iframe has height (emptying the thumbnail would
-       otherwise collapse the wrapper to 0 and hide the player). */
+       otherwise collapse the wrapper to 0 and hide the player). FB Reels are
+       9:16 — give them a portrait box instead of the default 16:9. */
     el.classList.remove('post-yt-facade', 'post-vimeo-facade', 'post-fb-facade', 'yt-facade-private');
     el.classList.add('post-embed-playing');
+    if (fb && /\/reel\//.test(fb)) el.classList.add('post-embed-reel');
   }
 
   /* Restore a playing embed back to its click-to-play facade. This is the
@@ -1229,7 +1233,7 @@ class SayIt {
   _revertEmbed(el) {
     if (!el.classList.contains('post-embed-playing') || el._facadeHTML == null) return;
     el.innerHTML = el._facadeHTML;
-    el.classList.remove('post-embed-playing');
+    el.classList.remove('post-embed-playing', 'post-embed-reel');
     el.classList.add('post-yt-facade');
     if (el._facadeWasVimeo) el.classList.add('post-vimeo-facade');
     if (el._facadeWasFb) el.classList.add('post-fb-facade', 'yt-facade-private');
@@ -2247,7 +2251,7 @@ class SayIt {
       <div class="ana-page">
         <div class="ana-note">Computed locally from your cached slice of the chain — scan more history (scroll feeds, raise scan depth, or run a Deep sync) for deeper numbers.</div>
         <div class="ana-range" role="tablist">
-          ${[7, 14, 30].map(d => `<button class="ana-range-btn${range === d ? ' active' : ''}" data-ana-range="${d}" role="tab">${d}d</button>`).join('')}
+          ${[7, 14, 30].map(d => `<button class="ana-range-btn${range === d ? ' active' : ''}" data-ana-range="${d}" role="tab" aria-selected="${range === d ? 'true' : 'false'}">${d}d</button>`).join('')}
         </div>
         <div class="ana-stats">
           ${stat('Cached posts', feedPosts.length.toLocaleString())}
@@ -2418,7 +2422,7 @@ class SayIt {
       <div class="ana-page">
         <div class="ana-note">Computed locally from the last ${pages} page(s) of your address history and your cached archive — nothing is sent anywhere.</div>
         <div class="ana-range" role="tablist">
-          ${[7, 14, 30].map(d => `<button class="ana-range-btn${range === d ? ' active' : ''}" data-dash-range="${d}" role="tab">${d}d</button>`).join('')}
+          ${[7, 14, 30].map(d => `<button class="ana-range-btn${range === d ? ' active' : ''}" data-dash-range="${d}" role="tab" aria-selected="${range === d ? 'true' : 'false'}">${d}d</button>`).join('')}
         </div>
         <div class="ana-stats">
           ${stat('Tips received', tips.length.toLocaleString())}
@@ -2553,12 +2557,13 @@ class SayIt {
   }
   _getPostCap() {
     const s = this._getSettings();
-    /* No cap by default — block gas limit caps individual post size, and
-       IndexedDB has plenty of room for any realistic feed. Users can set
-       a manual cap in Settings if they want to bound memory usage on
-       very long-lived sessions. */
+    /* Default cap bounds memory AND every full-array pass (feed re-sort per
+       page, sidebar news/trending/who-to-follow, search) on long-lived
+       sessions. 2000 is a large feed — the newest 2000 are kept (posts are
+       newest-first) and older posts re-fetch on scroll. Users can raise it or
+       choose 'unlimited' in Settings. */
     if (s.postCap === 'unlimited' || s.postCap === '0' || s.postCap === 0) return Infinity;
-    return Number(s.postCap) || Infinity;
+    return Number(s.postCap) || 2000;
   }
   /* Max API pages for deep scans. 0 = Infinity (unlimited).
      Default 100 pages = 5000 txs. */
@@ -6087,54 +6092,46 @@ class SayIt {
        a malformed value to the explorer (and short-circuit junk lookups). */
     if (!/^0x[0-9a-f]{64}$/i.test(hash || '')) return null;
     const cid = Number(chainId) || CANONICAL_CHAIN_ID;
-    /* Non-canonical chain (cross-chain quoted post): Etherscan v2 proxy
-       eth_getTransactionByHash. That response has no block timestamp, so
-       _parsePostTx falls back to "now" for the quote card's relative time. */
+    /* Non-canonical chain (cross-chain quoted/reposted post). Two explorer
+       shapes: Etherscan-v2 proxy (BSC) and Blockscout v2 (ETH, Base — the
+       default-on cross-chains). Without the Blockscout branch, ETH/Base
+       quote/repost originals outside the in-memory window never resolve and
+       render a permanent "unavailable" card. */
     if (cid !== CANONICAL_CHAIN_ID) {
       const cfg = chainCfg(cid);
-      if (!cfg || cfg.explorer.type !== 'etherscan-v2') return null;
-      try {
-        const sx  = this._getSettings();
-        const key = sx.etherscanKey ? `&apikey=${encodeURIComponent(sx.etherscanKey)}` : '';
-        const res = await fetch(`${cfg.explorer.api}?chainid=${cfg.id}&module=proxy&action=eth_getTransactionByHash&txhash=${hash}${key}`);
-        if (res.ok) {
-          const d = await res.json();
-          const r = d && d.result;
-          if (r && r.input && r.input !== '0x') {
-            const txLike = {
-              hash: r.hash || hash, from: r.from, to: r.to, input: r.input,
-              blockNumber: r.blockNumber ? parseInt(r.blockNumber, 16) : null, timeStamp: null,
-            };
-            if (!utils.isTxShape(txLike)) return null;
-            utils._stripBadNumerics(txLike);
-            const parsed = this._parsePostTx(txLike, { mode: 'main', chainId: cid });
-            if (parsed) this._postMap.set(hash, parsed);
-            return parsed;
+      if (!cfg) return null;
+      let txLike = null;
+      if (cfg.explorer.type === 'etherscan-v2') {
+        /* Proxy eth_getTransactionByHash — no block timestamp, so _parsePostTx
+           falls back to "now" for the quote card's relative time. */
+        try {
+          const sx  = this._getSettings();
+          const key = sx.etherscanKey ? `&apikey=${encodeURIComponent(sx.etherscanKey)}` : '';
+          const res = await fetch(`${cfg.explorer.api}?chainid=${cfg.id}&module=proxy&action=eth_getTransactionByHash&txhash=${hash}${key}`);
+          if (res.ok) {
+            const d = await res.json();
+            const r = d && d.result;
+            if (r && r.input && r.input !== '0x') {
+              txLike = {
+                hash: r.hash || hash, from: r.from, to: r.to, input: r.input,
+                blockNumber: r.blockNumber ? parseInt(r.blockNumber, 16) : null, timeStamp: null,
+              };
+            }
           }
-        }
-      } catch { /* give up */ }
-      return null;
+        } catch { /* give up */ }
+      } else if (cfg.explorer.type === 'blockscout') {
+        txLike = await this._blockscoutTx(cfg.explorer.api.replace(/\/api\/?$/, ''), hash);
+      }
+      if (!txLike || !utils.isTxShape(txLike)) return null;
+      utils._stripBadNumerics(txLike);
+      const parsed = this._parsePostTx(txLike, { mode: 'main', chainId: cid });
+      if (parsed) this._postMap.set(hash, parsed);
+      return parsed;
     }
     const s = this._getSettings();
     const base = (s.apiUrl || 'https://api.scan.pulsechain.com/api').replace(/\/api\/?$/, '');
-    let txLike = null;
-    /* Primary: Blockscout v2. */
-    try {
-      const res = await fetch(`${base}/api/v2/transactions/${hash}`);
-      if (res.ok) {
-        const d = await res.json();
-        if (d && d.raw_input && d.raw_input !== '0x') {
-          txLike = {
-            hash:  d.hash || hash,
-            from:  d.from?.hash,
-            to:    d.to?.hash,
-            input: d.raw_input,
-            blockNumber: d.block ?? null,
-            timeStamp: d.timestamp ? Math.floor(new Date(d.timestamp).getTime() / 1000) : null,
-          };
-        }
-      }
-    } catch { /* fall through to RPC */ }
+    /* Primary: Blockscout v2 (shared helper). */
+    let txLike = await this._blockscoutTx(base, hash);
     /* Fallback: JSON-RPC node, with a best-effort block-timestamp lookup. */
     if (!txLike) {
       try {
@@ -6163,6 +6160,30 @@ class SayIt {
     const parsed = this._parsePostTx(txLike, { mode: 'main' });
     if (parsed) this._postMap.set(hash, parsed);
     return parsed;
+  }
+
+  /* Fetch + normalize a single tx from a Blockscout v2 explorer (`base` has no
+     trailing /api). Shared by the canonical Pulse path and cross-chain
+     (ETH/Base) quote/repost resolution in _fetchTxByHash. Returns a tx-like
+     object or null; callers run it through utils.isTxShape before ingesting. */
+  async _blockscoutTx(base, hash) {
+    try {
+      const res = await fetch(`${base}/api/v2/transactions/${hash}`);
+      if (res.ok) {
+        const d = await res.json();
+        if (d && d.raw_input && d.raw_input !== '0x') {
+          return {
+            hash:  d.hash || hash,
+            from:  d.from?.hash,
+            to:    d.to?.hash,
+            input: d.raw_input,
+            blockNumber: d.block ?? null,
+            timeStamp: d.timestamp ? Math.floor(new Date(d.timestamp).getTime() / 1000) : null,
+          };
+        }
+      }
+    } catch { /* caller falls back to RPC / gives up */ }
+    return null;
   }
 
   /* Resolve a feed-reply's parent post and patch its conversation-module
@@ -6656,6 +6677,8 @@ class SayIt {
 
     const picker = document.createElement('div');
     picker.id = 'emoji-picker-pop';
+    picker.setAttribute('role', 'dialog');
+    picker.setAttribute('aria-label', 'Emoji picker');
     picker.style.cssText = `
       position:absolute; z-index:600;
       background:var(--bg-mid); border:1px solid var(--border);
@@ -6847,6 +6870,10 @@ class SayIt {
     picker.style.left = left + 'px';
     picker.style.top  = (top + window.scrollY) + 'px';
     document.body.appendChild(picker);
+    /* Move focus into the popup so keyboard users land on the search field and
+       a screen reader announces the "Emoji picker" dialog; focus returns to the
+       trigger on close (see removePicker). */
+    search.focus();
     /* Colorize the glyphs to Twitter images LAZILY — one category-section at a
        time as it scrolls into view — instead of converting all ~1200 at once.
        The old eager parse built ~1200 <img> nodes (+ CDN fetches) synchronously
@@ -6867,9 +6894,14 @@ class SayIt {
     const removePicker = () => {
       this._emojiColorizeObs?.disconnect();
       this._emojiColorizeObs = null;
+      /* Restore focus to the trigger only if focus was still inside the picker
+         (Escape / close button / keyboard) — not when an outside click moved
+         focus elsewhere on purpose. */
+      const restoreFocus = picker.contains(document.activeElement);
       picker.remove();
       document.removeEventListener('click', close, true);
       document.removeEventListener('keydown', onKey, true);
+      if (restoreFocus) emojiBtn?.focus?.();
       this._emojiTarget = null;
       this._emojiAnchor = null;
     };
@@ -7483,8 +7515,10 @@ class SayIt {
         }
       }
     });
-    /* Also refresh sidebar panels (cheap) */
-    this._refreshSidebarPanels();
+    /* Also refresh sidebar panels — debounced, since profile patches stream in
+       rapidly (~every 120ms) during the initial scan and each refresh re-scans
+       the feed for trending/news/who-to-follow. */
+    (this._refreshSidebarDebounced || (() => this._refreshSidebarPanels()))();
   }
 
   /* ── Sidebar: dynamic trending + who-to-follow ────────────────────────
@@ -7622,6 +7656,11 @@ class SayIt {
     };
 
     const candidates = this.state.posts
+      /* Newest-first + recency-dominated scoring → the newest 400 always
+         contain the top-3. Bounds the per-post regex+Date scan below so it
+         doesn't grow with the (capped, but still large) feed on each refresh,
+         matching renderWhoToFollow/renderTrending's slice. */
+      .slice(0, 400)
       .filter(p => {
         if (p.postType === 'poll') return false; /* polls handled separately below */
         if (p.postType && p.postType !== 'post') return false; /* skip likes/follows */
@@ -8318,87 +8357,6 @@ class SayIt {
     this._popupHandlersAttached = false;
   }
 
-  /* ── Share card ─────────────────────────────────────────────────── */
-  openShareCard(post) {
-    const canvas  = this.g('share-canvas');
-    const modal   = this.g('share-modal');
-    const copyBtn = this.g('share-copy-img-btn');
-    const linkBtn = this.g('share-copy-link-btn');
-    const nativeBtn = this.g('share-native-btn');
-    if (!canvas || !modal) {
-      utils.copyToClipboard(txUrl(post.chainId, post.txHash), 'Link copied!');
-      return;
-    }
-    const dpr = window.devicePixelRatio || 1;
-    const W = 480, H = 280;
-    canvas.width  = W * dpr; canvas.height = H * dpr;
-    canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
-    const ctx = canvas.getContext('2d');
-    ctx.scale(dpr, dpr);
-    ctx.fillStyle = '#16181c'; ctx.fillRect(0, 0, W, H);
-    ctx.strokeStyle = '#2f3336'; ctx.lineWidth = 1;
-    ctx.strokeRect(0.5, 0.5, W-1, H-1);
-    const c = this.state.profCache[post.reporter];
-    const displayName = c?.username || this.trunc(post.reporter);
-    const text = (post.display || '').slice(0, 280);
-    const ts = this.relTime(post.timestamp);
-    const brand = '#7c4dff';
-    ctx.fillStyle = brand; ctx.fillRect(0, 0, 4, H);
-    ctx.fillStyle = '#e7e9ea';
-    ctx.font = 'bold 15px system-ui, sans-serif';
-    ctx.fillText(displayName, 24, 36);
-    ctx.fillStyle = '#71767b';
-    ctx.font = '13px system-ui, sans-serif';
-    ctx.fillText('@' + this.trunc(post.reporter), 24, 54);
-    ctx.fillStyle = '#2f3336'; ctx.fillRect(16, 64, W-32, 1);
-    ctx.fillStyle = '#e7e9ea';
-    ctx.font = '14px system-ui, sans-serif';
-    const words = text.split(' ');
-    let line = '', y = 88;
-    for (const word of words) {
-      const test = line + (line ? ' ' : '') + word;
-      if (ctx.measureText(test).width > W-48 && line) {
-        ctx.fillText(line, 24, y); line = word; y += 22;
-        if (y > H-60) { ctx.fillText(line+'…', 24, y); line=''; break; }
-      } else line = test;
-    }
-    if (line) ctx.fillText(line, 24, y);
-    ctx.fillStyle = '#1d1f23'; ctx.fillRect(0, H-48, W, 48);
-    ctx.fillStyle = '#71767b'; ctx.font = '12px system-ui, sans-serif';
-    ctx.fillText(ts + '  ·  PulseChain', 24, H-26);
-    ctx.fillStyle = brand; ctx.font = 'bold 12px system-ui, sans-serif';
-    ctx.fillText('Say It DeFi', W-100, H-26);
-    modal.classList.add('open');
-    this._trapFocus(modal);   /* keep Tab focus inside; restore on close */
-    copyBtn.onclick = async () => {
-      try {
-        canvas.toBlob(async blob => {
-          if (!blob) { utils.toast('Canvas error'); return; }
-          await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-          utils.toast('Image copied ✓');
-        }, 'image/png');
-      } catch { utils.toast('Copy not supported — try Share'); }
-    };
-    if (navigator.share && navigator.canShare) {
-      nativeBtn.style.display = '';
-      nativeBtn.onclick = async () => {
-        try {
-          const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
-          const file = new File([blob], 'post.png', { type:'image/png' });
-          if (navigator.canShare({ files:[file] })) {
-            await navigator.share({ files:[file], title:'Post on Say It DeFi',
-              text: text.slice(0,100), url:txUrl(post.chainId, post.txHash) });
-          } else {
-            await navigator.share({ title:'Post on Say It DeFi',
-              url:txUrl(post.chainId, post.txHash) });
-          }
-        } catch(err) { if(err.name!=='AbortError') utils.toast('Share failed: '+err.message); }
-      };
-    }
-    linkBtn.onclick = () => utils.copyToClipboard(
-      txUrl(post.chainId, post.txHash), 'Link copied!');
-  }
-
   /* ── Mute / unmute ──────────────────────────────────────────────── */
   muteAddress(addr) {
     addr = addr.toLowerCase();
@@ -8624,7 +8582,7 @@ class SayIt {
     if (people.length === 0 && tags.length === 0 && !isFullAddr && !isTxHash) {
       dd.innerHTML = `<div class="search-dd-empty">No people or tags match “${utils.safe(term)}”<br><span style="font-size:13px">Press Enter to search post text</span></div>`;
       dd.classList.add('open');
-      if (inp) inp.setAttribute('aria-expanded', 'true');
+      if (inp) { inp.setAttribute('aria-expanded', 'true'); inp.removeAttribute('aria-activedescendant'); }
       return;
     }
 
@@ -8687,8 +8645,11 @@ class SayIt {
       ).join('');
     }
     dd.innerHTML = html;
+    /* Stable option ids so ArrowUp/Down can point the combobox's
+       aria-activedescendant at the highlighted row (screen-reader support). */
+    dd.querySelectorAll('.search-dd-item').forEach((el, i) => { el.id = 'search-dd-opt-' + i; });
     dd.classList.add('open');
-    if (inp) inp.setAttribute('aria-expanded', 'true');
+    if (inp) { inp.setAttribute('aria-expanded', 'true'); inp.removeAttribute('aria-activedescendant'); }
 
     /* Wire item clicks */
     dd.querySelectorAll('[data-search-person]').forEach(el => {
@@ -8744,7 +8705,7 @@ class SayIt {
     const dd = this.g('search-dropdown');
     if (dd) dd.classList.remove('open');
     const inp = this.g('search-input');
-    if (inp) inp.setAttribute('aria-expanded', 'false');
+    if (inp) { inp.setAttribute('aria-expanded', 'false'); inp.removeAttribute('aria-activedescendant'); }
   }
 
   /* Show/hide the search clear (X) button based on input content. */

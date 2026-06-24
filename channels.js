@@ -184,8 +184,8 @@ const _CHANNELS = class {
       <div class="ch-layout" id="ch-layout">
         <div class="ch-col-list">
           <div class="chat-toggle" role="tablist">
-            <button class="chat-toggle-btn${tab === 'channels' ? ' active' : ''}" data-chat-tab="channels" role="tab">Channels</button>
-            <button class="chat-toggle-btn${tab === 'messages' ? ' active' : ''}" data-chat-tab="messages" role="tab">Messages 🔒</button>
+            <button class="chat-toggle-btn${tab === 'channels' ? ' active' : ''}" data-chat-tab="channels" role="tab" aria-selected="${tab === 'channels' ? 'true' : 'false'}">Channels</button>
+            <button class="chat-toggle-btn${tab === 'messages' ? ' active' : ''}" data-chat-tab="messages" role="tab" aria-selected="${tab === 'messages' ? 'true' : 'false'}">Messages 🔒</button>
           </div>
           <div id="ch-page"></div>
         </div>

@@ -176,7 +176,7 @@ const _SET = class {
           </div>`).join('')}
         <div class="settings-row" style="flex-direction:column;align-items:stretch;gap:8px">
           <div class="settings-row-label"><strong>Muted words</strong><span>Hide posts from others that contain any of these words or phrases — one per line, case-insensitive. Whole-word match; your own posts are never hidden. Applies on the next feed refresh.</span></div>
-          <textarea id="set-muted-words" rows="4" placeholder="e.g.&#10;giveaway&#10;rug&#10;not financial advice"
+          <textarea id="set-muted-words" rows="4" aria-label="Muted words" placeholder="e.g.&#10;giveaway&#10;rug&#10;not financial advice"
             style="width:100%;background:var(--bg-mid);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:14px;font-family:inherit;resize:vertical">${utils.safe((s.mutedWords || []).join('\n'))}</textarea>
         </div>
         <div class="settings-row">
@@ -234,12 +234,12 @@ const _SET = class {
         <div class="settings-row" id="space-turn-rows" style="flex-direction:column;align-items:stretch;gap:8px;${s.spaceMaskIp ? '' : 'display:none'}">
           <div class="settings-row-label"><strong>TURN relay server</strong><span>e.g. turn:relay.example.com:443?transport=tcp — any standard TURN service
             or a self-hosted coturn works. There is currently no reliable free public TURN, so this is bring-your-own.</span></div>
-          <input type="text" id="set-turn-url" placeholder="turn:host:port" value="${utils.safe(s.spaceTurnUrl || '')}"
+          <input type="text" id="set-turn-url" placeholder="turn:host:port" aria-label="TURN relay server URL" value="${utils.safe(s.spaceTurnUrl || '')}"
             style="width:100%;background:var(--bg-mid);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px">
           <div style="display:flex;gap:8px">
-            <input type="text" id="set-turn-user" placeholder="username" value="${utils.safe(s.spaceTurnUser || '')}"
+            <input type="text" id="set-turn-user" placeholder="username" aria-label="TURN username" value="${utils.safe(s.spaceTurnUser || '')}"
               style="flex:1;background:var(--bg-mid);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px">
-            <input type="text" id="set-turn-cred" placeholder="credential" value="${utils.safe(s.spaceTurnCred || '')}"
+            <input type="text" id="set-turn-cred" placeholder="credential" aria-label="TURN credential" value="${utils.safe(s.spaceTurnCred || '')}"
               style="flex:1;background:var(--bg-mid);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px">
           </div>
         </div>

@@ -20,6 +20,12 @@
 <link rel="icon" type="image/png" href="title_icon.png">
 <link rel="manifest" href="./manifest.json">
 <link rel="apple-touch-icon" href="./image1.jpeg">
+<!-- iOS PWA: run standalone (no Safari chrome) when launched from the home
+     screen, with a dark status bar matching the default theme. Android/desktop
+     standalone is already handled by the manifest's display:standalone. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Say It DeFi">
 <meta name="theme-color" content="#7c4dff">
 <!-- STRICT CSP: no inline script of any kind executes — every handler is
      a delegated listener and all code loads from 'self' (boot.js, app.js)
@@ -660,6 +666,12 @@ nav { flex:1; padding:4px 0; }
 .post-tag:hover     { text-decoration:underline; }
 .post-mention { color:#1d9bf0; cursor:pointer; }
 .post-mention:hover { text-decoration:underline; }
+/* Light theme: #1d9bf0 is only 3.0:1 on white (below WCAG AA 4.5:1). A darker
+   blue (~5.7:1 on white, ~5.4:1 on the grey panel) keeps the X-style link look
+   while clearing AA. Dark/dim themes keep #1d9bf0 (already 5–7:1 there). */
+:root[data-theme="light"] .post-link,
+:root[data-theme="light"] .post-tag,
+:root[data-theme="light"] .post-mention { color:#1565c0; }
 
 .post-images {
   display:grid;
@@ -766,6 +778,14 @@ nav { flex:1; padding:4px 0; }
 /* Container after a facade is clicked: holds a 16:9 box for the iframe, which
    is absolutely positioned and would otherwise leave the wrapper at 0 height. */
 .post-embed-playing { position:relative; aspect-ratio:16/9; margin-top:8px; border-radius:12px; overflow:hidden; background:#000; }
+/* Facebook Reels are 9:16 (portrait) — a 16:9 box pillarboxes them with thick
+   black bars. max-width caps width so the derived height stays ≤ 80vh, and the
+   box centers in the column. (landscape FB/YouTube/Vimeo keep the 16:9 box.) */
+.post-embed-playing.post-embed-reel {
+  aspect-ratio:9/16; max-height:80vh;
+  max-width:min(100%, calc(80vh * 9 / 16));
+  margin-left:auto; margin-right:auto;
+}
 .post-yt-facade, .post-vimeo-facade { position:relative; }
 .post-yt-thumb  { width:100%; display:block; border-radius:0; }
 .post-yt-play, .post-vimeo-play {
@@ -3357,7 +3377,7 @@ html.ul-links .post-mention { text-decoration:underline; }
     <div id="compose-area">
       <img src="image1.jpeg" class="compose-avatar" id="compose-avatar" alt="">
       <div class="compose-body">
-        <textarea id="compose-text" rows="1" placeholder="What's happening on Pulse?"></textarea>
+        <textarea id="compose-text" rows="1" placeholder="What's happening on Pulse?" aria-label="Post text"></textarea>
         <div id="compose-toolbar">
           <div class="compose-icons">
             <button class="cmp-icon" id="cmp-image-btn" title="Add photos or video" aria-label="Add photos or video">
@@ -3416,7 +3436,7 @@ html.ul-links .post-mention { text-decoration:underline; }
       <div class="search-wrap">
         <span class="search-icon">🔎</span>
         <input type="text" id="search-input" placeholder="Search Say It DeFi" autocomplete="off"
-          role="combobox" aria-expanded="false" aria-controls="search-dropdown" aria-autocomplete="list">
+          role="combobox" aria-label="Search Say It DeFi" aria-expanded="false" aria-controls="search-dropdown" aria-autocomplete="list">
         <button class="search-clear" id="search-clear" type="button"
           title="Clear search" aria-label="Clear search">
           <svg viewBox="0 0 24 24" width="16" height="16">
@@ -3615,7 +3635,7 @@ html.ul-links .post-mention { text-decoration:underline; }
       <img src="image1.jpeg" class="compose-avatar" id="modal-compose-avatar" alt="" style="margin-top:4px">
       <div style="flex:1;min-width:0">
         <textarea class="auto-textarea" id="modal-compose-text"
-          placeholder="What's happening on Pulse?"
+          placeholder="What's happening on Pulse?" aria-label="Post text"
           style="min-height:200px;font-size:18px;background:transparent;border-color:transparent;padding:8px 0"></textarea>
         <div style="display:flex;justify-content:space-between;align-items:center;
           margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
@@ -3667,36 +3687,36 @@ html.ul-links .post-mention { text-decoration:underline; }
     </div>
 
     <div class="form-group">
-      <label class="form-lbl">Display Name</label>
+      <label class="form-lbl" for="pe-name">Display Name</label>
       <input type="text" class="form-input" id="pe-name" placeholder="Your display name" maxlength="50">
     </div>
     <div class="form-group">
-      <label class="form-lbl">Bio</label>
+      <label class="form-lbl" for="pe-bio">Bio</label>
       <textarea class="form-textarea" id="pe-bio" placeholder="Tell the world…" maxlength="160" rows="3"></textarea>
       <span id="pe-bio-count" style="font-size:12px;color:var(--muted);display:block;text-align:right;margin-top:4px"></span>
     </div>
     <div class="form-group">
-      <label class="form-lbl">Location</label>
+      <label class="form-lbl" for="pe-location">Location</label>
       <input type="text" class="form-input" id="pe-location" placeholder="Where in the world?" maxlength="30">
     </div>
     <div class="form-group">
-      <label class="form-lbl">Website</label>
+      <label class="form-lbl" for="pe-website">Website</label>
       <input type="text" class="form-input" id="pe-website" placeholder="https://…" maxlength="100">
     </div>
     <div class="form-group">
-      <label class="form-lbl">Profile picture (https:// URL)</label>
+      <label class="form-lbl" for="pe-pic">Profile picture (https:// URL)</label>
       <input type="text" class="form-input" id="pe-pic" placeholder="https://…">
     </div>
     <div class="form-group">
-      <label class="form-lbl">Cover photo (https:// URL)</label>
+      <label class="form-lbl" for="pe-cover">Cover photo (https:// URL)</label>
       <input type="text" class="form-input" id="pe-cover" placeholder="https://…">
     </div>
     <details class="nft-section">
       <summary>Use an NFT as profile picture</summary>
       <div class="nft-inner">
         <div class="nft-row">
-          <input type="text" class="form-input" id="nft-contract" placeholder="Contract (0x…)" style="flex:2">
-          <input type="text" class="form-input" id="nft-token-id" placeholder="Token ID" style="flex:1">
+          <input type="text" class="form-input" id="nft-contract" placeholder="Contract (0x…)" aria-label="NFT contract address" style="flex:2">
+          <input type="text" class="form-input" id="nft-token-id" placeholder="Token ID" aria-label="NFT token ID" style="flex:1">
         </div>
         <button class="btn-sm" id="fetch-nft-btn">🖼 Fetch NFT Image</button>
         <div class="nft-status" id="nft-status"></div>
@@ -3709,22 +3729,6 @@ html.ul-links .post-mention { text-decoration:underline; }
   </div>
 </div>
 
-<!-- Share card modal -->
-<div class="modal-bg" id="share-modal">
-  <div class="modal" style="max-width:520px" role="dialog" aria-modal="true" aria-label="Share post">
-    <div class="modal-head">
-      <span class="modal-title">Share Post</span>
-      <button class="modal-close" aria-label="Close" id="close-share-modal">✕</button>
-    </div>
-    <canvas id="share-canvas" style="width:100%;border-radius:12px;display:block;background:#16181c;margin-bottom:12px"></canvas>
-    <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
-      <button class="btn-pri" id="share-copy-img-btn">📋 Copy Image</button>
-      <button class="btn-pri" id="share-native-btn" style="display:none">📤 Share…</button>
-      <button class="btn-ghost" id="share-copy-link-btn">🔗 Copy Link</button>
-    </div>
-  </div>
-</div>
-
 <!-- Reply modal -->
 <div class="modal-bg" id="reply-modal">
   <div class="modal" role="dialog" aria-modal="true" aria-label="Reply">
@@ -3733,7 +3737,7 @@ html.ul-links .post-mention { text-decoration:underline; }
       <button class="modal-close" aria-label="Close" id="close-reply">✕</button>
     </div>
     <div class="reply-quote" id="reply-quote"></div>
-    <textarea class="auto-textarea" id="reply-input" placeholder="Post your reply…"></textarea>
+    <textarea class="auto-textarea" id="reply-input" placeholder="Post your reply…" aria-label="Your reply"></textarea>
     <div style="text-align:right;font-size:13px;color:var(--muted);margin-top:4px" id="reply-count"></div>
     <div class="compose-icons" style="margin-top:6px">
       <button class="cmp-icon" id="reply-image-btn" title="Add photos or video" aria-label="Add photos or video">
@@ -3762,7 +3766,7 @@ html.ul-links .post-mention { text-decoration:underline; }
       <button class="modal-close" aria-label="Close" id="close-repost">✕</button>
     </div>
     <textarea class="auto-textarea" id="repost-input"
-      placeholder="Add your quote…" style="margin-bottom:4px"></textarea>
+      placeholder="Add your quote…" aria-label="Add your quote" style="margin-bottom:4px"></textarea>
     <div style="text-align:right;font-size:13px;color:var(--muted);margin-bottom:6px" id="repost-count"></div>
     <div class="compose-icons" style="margin-bottom:10px">
       <button class="cmp-icon" id="repost-image-btn" title="Add photos or video" aria-label="Add photos or video">
