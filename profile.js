@@ -370,6 +370,10 @@ const _PROF = class {
       let tipCount = 0, tipWei = 0n;
       const tipSeen = new Set();
       const refresh = () => {
+        /* Don't clobber another profile's count if the user navigated away
+           mid-scan — the cross-chain scan spans up to 3 explorers, widening that
+           window (sibling _showFollowingCount guards the same way). */
+        if (this.state.mode !== 'profile' || this.state.channel !== addr) return;
         /* Rebuild the follows map from latest actions; update live count. */
         follows.clear();
         for (const [f, { action }] of lastAction) follows.set(f, action);

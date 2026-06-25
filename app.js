@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260623-266';
+const SW_CACHE_VER = '20260623-267';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -5506,10 +5506,10 @@ class SayIt {
     /* Destination chain. Feed content (posts / replies / reposts / quotes) passes
        'wallet': the tx lands on whatever chain the wallet is currently on and we
        NEVER switch the user's network — reads aggregate across all chains, so it
-       shows up regardless. Profile saves pass 'wallet' too when the wallet is on
-       a cross-chain identity chain (profile reads are cross-chain since Phase 1 —
-       see _identityWriteChain). The remaining reaction actions (follow, like,
-       bookmark, vote, note, DM, …) still pass an explicit canonical chain because
+       shows up regardless. Profile saves, follows and bookmarks pass 'wallet'
+       too when the wallet is on a cross-chain identity chain (their reads are
+       cross-chain — see _identityWriteChain). The remaining reaction actions
+       (like, vote, note, DM, …) still pass an explicit canonical chain because
        their read-state is canonical-pinned, so those switch to it. */
     let cid;
     if (chainId === 'wallet') {
