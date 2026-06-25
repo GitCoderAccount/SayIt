@@ -65,12 +65,15 @@
         pic = utils.safe(utils.safeUrl(prof?.picUrl) || 'image1.jpeg');
         this.fetchOtherProfile(c.addr);
       }
-      const preview = utils.safe((last?.text || '').slice(0, 56));
+      /* Privacy: the conversation list never renders decrypted message content —
+         the page's principle is "the message text is private". Show a neutral
+         placeholder; actual messages appear only inside the opened chat. (For
+         groups, prevName is the last sender — public on-chain metadata.) */
       return `<div class="ch-history-item" role="button" tabindex="0" data-dm-open="${utils.safe(openId)}">
         <img src="${pic}" class="ch-hist-avatar" alt="" data-fallback-src="image1.jpeg">
         <div class="ch-hist-body">
           <div class="ch-hist-top"><span class="ch-hist-name">${name}</span>${time}</div>
-          <div class="ch-hist-preview">${prevName}${preview || 'Encrypted message'}</div>
+          <div class="ch-hist-preview">${prevName}🔒 Encrypted message</div>
         </div>
       </div>`;
     }).join('') || `<div class="ch-pane-empty" style="padding:24px"><p>No conversations yet. Start one with “New message” or “New group”.</p></div>`;
