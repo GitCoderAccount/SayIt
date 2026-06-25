@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260623-268';
+const SW_CACHE_VER = '20260623-269';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -6092,6 +6092,10 @@ class SayIt {
   /* Push a route into the address bar. No-op when navigation was initiated BY
      the router (back/forward / deep link), so we don't add duplicate history. */
   _setRoute(path) {
+    /* Dismiss any open profile hover-card so it can't outlive the view change —
+       its feed trigger is removed on navigation, so the mouseout that would
+       close it may never fire. Idempotent + safe when nothing is open. */
+    this.hideProfilePopup();
     if (this._suppressRoute) return;
     const target = '#' + path;
     if (location.hash === target) { this._lastRoutedHash = target; return; }
