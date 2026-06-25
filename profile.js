@@ -60,41 +60,31 @@ const _PROF = class {
       try {
         const targetAddr = address.toLowerCase();
         const lastAction = new Map(); /* target → { action, order } */
-        const flimit = this._getMaxScanPages();
         const emptyD = feed.querySelector('.prof-empty');
         const progFL = emptyD ? document.createElement('p') : null;
         if (emptyD && progFL) emptyD.appendChild(progFL);
-        for (let page = 1; (flimit === Infinity || page <= flimit); page++) {
-          if (progFL) progFL.textContent = `Scanning page ${page}…`;
-          let raw = [];
-          try { raw = await this.apiFetch(targetAddr, page); }
-          catch { break; }
-          raw.forEach(tx => {
-            if (tx.from?.toLowerCase() !== targetAddr) return; /* only their sent txs */
-            if (!tx.input || tx.input === '0x') return;
-            /* Composite on-chain order: block timestamps are per-SECOND, so
-               an unfollow + re-follow in the same block share a ts and the
-               tie-break becomes ambiguous (scan-order dependent). blockNumber
-               then transactionIndex give the true, deterministic order. */
-            const order = (Number(tx.blockNumber) || 0) * 100000
-                        + (Number(tx.transactionIndex) || 0);
-            try {
-              const text = ethers.toUtf8String(tx.input).trim();
-              let tgt = null, action = null;
-              if (text.startsWith(FOLLOW_PREFIX)) {
-                tgt = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase(); action = 'follow';
-              } else if (text.startsWith(UNFOLLOW_PREFIX)) {
-                tgt = text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase(); action = 'unfollow';
-              }
-              if (tgt && action) {
-                const prev = lastAction.get(tgt);
-                if (!prev || order >= prev.order) lastAction.set(tgt, { action, order });
-              }
-            } catch { /* best-effort follow-graph scan: ignore a failed/malformed tx row, keep partial results */ }
-          });
-          if (raw.length < 50) break;
-          await this._scanDelay(150);
-        }
+        /* Cross-chain: their sent FOLLOW/UNFOLLOW across the identity chains;
+           newest action per target wins (global ts; blockNumber+txIndex breaks
+           same-second same-chain ties — an unfollow+refollow in one block). */
+        await this._scanAddressTxs(targetAddr, (tx) => {
+          if (tx.from?.toLowerCase() !== targetAddr) return; /* only their sent txs */
+          if (!tx.input || tx.input === '0x') return;
+          const ts = Number(tx.timeStamp) || 0;
+          const order = (Number(tx.blockNumber) || 0) * 100000
+                      + (Number(tx.transactionIndex) || 0);
+          try {
+            const text = ethers.toUtf8String(tx.input).trim();
+            let tgt = null, action = null;
+            if (text.startsWith(FOLLOW_PREFIX)) {
+              tgt = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase(); action = 'follow';
+            } else if (text.startsWith(UNFOLLOW_PREFIX)) {
+              tgt = text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase(); action = 'unfollow';
+            }
+            if (tgt && action && this._isNewerAction(lastAction.get(tgt), ts, order)) {
+              lastAction.set(tgt, { action, ts, order });
+            }
+          } catch { /* best-effort follow-graph scan: ignore a failed/malformed tx row, keep partial results */ }
+        }, { onPage: (p) => { if (progFL) progFL.textContent = `Scanning page ${p}…`; } });
         addrs = [...lastAction.entries()].filter(([,v]) => v.action === 'follow').map(([a]) => a);
       } catch { /* best-effort follow-graph scan: ignore a failed/malformed tx row, keep partial results */ }
     }
@@ -154,50 +144,34 @@ const _PROF = class {
   /* Raw follower scan → returns the resolved follower address array, or null
      if it was aborted by navigation. Shared by the cached entry point above. */
   async _scanFollowers(addr, navToken, prog, maxPages = Infinity) {
-    /* Track the LATEST action per follower (txs arrive newest-first; an
-       unfollow→refollow must resolve to the most recent action). */
-    const lastAction = new Map(); /* from → { action, order } */
-    try {
-      const flimit2 = Math.min(this._getMaxScanPages(), maxPages);
-      for (let page = 1; (flimit2 === Infinity || page <= flimit2); page++) {
-        if (prog) prog.textContent = `Scanning page ${page}…`;
-        if (navToken !== this._navToken) return null; /* navigated away */
-        let raw = [];
-        try { raw = await this.apiFetch(addr, page); }
-        catch { break; }
-        raw.forEach(tx => {
-          if (!tx.input || tx.input === '0x') return;
-          const from = tx.from?.toLowerCase();
-          const to   = tx.to?.toLowerCase();
-          if (from === addr) return; /* a follow FROM this addr isn't a follower */
-          /* Composite on-chain order — see note in the following-list scan:
-             same-block unfollow+refollow share a per-second ts, so we order by
-             blockNumber then transactionIndex for a deterministic latest action. */
-          const order = (Number(tx.blockNumber) || 0) * 100000
-                      + (Number(tx.transactionIndex) || 0);
-          try {
-            const text = ethers.toUtf8String(tx.input).trim();
-            let action = null;
-            if (text.startsWith(FOLLOW_PREFIX)) {
-              const target = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
-              /* Strict: the PAYLOAD must name this address. A tx merely
-                 sent here whose payload follows someone else must not
-                 count as a follower of this address. */
-              if (target === addr) action = 'follow';
-            } else if (text.startsWith(UNFOLLOW_PREFIX)) {
-              const target = text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase();
-              if (target === addr) action = 'unfollow';
-            }
-            if (action) {
-              const prev = lastAction.get(from);
-              if (!prev || order >= prev.order) lastAction.set(from, { action, order });
-            }
-          } catch { /* best-effort follow-graph scan: ignore a failed/malformed tx row, keep partial results */ }
-        });
-        if (raw.length < 50) break;
-        await this._scanDelay(150);
-      }
-    } catch { /* best-effort follow-graph scan: ignore a failed/malformed tx row, keep partial results */ }
+    /* Track the LATEST action per follower across the identity chains: global
+       timestamp, with blockNumber+txIndex breaking same-second same-chain ties
+       (an unfollow+refollow in one block). */
+    addr = (addr || '').toLowerCase();
+    const lastAction = new Map(); /* from -> { action, ts, order } */
+    const ok = await this._scanAddressTxs(addr, (tx) => {
+      if (!tx.input || tx.input === '0x') return;
+      const from = tx.from?.toLowerCase();
+      if (from === addr) return; /* a follow FROM this addr isn't a follower */
+      const ts = Number(tx.timeStamp) || 0;
+      const order = (Number(tx.blockNumber) || 0) * 100000
+                  + (Number(tx.transactionIndex) || 0);
+      try {
+        const text = ethers.toUtf8String(tx.input).trim();
+        let action = null;
+        if (text.startsWith(FOLLOW_PREFIX)) {
+          /* Strict: the PAYLOAD must name this address (a tx merely sent here
+             whose payload follows someone else is not a follower). */
+          if (text.slice(FOLLOW_PREFIX.length).trim().toLowerCase() === addr) action = 'follow';
+        } else if (text.startsWith(UNFOLLOW_PREFIX)) {
+          if (text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase() === addr) action = 'unfollow';
+        }
+        if (action && this._isNewerAction(lastAction.get(from), ts, order)) {
+          lastAction.set(from, { action, ts, order });
+        }
+      } catch { /* best-effort follow-graph scan: ignore a failed/malformed tx row, keep partial results */ }
+    }, { maxPages, token: navToken, onPage: (p) => { if (prog) prog.textContent = `Scanning page ${p}…`; } });
+    if (!ok) return null; /* navigated away mid-scan */
     return [...lastAction.entries()].filter(([,v]) => v.action === 'follow').map(([a]) => a);
   }
 
@@ -333,41 +307,34 @@ const _PROF = class {
        per target wins (composite blockNumber+txIndex order). */
     const navAddr = address.toLowerCase();
     const lastAction = new Map(); /* target → { action, order } */
-    try {
-      const limit = this._getMaxScanPages();
-      for (let page = 1; (limit === Infinity || page <= limit); page++) {
-        let raw = [];
-        try { raw = await this.apiFetch(navAddr, page); }
-        catch { break; }
-        raw.forEach(tx => {
-          if (tx.from?.toLowerCase() !== navAddr) return; /* only their sent txs */
-          if (!tx.input || tx.input === '0x') return;
-          const order = (Number(tx.blockNumber) || 0) * 100000
-                      + (Number(tx.transactionIndex) || 0);
-          try {
-            const text = ethers.toUtf8String(tx.input).trim();
-            let tgt = null, action = null;
-            if (text.startsWith(FOLLOW_PREFIX)) {
-              tgt = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase(); action = 'follow';
-            } else if (text.startsWith(UNFOLLOW_PREFIX)) {
-              tgt = text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase(); action = 'unfollow';
-            }
-            if (tgt && action) {
-              const prev = lastAction.get(tgt);
-              if (!prev || order >= prev.order) lastAction.set(tgt, { action, order });
-            }
-          } catch { /* best-effort follow-graph scan: ignore a failed/malformed tx row, keep partial results */ }
-        });
-        /* Live update as pages come in (only while still on this profile). */
-        if (this.state.mode === 'profile' && this.state.channel === navAddr) {
-          const live = [...lastAction.values()].filter(v => v.action === 'follow').length;
-          const elNow = document.getElementById('prof-following-count');
-          if (elNow) elNow.innerHTML = `<strong>${live}</strong> Following`;
+    /* Cross-chain: their outgoing FOLLOW/UNFOLLOW across the identity chains;
+       newest action per target wins. Live-updates the count as pages stream in,
+       only while still on this profile. */
+    const liveUpdate = () => {
+      if (this.state.mode !== 'profile' || this.state.channel !== navAddr) return;
+      const n = [...lastAction.values()].filter(v => v.action === 'follow').length;
+      const elNow = document.getElementById('prof-following-count');
+      if (elNow) elNow.innerHTML = `<strong>${n}</strong> Following`;
+    };
+    await this._scanAddressTxs(navAddr, (tx) => {
+      if (tx.from?.toLowerCase() !== navAddr) return; /* only their sent txs */
+      if (!tx.input || tx.input === '0x') return;
+      const ts = Number(tx.timeStamp) || 0;
+      const order = (Number(tx.blockNumber) || 0) * 100000
+                  + (Number(tx.transactionIndex) || 0);
+      try {
+        const text = ethers.toUtf8String(tx.input).trim();
+        let tgt = null, action = null;
+        if (text.startsWith(FOLLOW_PREFIX)) {
+          tgt = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase(); action = 'follow';
+        } else if (text.startsWith(UNFOLLOW_PREFIX)) {
+          tgt = text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase(); action = 'unfollow';
         }
-        if (raw.length < 50) break;
-        await this._scanDelay(150);
-      }
-    } catch { /* best-effort follow-graph scan: ignore a failed/malformed tx row, keep partial results */ }
+        if (tgt && action && this._isNewerAction(lastAction.get(tgt), ts, order)) {
+          lastAction.set(tgt, { action, ts, order });
+        }
+      } catch { /* best-effort follow-graph scan: ignore a failed/malformed tx row, keep partial results */ }
+    }, { onPage: liveUpdate });
     if (this.state.mode === 'profile' && this.state.channel === navAddr) {
       const n = [...lastAction.values()].filter(v => v.action === 'follow').length;
       const elNow = document.getElementById('prof-following-count');
@@ -402,58 +369,52 @@ const _PROF = class {
       /* Tips piggyback on this same received-tx scan — zero extra calls. */
       let tipCount = 0, tipWei = 0n;
       const tipSeen = new Set();
-      const fcLimit = this._getMaxScanPages();
-      for (let page = 1; (fcLimit === Infinity || page <= fcLimit); page++) {
-        let raw = [];
-        try { raw = await this.apiFetch(addr, page); }
-        catch { break; }
-
-        raw.forEach(tx => {
-          const from = tx.from?.toLowerCase();
-          const to   = tx.to?.toLowerCase();
-          if (from === addr) return; /* a follow FROM this addr isn't a follower */
-          if (!tx.input || tx.input === '0x') return;
-          /* Composite on-chain order — see note in the following-list scan:
-             same-block unfollow+refollow share a per-second ts, so we order by
-             blockNumber then transactionIndex for a deterministic latest action. */
-          const order = (Number(tx.blockNumber) || 0) * 100000
-                      + (Number(tx.transactionIndex) || 0);
-          try {
-            const text = ethers.toUtf8String(tx.input).trim();
-            let action = null;
-            if (text.startsWith(FOLLOW_PREFIX)) {
-              const target = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
-              if (target === addr || to === addr) action = 'follow';
-            } else if (text.startsWith(UNFOLLOW_PREFIX)) {
-              const target = text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase();
-              if (target === addr || to === addr) action = 'unfollow';
-            } else if (text.startsWith(TIP_PREFIX) && !tipSeen.has(tx.hash)) {
-              tipSeen.add(tx.hash);
-              tipCount++;
-              try { tipWei += BigInt(tx.value || 0); } catch { /* odd value field */ }
-            }
-            if (action) {
-              const prev = lastAction.get(from);
-              if (!prev || order >= prev.order) lastAction.set(from, { action, order });
-            }
-          } catch { /* best-effort follow-graph scan: ignore a failed/malformed tx row, keep partial results */ }
-        });
-
+      const refresh = () => {
         /* Rebuild the follows map from latest actions; update live count. */
         follows.clear();
         for (const [f, { action }] of lastAction) follows.set(f, action);
         const live = [...follows.values()].filter(v => v === 'follow').length;
         const elNow = document.getElementById('prof-follower-count');
         if (elNow) elNow.innerHTML = `<strong>${live}</strong> Followers`;
-        /* Live-update the tips badge as pages land. */
         const tipsEl = document.getElementById('prof-tips');
         if (tipsEl && tipCount > 0) {
           tipsEl.style.display = '';
           tipsEl.textContent = `💎 ${tipCount} tip${tipCount === 1 ? '' : 's'} · ${utils.fmtPLS(tipWei.toString())} PLS`;
         }
-
-        if (raw.length < 50) break; /* last page — reached the end */
-      }
+      };
+      /* Cross-chain: their received FOLLOW/UNFOLLOW across the identity chains;
+         newest action per follower wins (global ts; block tiebreak). Tips
+         piggyback but are counted ONLY on the canonical chain — tip values are
+         PLS-denominated (fmtPLS), so summing cross-chain native values would mix
+         currencies. */
+      await this._scanAddressTxs(addr, (tx, chainId) => {
+        const from = tx.from?.toLowerCase();
+        const to   = tx.to?.toLowerCase();
+        if (from === addr) return; /* a follow FROM this addr isn't a follower */
+        if (!tx.input || tx.input === '0x') return;
+        const ts = Number(tx.timeStamp) || 0;
+        const order = (Number(tx.blockNumber) || 0) * 100000
+                    + (Number(tx.transactionIndex) || 0);
+        try {
+          const text = ethers.toUtf8String(tx.input).trim();
+          let action = null;
+          if (text.startsWith(FOLLOW_PREFIX)) {
+            const target = text.slice(FOLLOW_PREFIX.length).trim().toLowerCase();
+            if (target === addr || to === addr) action = 'follow';
+          } else if (text.startsWith(UNFOLLOW_PREFIX)) {
+            const target = text.slice(UNFOLLOW_PREFIX.length).trim().toLowerCase();
+            if (target === addr || to === addr) action = 'unfollow';
+          } else if (chainId === CANONICAL_CHAIN_ID && text.startsWith(TIP_PREFIX) && !tipSeen.has(tx.hash)) {
+            tipSeen.add(tx.hash);
+            tipCount++;
+            try { tipWei += BigInt(tx.value || 0); } catch { /* odd value field */ }
+          }
+          if (action && this._isNewerAction(lastAction.get(from), ts, order)) {
+            lastAction.set(from, { action, ts, order });
+          }
+        } catch { /* best-effort follow-graph scan: ignore a failed/malformed tx row, keep partial results */ }
+      }, { onPage: refresh });
+      refresh();
     } catch { /* silent */ }
   }
 
@@ -476,9 +437,8 @@ const _PROF = class {
       btn.textContent = isFollowing ? 'Unfollowing…' : 'Following…';
     }
     /* Follow on the wallet's current chain when it's an identity chain — your
-       own following set reads cross-chain (no forced switch to PulseChain).
-       Caveat: public follower COUNTS undercount off-Pulse follows until Phase 3
-       makes _lazyFollowCounts cross-chain; most follows still land on Pulse. */
+       own following set AND follower counts now both read cross-chain (Phase 3),
+       so no forced switch to PulseChain and the counts stay accurate. */
     const ok = await this.publish(prefix + addr, null, addr, await this._identityWriteChain());
     if (btn) btn.disabled = false;
     if (ok) {

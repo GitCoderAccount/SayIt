@@ -126,3 +126,40 @@ test('_applyReactionEvents: newest timestamp wins per target across chains (glob
   assert.ok(!pulse.state.bookmarks.has('d'), 'newer UNBOOKMARK wins → D not bookmarked');
   pulse.state.likes.clear(); pulse.state.bookmarks.clear(); pulse.state.following.clear();
 });
+
+/* Phase 3: the cross-chain follow-graph ordering rule. _isNewerAction decides
+   which of two follow/unfollow actions is the latest — GLOBAL timestamp first,
+   per-chain block composite (blockNumber*1e5+txIndex) as a same-second tiebreak.
+   This is what lets an UNFOLLOW on one chain beat an older FOLLOW on another. */
+test('_isNewerAction: global timestamp wins; block order breaks same-second ties', () => {
+  assert.strictEqual(pulse._isNewerAction(undefined, 100, 5), true,  'no prev → newer');
+  assert.strictEqual(pulse._isNewerAction({ ts: 100, order: 5 }, 200, 1), true,  'newer ts wins even with lower block order');
+  assert.strictEqual(pulse._isNewerAction({ ts: 200, order: 5 }, 100, 9), false, 'older ts loses even with higher block order');
+  assert.strictEqual(pulse._isNewerAction({ ts: 100, order: 5 }, 100, 9), true,  'same ts, higher block order → newer');
+  assert.strictEqual(pulse._isNewerAction({ ts: 100, order: 9 }, 100, 5), false, 'same ts, lower block order → older');
+  assert.strictEqual(pulse._isNewerAction({ ts: 100, order: 5 }, 100, 5), true,  'same ts & order → treated as newest (>=)');
+});
+
+/* _scanFollowers end-to-end with a stubbed cross-chain scan: an UNFOLLOW that is
+   globally newest (even on a different chain) must drop that follower. */
+test('_scanFollowers: cross-chain newest action per follower resolves correctly', async () => {
+  const toHex = (s) => '0x' + Buffer.from(s, 'utf8').toString('hex');
+  const FOLLOW = eval_('FOLLOW_PREFIX'), UNFOLLOW = eval_('UNFOLLOW_PREFIX');
+  const ME = '0x' + '1'.repeat(40), X = '0x' + 'a'.repeat(40), Y = '0x' + 'b'.repeat(40);
+  /* X follows on Base (ts 5000) then UNFOLLOWS on Pulse (ts 6000) → not a follower.
+     Y unfollows old (ts 1000) then FOLLOWS (ts 2000) → a follower. */
+  const txs = [
+    { from: X, to: ME, input: toHex(FOLLOW + ME),   timeStamp: 5000, blockNumber: 10, transactionIndex: 0 },
+    { from: X, to: ME, input: toHex(UNFOLLOW + ME), timeStamp: 6000, blockNumber: 20, transactionIndex: 0 },
+    { from: Y, to: ME, input: toHex(UNFOLLOW + ME), timeStamp: 1000, blockNumber: 5,  transactionIndex: 0 },
+    { from: Y, to: ME, input: toHex(FOLLOW + ME),   timeStamp: 2000, blockNumber: 8,  transactionIndex: 0 },
+  ];
+  const orig = pulse._scanAddressTxs;
+  pulse._scanAddressTxs = async (addr, handle) => { txs.forEach(tx => handle(tx, 369)); return true; };
+  try {
+    const followers = await pulse._scanFollowers(ME, undefined, null);
+    assert.deepStrictEqual([...followers], [Y], 'X dropped (newer unfollow), Y kept (newer follow)');
+  } finally {
+    pulse._scanAddressTxs = orig;
+  }
+});

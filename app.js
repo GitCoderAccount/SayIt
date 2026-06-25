@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260623-264';
+const SW_CACHE_VER = '20260623-265';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -3055,6 +3055,45 @@ class SayIt {
       seen.add(id);
       if (e.on) sets[e.cat].add(e.key);
     }
+  }
+
+  /* Shared cross-chain scan ENGINE for the follow-graph (and the tip piggyback):
+     page through an address's tx history across the identity chains in parallel,
+     calling handle(tx, chainId) for every tx. Early-exits per chain on a short
+     page; respects a page cap; reports cumulative pages via onPage for progress
+     labels; aborts (returns false) when `token` no longer matches this._navToken
+     (caller navigated away). With cross-chain identity off, _identityChains() =
+     [canonical] -> a single-chain scan identical to the legacy per-site loops. */
+  async _scanAddressTxs(addr, handle, { maxPages = Infinity, onPage = null, token } = {}) {
+    addr = (addr || '').toLowerCase();
+    const cap = Math.min(this._getMaxScanPages(), maxPages);
+    let pages = 0, aborted = false;
+    const scanChain = async (chainId) => {
+      for (let page = 1; (cap === Infinity || page <= cap); page++) {
+        if (token !== undefined && token !== this._navToken) { aborted = true; return; }
+        let raw;
+        try { raw = await this.apiFetch(addr, page, chainId); }
+        catch { break; }
+        if (onPage) onPage(++pages);
+        if (!raw.length) break;
+        for (const tx of raw) handle(tx, chainId);
+        if (raw.length < 50) break;
+        if (this._scanDelay) await this._scanDelay(150);
+      }
+    };
+    await Promise.all(this._identityChains().map(scanChain));
+    return !aborted;
+  }
+
+  /* Is (ts, order) a newer follow-graph action than `prev`? Cross-chain ordering
+     is by GLOBAL timestamp first; `order` (blockNumber*1e5+txIndex) breaks
+     same-second ties WITHIN a chain (e.g. an unfollow+refollow in one block). A
+     same-second tie across chains is vanishingly rare and resolves
+     deterministically by the block composite. Single-chain this equals the old
+     block-order compare (block height is monotonic with time), so flag-off
+     behavior is unchanged. */
+  _isNewerAction(prev, ts, order) {
+    return !prev || ts > prev.ts || (ts === prev.ts && order >= prev.order);
   }
 
   disconnect() {
@@ -8316,26 +8355,24 @@ class SayIt {
     if (this._followCountCache[addr]) return this._followCountCache[addr];
     const isOwn = addr === this.state.signerAddr;
     const followingMap = new Map(), followerMap = new Map();
-    const upd = (m, k, action, order) => { const p = m.get(k); if (!p || order >= p.order) m.set(k, { action, order }); };
+    const upd = (m, k, action, ts, order) => { const p = m.get(k); if (this._isNewerAction(p, ts, order)) m.set(k, { action, ts, order }); };
     try {
-      const limit = Math.min(this._getMaxScanPages(), 8);
-      for (let page = 1; page <= limit; page++) {
-        let raw = [];
-        try { raw = await this.apiFetch(addr, page); } catch { break; }
-        for (const tx of raw) {
-          if (!tx.input || tx.input === '0x') continue;
-          const from = tx.from?.toLowerCase();
-          let text; try { text = ethers.toUtf8String(tx.input).trim(); } catch { continue; }
-          const isF = text.startsWith(FOLLOW_PREFIX), isU = text.startsWith(UNFOLLOW_PREFIX);
-          if (!isF && !isU) continue;
-          const action = isF ? 'follow' : 'unfollow';
-          const tgt = text.slice((isF ? FOLLOW_PREFIX : UNFOLLOW_PREFIX).length).trim().toLowerCase();
-          const order = (Number(tx.blockNumber) || 0) * 100000 + (Number(tx.transactionIndex) || 0);
-          if (from === addr && tgt) upd(followingMap, tgt, action, order);
-          if (tgt === addr && from && from !== addr) upd(followerMap, from, action, order);
-        }
-        if (raw.length < 50) break;
-      }
+      /* Cross-chain: both directions from this address's own txs (it appears as
+         sender of its FOLLOWs and recipient of incoming FOLLOWs). Capped at 8
+         pages per chain for a snappy hover; newest-action-per-peer wins. */
+      await this._scanAddressTxs(addr, (tx) => {
+        if (!tx.input || tx.input === '0x') return;
+        const from = tx.from?.toLowerCase();
+        let text; try { text = ethers.toUtf8String(tx.input).trim(); } catch { return; }
+        const isF = text.startsWith(FOLLOW_PREFIX), isU = text.startsWith(UNFOLLOW_PREFIX);
+        if (!isF && !isU) return;
+        const action = isF ? 'follow' : 'unfollow';
+        const tgt = text.slice((isF ? FOLLOW_PREFIX : UNFOLLOW_PREFIX).length).trim().toLowerCase();
+        const ts = Number(tx.timeStamp) || 0;
+        const order = (Number(tx.blockNumber) || 0) * 100000 + (Number(tx.transactionIndex) || 0);
+        if (from === addr && tgt) upd(followingMap, tgt, action, ts, order);
+        if (tgt === addr && from && from !== addr) upd(followerMap, from, action, ts, order);
+      }, { maxPages: 8 });
     } catch { /* leave counts as best-effort */ }
     const following = isOwn ? this.state.following.size
       : [...followingMap.values()].filter(v => v.action === 'follow').length;
