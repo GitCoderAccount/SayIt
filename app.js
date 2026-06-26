@@ -6,7 +6,7 @@
    NOT edit by hand. Run `node .ci/derive-sw-ver.js` (or install the pre-commit
    hook: `git config core.hooksPath .ci/hooks`); CI verifies it via
    `derive-sw-ver.js --check`. */
-const SW_CACHE_VER = '20260626-3f92000837';
+const SW_CACHE_VER = '20260626-751de318d1';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -8874,13 +8874,32 @@ if (NO_DEEP_LINK) {
   if (BOOT_VIEW === 'home') BOOT_VIEW = null;
 }
 
+/* ── Stale-code self-heal ────────────────────────────────────────────
+   The SW serves JS assets cache-first, so after a deploy a returning visitor
+   can keep running the OLD app.js — whose CACHE_VER handshake then re-confirms
+   the old cache, a deadlock whenever sw.js itself didn't change. On boot, probe
+   the live version (sw-version.txt — tiny + cache-busted, auto-derived alongside
+   SW_CACHE_VER); if we're behind, clear the caches once and reload to pick up
+   fresh code. Offline-safe (a failed probe just keeps the cached app running). */
+if ('caches' in window) {
+  (async () => {
+    if (sessionStorage.getItem('_swHealed')) return; /* at most once per tab session */
+    let live = '';
+    try { live = (await (await fetch('sw-version.txt?_=' + Date.now(), { cache: 'no-store' })).text()).trim(); }
+    catch { return; }
+    if (!/^[\w.-]{1,40}$/.test(live) || live === SW_CACHE_VER) return;
+    sessionStorage.setItem('_swHealed', '1');
+    try { const ks = await caches.keys(); await Promise.all(ks.map(k => caches.delete(k))); } catch { /* best effort */ }
+    location.reload();
+  })();
+}
+
 /* ── Service Worker — offline shell + fast repeat loads ──────────────
-   Registers sw.js which caches index.html and ethers.js for instant
-   load on repeat visits. API calls (PulseScan) bypass the cache.
-   To force a cache refresh after a new deploy:
-     1. Bump SW_CACHE_VER at the top of this file
-     2. Push to GitHub — the SW will detect the version mismatch
-        on next page load and fetch fresh assets automatically. */
+   Registers sw.js which caches index.html and ethers.js for instant load on
+   repeat visits. API calls (PulseScan) bypass the cache. SW_CACHE_VER is
+   AUTO-DERIVED from an asset content hash (.ci/derive-sw-ver.js) — do not bump
+   it by hand; the stale-code self-heal above + the CACHE_VER handshake below
+   pick up new deploys. */
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./sw.js')

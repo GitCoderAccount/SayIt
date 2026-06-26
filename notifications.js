@@ -207,6 +207,10 @@ const _NOTIFS = class {
               type = 'tip'; target = t;
               preview = `${utils.fmtPLS(tx.value)} PLS`;
             } else {
+              /* Fallback = a plain message sent to you. Guard against an
+                 unhandled protocol action (poll / note / space / pin / …)
+                 leaking its raw "PREFIX:…" as a fake "message" notification. */
+              if (utils.channelPreviewText(text) === null) return;
               type = 'message'; preview = text.slice(0, 100);
             }
             allNotifs.push({ type, from, target, preview, timestamp: ts, txHash: tx.hash.toLowerCase() });
@@ -301,15 +305,16 @@ const _NOTIFS = class {
       vote:'voted on your poll', pollend:'', tip:'tipped your post 💎',
       dm:'sent you an encrypted message',
     };
-    /* Tabs partition All cleanly: Likes = plain likes; Mentions = everything
-       else (replies, reposts, messages, poll votes/ends, follows). No type is
-       orphaned to "All"-only. */
+    /* Tabs: Likes = likes; Mentions = replies + reposts/quotes of your posts
+       (things that actually reference you — NOT follows / tips / votes / DMs,
+       which live under All / Verified); Verified = any notification from an
+       actor with an on-chain profile. */
     const inTab = (n) => {
       if (tab === 'likes')    return n.type === 'like';
       /* Verified: same items as All, filtered to actors with an on-chain
          profile (username present in profCache). Cache-only — no fetches. */
       if (tab === 'verified') return !!this.state.profCache[n.from]?.username;
-      if (tab === 'mentions') return n.type !== 'like';
+      if (tab === 'mentions') return n.type === 'reply' || n.type === 'repost';
       return true; /* all */
     };
     const filtered = all.filter(n => this._notifEnabled(n.type)).filter(inTab);

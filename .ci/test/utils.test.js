@@ -135,3 +135,20 @@ test('refHash() strips eip155 chain qualifier → bare hash (cross-chain like de
   assert.strictEqual(utils.refHash('  EIP155:1:' + h.toUpperCase() + '  '), h); /* trims + lowercases */
   assert.strictEqual(utils.refHash(null), '');
 });
+
+test('channelPreviewText: keeps messages, strips replies, nulls every protocol action', () => {
+  assert.strictEqual(utils.channelPreviewText('gm everyone'), 'gm everyone');
+  assert.strictEqual(utils.channelPreviewText('  hello  '), 'hello');
+  assert.strictEqual(utils.channelPreviewText(''), null);
+  assert.strictEqual(utils.channelPreviewText(null), null);
+  /* a reply IS a message — strip the REPLY_TO:<hash> marker, keep the body */
+  assert.strictEqual(utils.channelPreviewText('REPLY_TO:0xabc\n\nnice post'), 'nice post');
+  /* every protocol action -> null, so no raw "PREFIX:…" can leak into a preview */
+  for (const a of ['TIP:0xabc', 'DM1:Ak9', 'DMKEY1:xx', 'LIKE:0xabc', 'UNLIKE:0xabc',
+                   'FOLLOW:0xabc', 'BOOKMARK:0xabc', 'VOTE:0xabc:1', 'POLL:{"x":1}',
+                   'NOTE:0xabc', 'NOTERATE:0xabc:h', 'PIN:0xabc', 'UNPIN:0xabc',
+                   'SPACE:{"r":1}', 'SPACE_END:0xabc', 'PROFILE_DATA:{}', 'PROFILE_FOR:0xt',
+                   'LC_SYNC:x']) {
+    assert.strictEqual(utils.channelPreviewText(a), null, `${a} should be filtered`);
+  }
+});

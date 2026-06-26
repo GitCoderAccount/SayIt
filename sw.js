@@ -171,6 +171,10 @@ self.addEventListener('fetch', event => {
   /* Blob URLs (SW self-registration fallback) — skip */
   if (url.protocol === 'blob:') return;
 
+  /* Version probe for the page's stale-code self-heal — always network, never
+     cache, so its per-boot cache-busted requests can't accumulate in the cache. */
+  if (url.origin === self.location.origin && url.pathname === '/sw-version.txt') return;
+
   event.respondWith(
     caches.open(currentCacheName).then(async cache => {
       /* Stale-While-Revalidate for the HTML shell (navigations + index.html).

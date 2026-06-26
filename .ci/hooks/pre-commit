@@ -11,4 +11,4 @@
 set -e
 ROOT="$(git rev-parse --show-toplevel)"
 node "$ROOT/.ci/derive-sw-ver.js"
-git add "$ROOT/app.js"
+git add "$ROOT/app.js" "$ROOT/sw-version.txt"

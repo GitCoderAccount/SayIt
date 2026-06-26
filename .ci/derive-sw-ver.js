@@ -42,12 +42,17 @@ function contentHash() {
 }
 
 const appPath = path.join(ROOT, 'app.js');
+const verFile = path.join(ROOT, 'sw-version.txt');
 const appSrc = fs.readFileSync(appPath, 'utf8');
 const m = appSrc.match(VER_RE);
 if (!m) { console.error('SW_CACHE_VER constant not found in app.js'); process.exit(2); }
 const current = m[1];
 const currentHash = current.split('-').pop(); /* part after the last '-' */
 const hash = contentHash();
+const readVerFile = () => (fs.existsSync(verFile) ? fs.readFileSync(verFile, 'utf8').trim() : '');
+/* sw-version.txt mirrors SW_CACHE_VER as a tiny, cache-bustable network probe
+   the page fetches on boot to self-heal stale cached code (see app.js). */
+const syncVerFile = (v) => { if (readVerFile() !== v) { fs.writeFileSync(verFile, v + '\n'); console.log(`sw-version.txt -> ${v}`); } };
 
 if (process.argv.includes('--check')) {
   if (currentHash !== hash) {
@@ -57,13 +62,19 @@ if (process.argv.includes('--check')) {
       `Run: node .ci/derive-sw-ver.js  (or install the hook: git config core.hooksPath .ci/hooks)`);
     process.exit(1);
   }
-  console.log(`SW_CACHE_VER OK (content hash ${hash}).`);
+  if (readVerFile() !== current) {
+    console.error(`::error::sw-version.txt ('${readVerFile()}') != SW_CACHE_VER ('${current}'). Run: node .ci/derive-sw-ver.js`);
+    process.exit(1);
+  }
+  console.log(`SW_CACHE_VER OK (content hash ${hash}); sw-version.txt in sync.`);
   process.exit(0);
 }
 
-/* WRITE mode — skip when the hash is already current (don't churn just the date). */
+/* WRITE mode — skip the app.js rewrite when the hash is already current (don't
+   churn just the date), but always keep sw-version.txt in sync with it. */
 if (currentHash === hash) {
   console.log(`SW_CACHE_VER already current (content hash ${hash}).`);
+  syncVerFile(current);
   process.exit(0);
 }
 const d = new Date();
@@ -71,3 +82,4 @@ const date = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${St
 const next = `${date}-${hash}`;
 fs.writeFileSync(appPath, appSrc.replace(VER_RE, `const SW_CACHE_VER = '${next}';`));
 console.log(`SW_CACHE_VER -> ${next}  (was ${current})`);
+syncVerFile(next);

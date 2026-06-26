@@ -461,6 +461,25 @@ const utils = {
   refHash(s) {
     return String(s ?? '').trim().toLowerCase().replace(/^eip155:\d+:/, '');
   },
+  /* Channels list: return the preview text for a tx's decoded input if it's a
+     real channel MESSAGE, or null for any protocol ACTION (like / tip / follow /
+     bookmark / vote / poll / note / pin / DM / key / space / …) so its raw
+     "PREFIX:…" payload never surfaces as a channel preview. A reply IS a message
+     — its REPLY_TO:<hash> marker is stripped so only the body shows. */
+  channelPreviewText(text) {
+    const t = String(text ?? '').trim();
+    if (!t) return null;
+    if (t.startsWith(REPLY_PREFIX)) {
+      const body = t.slice(REPLY_PREFIX.length).replace(/^\S+\s*/, '').trim();
+      return body ? body.slice(0, 80) : null;
+    }
+    const ACTIONS = [LIKE_PREFIX, UNLIKE_PREFIX, BOOKMARK_PREFIX, UNBOOKMARK_PREFIX,
+      FOLLOW_PREFIX, UNFOLLOW_PREFIX, POLL_PREFIX, VOTE_PREFIX, NOTE_PREFIX, NOTERATE_PREFIX,
+      PROFILE_PREFIX, TOKEN_PROFILE_PREFIX, LC_SYNC_PREFIX, TIP_PREFIX, SPACE_PREFIX,
+      SPACE_END_PREFIX, PIN_PREFIX, UNPIN_PREFIX, DM_PREFIX, DMKEY_PREFIX];
+    if (ACTIONS.some(p => t.startsWith(p))) return null;
+    return t.slice(0, 80);
+  },
   /* Format a wei string as PLS for display (not financial math). */
   fmtPLS(wei) {
     const n = Number(wei || 0) / 1e18;

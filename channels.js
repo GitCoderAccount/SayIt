@@ -124,21 +124,17 @@ const _CHANNELS = class {
           if (!partner || partner === this.state.signerAddr || partner === MAIN_CHANNEL) return;
           try {
             const text = ethers.toUtf8String(tx.input).trim();
-            if (text.startsWith(PROFILE_PREFIX)) return;
-            if (text.startsWith(LIKE_PREFIX) || text.startsWith(UNLIKE_PREFIX)) return;
-            if (text.startsWith(BOOKMARK_PREFIX) || text.startsWith(UNBOOKMARK_PREFIX)) return;
-            if (text.startsWith(FOLLOW_PREFIX) || text.startsWith(UNFOLLOW_PREFIX)) return;
-            /* Private encrypted DMs are NOT public channels — never surface their
-               raw "DM1:…" / "DMKEY1:…" ciphertext as a channel preview. */
-            if (text.startsWith(DM_PREFIX) || text.startsWith(DMKEY_PREFIX)) return;
+            /* Only real channel MESSAGES count. utils.channelPreviewText returns
+               null for EVERY protocol action (like / tip / follow / bookmark /
+               vote / poll / note / pin / DM / key / space / …), so an action tx
+               never creates a channel or leaks its raw "PREFIX:…" as a preview;
+               a reply's REPLY_TO:<hash> marker is stripped to just its body. */
+            const preview = utils.channelPreviewText(text);
+            if (preview === null) return;
             const ts = tx.timeStamp ? new Date(Number(tx.timeStamp) * 1000).toISOString() : '';
             const prev = seen.get(partner);
             if (!prev || ts > prev.lastActivity) {
-              seen.set(partner, {
-                lastActivity: ts,
-                preview: text.slice(0, 80),
-                postCount: (prev?.postCount || 0) + 1,
-              });
+              seen.set(partner, { lastActivity: ts, preview, postCount: (prev?.postCount || 0) + 1 });
             }
           } catch { /* skip */ }
         });
@@ -458,12 +454,15 @@ const _CHANNELS = class {
        Drop any entry left in the cache with a raw DM ciphertext preview (from
        before DMs were excluded from the scan) — they aren't public channels. */
     const entries = history
-      .filter(ch => { const p = ch.preview || ''; return !p.startsWith(DM_PREFIX) && !p.startsWith(DMKEY_PREFIX); })
+      /* Drop (and sanitize) any cached entry whose preview is a protocol action
+         left over from before actions were excluded — utils.channelPreviewText
+         returns null for those and strips a reply's REPLY_TO marker for the rest. */
+      .filter(ch => utils.channelPreviewText(ch.preview) !== null)
       .map(ch => ({
       addr: ch.address,
       name: ch.label || this.trunc(ch.address),
       pic:  ch.picUrl || 'image1.jpeg',
-      preview: ch.preview || '',
+      preview: utils.channelPreviewText(ch.preview) || '',
       time: ch.lastActivity ? this.relTime(ch.lastActivity) : '',
       unread: this._channelIsUnread(ch, seen),
       following: follow.has((ch.address || '').toLowerCase()),
