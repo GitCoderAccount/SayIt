@@ -128,6 +128,9 @@ const _CHANNELS = class {
             if (text.startsWith(LIKE_PREFIX) || text.startsWith(UNLIKE_PREFIX)) return;
             if (text.startsWith(BOOKMARK_PREFIX) || text.startsWith(UNBOOKMARK_PREFIX)) return;
             if (text.startsWith(FOLLOW_PREFIX) || text.startsWith(UNFOLLOW_PREFIX)) return;
+            /* Private encrypted DMs are NOT public channels — never surface their
+               raw "DM1:…" / "DMKEY1:…" ciphertext as a channel preview. */
+            if (text.startsWith(DM_PREFIX) || text.startsWith(DMKEY_PREFIX)) return;
             const ts = tx.timeStamp ? new Date(Number(tx.timeStamp) * 1000).toISOString() : '';
             const prev = seen.get(partner);
             if (!prev || ts > prev.lastActivity) {
@@ -254,11 +257,17 @@ const _CHANNELS = class {
   _selectChannelPane(addr) {
     if (!addr) return;
     this._chSelected = addr.toLowerCase();
-    /* Highlight the active row (mirror .settings-nav-item.active). */
+    /* Opening a channel marks it read. The pane-open path (the normal click)
+       previously didn't, so the unread dot never cleared — only goCustom (full
+       view) and the "✓ Read" button did. */
+    this._markChannelSeen(this._chSelected);
+    /* Highlight the active row, and clear its unread indicator in place. */
     const page = this.g('ch-page');
     if (page) {
       page.querySelectorAll('[data-ch-open]').forEach(el => {
-        el.classList.toggle('active', (el.dataset.chOpen || '').toLowerCase() === this._chSelected);
+        const isSel = (el.dataset.chOpen || '').toLowerCase() === this._chSelected;
+        el.classList.toggle('active', isSel);
+        if (isSel) { el.classList.remove('ch-item-unread'); el.querySelector('.ch-unread-dot, .ch-hist-count')?.remove(); }
       });
     }
     /* Mobile drill-in: reveal the pane, hide the list. Desktop ignores this. */
@@ -445,8 +454,12 @@ const _CHANNELS = class {
        the right-sidebar footer. The Chat list is now purely your conversations. */
     const pinned = [];
 
-    /* Visited/scanned channels, plus synthesized rows for follows not yet visited. */
-    const entries = history.map(ch => ({
+    /* Visited/scanned channels, plus synthesized rows for follows not yet visited.
+       Drop any entry left in the cache with a raw DM ciphertext preview (from
+       before DMs were excluded from the scan) — they aren't public channels. */
+    const entries = history
+      .filter(ch => { const p = ch.preview || ''; return !p.startsWith(DM_PREFIX) && !p.startsWith(DMKEY_PREFIX); })
+      .map(ch => ({
       addr: ch.address,
       name: ch.label || this.trunc(ch.address),
       pic:  ch.picUrl || 'image1.jpeg',

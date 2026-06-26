@@ -6,7 +6,7 @@
    NOT edit by hand. Run `node .ci/derive-sw-ver.js` (or install the pre-commit
    hook: `git config core.hooksPath .ci/hooks`); CI verifies it via
    `derive-sw-ver.js --check`. */
-const SW_CACHE_VER = '20260626-948f6708df';
+const SW_CACHE_VER = '20260626-3f92000837';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
