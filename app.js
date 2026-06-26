@@ -4,7 +4,7 @@
 /* SW_CACHE_VER: bump this string whenever you deploy a new version (any
    of index.html / app.js / core.js / cache.js / boot.js changing). The
    service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260623-269';
+const SW_CACHE_VER = '20260623-270';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -5442,6 +5442,11 @@ class SayIt {
         if (h && seen.has(h)) continue; if (h) seen.add(h);
         let msg;
         try { msg = DMCrypto.decrypt(text, keys, from, to); } catch { continue; } /* not for us / tampered */
+        /* A decrypted body that is ITSELF a DM ciphertext (starts with DM1:) is a
+           corrupted / double-wrapped / relay artifact, never a real human message
+           — drop it so the raw "DM1:Ak…" payload can't surface as a conversation
+           preview or a chat bubble. */
+        if (typeof msg.text === 'string' && msg.text.startsWith(DM_PREFIX)) continue;
         const ts = tx.timeStamp ? Number(tx.timeStamp) * 1000 : (msg.ts || Date.now());
         /* Group messages (msg.gid) collapse across their per-member txs into one
            conversation; 1:1 messages group by the other party. */
