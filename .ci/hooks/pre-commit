@@ -1,0 +1,14 @@
+#!/bin/sh
+# Auto-derive SW_CACHE_VER from the app-asset content hash before each commit,
+# so it never has to be bumped by hand.
+#
+# One-time setup (per clone):  git config core.hooksPath .ci/hooks
+#
+# The derive script is idempotent — it writes only when the content hash
+# actually changes — so this is a no-op for commits that don't touch an app
+# asset. CI (lint.yml) verifies the result, so a missing hook can't ship a
+# stale version; the hook just removes the manual step.
+set -e
+ROOT="$(git rev-parse --show-toplevel)"
+node "$ROOT/.ci/derive-sw-ver.js"
+git add "$ROOT/app.js"

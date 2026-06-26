@@ -1,10 +1,12 @@
 'use strict';
 /* Loaded after core.js and cache.js (constants, utils, Cache, SpaceRTC). */
 
-/* SW_CACHE_VER: bump this string whenever you deploy a new version (any
-   of index.html / app.js / core.js / cache.js / boot.js changing). The
-   service worker uses it to invalidate cached files. */
-const SW_CACHE_VER = '20260623-270';
+/* SW_CACHE_VER: a `YYYYMMDD-<hash>` content version the service worker uses to
+   invalidate cached files. AUTO-DERIVED from a hash of the app-asset shell — do
+   NOT edit by hand. Run `node .ci/derive-sw-ver.js` (or install the pre-commit
+   hook: `git config core.hooksPath .ci/hooks`); CI verifies it via
+   `derive-sw-ver.js --check`. */
+const SW_CACHE_VER = '20260626-948f6708df';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
