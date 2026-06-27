@@ -845,6 +845,14 @@ const utils = {
       img.src = url;
     });
   },
+  /* True when a URL points at a video file we can play in a <video> element
+     (animated avatars / banners). Same extension set as the post-media video
+     matcher (_LK_VID_RE). The fragment is stripped first so anchored URLs
+     (…/clip.mp4#t=2) still match; a ?query is already tolerated by the regex. */
+  isVideoUrl(url) {
+    if (!url || typeof url !== 'string') return false;
+    return _LK_VID_RE.test(url.split('#')[0]);
+  },
   copyToClipboard(text, label = 'Copied!') {
     navigator.clipboard?.writeText(text).then(() => this.toast(label)).catch(() => this.toast('Copy failed'));
   },

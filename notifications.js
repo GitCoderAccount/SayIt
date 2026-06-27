@@ -265,8 +265,8 @@ const _NOTIFS = class {
           const prof = this.state.profCache[addr];
           if (prof?.picUrl) {
             const img = item.querySelector('.notif-avatar');
-            if (img && img.src.endsWith('image1.jpeg') && prof.picUrl !== 'image1.jpeg') {
-              img.src = prof.picUrl;
+            if (img && (img.src || '').endsWith('image1.jpeg') && prof.picUrl !== 'image1.jpeg') {
+              this._setAvatar(img, prof.picUrl);
             }
           }
           if (prof?.username) {

@@ -6,7 +6,7 @@
    NOT edit by hand. Run `node .ci/derive-sw-ver.js` (or install the pre-commit
    hook: `git config core.hooksPath .ci/hooks`); CI verifies it via
    `derive-sw-ver.js --check`. */
-const SW_CACHE_VER = '20260627-054fead59f';
+const SW_CACHE_VER = '20260627-c23445f544';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -1069,11 +1069,19 @@ class SayIt {
     g('save-profile-btn').onclick = () => this.saveProfile();
     g('pe-pic').oninput = () => {
       const v = g('pe-pic').value.trim();
-      g('pe-preview').src = v || 'image1.jpeg';
+      this._setAvatar('pe-preview', v || 'image1.jpeg');   /* video URL → <video> */
     };
     g('pe-cover').oninput = () => {
       const v = g('pe-cover').value.trim();
       const prev = g('pe-cover-preview');
+      prev.innerHTML = '';                       /* drop any prior video banner */
+      if (v && utils.isVideoUrl(v)) {
+        const vs = utils.safeUrl(v);
+        if (vs) prev.innerHTML = `<video class="prof-cover-vid" src="${utils.safe(vs)}" autoplay muted loop playsinline preload="metadata"></video>`;
+        prev.style.backgroundImage = '';
+        prev.classList.add('has-cover');
+        return;
+      }
       /* Route through cssUrlValue (validates scheme + CSS-escapes) — same path
          the saved cover renders through, so the preview matches and a hostile
          javascript:/data: URL can't break out of url() or render. */
@@ -1580,7 +1588,7 @@ class SayIt {
     utils.autoGrow(this.g('modal-compose-text'));
     utils.updateCharCount(this.g('modal-compose-text'), this.g('modal-char-count'));
     this._syncPostBtn();
-    this.g('modal-compose-avatar').src = this.state.profile.picUrl || 'image1.jpeg';
+    this._setAvatar('modal-compose-avatar', this.state.profile.picUrl || 'image1.jpeg');
     this.g('compose-modal').classList.add('open');
     this._trapFocus(this.g('compose-modal'));
     setTimeout(() => this.g('modal-compose-text').focus(), 100);
@@ -3110,9 +3118,9 @@ class SayIt {
     this._updateMobileProfileAvatar();
     this.g('account-pill').style.display = 'none';
     this.g('connect-btn').style.display  = 'block';
-    this.g('compose-avatar').src         = 'image1.jpeg';
+    this._setAvatar('compose-avatar', 'image1.jpeg');
     this.g('ch-self').style.display      = 'none';
-    this.g('ap-avatar').src          = 'image1.jpeg';
+    this._setAvatar('ap-avatar', 'image1.jpeg');
     this.g('ap-name').textContent    = 'My Wallet';
     this.g('ap-addr').textContent    = '';
     this.clearNotifBadge();
@@ -3183,7 +3191,7 @@ class SayIt {
         const nameEl   = document.getElementById('prof-display-name');
         const avatarEl = document.getElementById('prof-page-avatar');
         if (nameEl)   nameEl.textContent = data.username || this.trunc(this.state.signerAddr);
-        if (avatarEl) avatarEl.src = data.picUrl || 'image1.jpeg';
+        if (avatarEl) this._setAvatar(avatarEl, data.picUrl || 'image1.jpeg');
         const bioEl = document.querySelector('.prof-bio');
         if (bioEl && data.bio) bioEl.textContent = data.bio;
         const coverEl = document.querySelector('.prof-cover');
@@ -3315,9 +3323,9 @@ class SayIt {
       website:   cleanSite,
       joinedTs:  data.joinedTs  || null,
     };
-    this.g('compose-avatar').src       = this.state.profile.picUrl;
-    this.g('modal-compose-avatar').src = this.state.profile.picUrl;
-    this.g('ap-avatar').src       = this.state.profile.picUrl || 'image1.jpeg';
+    this._setAvatar('compose-avatar', this.state.profile.picUrl);
+    this._setAvatar('modal-compose-avatar', this.state.profile.picUrl);
+    this._setAvatar('ap-avatar', this.state.profile.picUrl || 'image1.jpeg');
     this.g('ap-name').textContent = this.state.profile.username || this.trunc(this.state.signerAddr || '');
     /* Keep the mobile Profile nav avatar in sync once the real pic loads. */
     this._updateMobileProfileAvatar();
@@ -3403,7 +3411,7 @@ class SayIt {
       }
       if (!imageUrl) { status.textContent = '✗ No image found'; return; }
       this.g('pe-pic').value   = imageUrl;
-      this.g('pe-preview').src = imageUrl;
+      this._setAvatar('pe-preview', imageUrl);
       status.textContent = '✓ NFT image loaded!';
     } catch (err) { status.textContent = '✗ ' + (err.message || err); }
   }
@@ -4774,12 +4782,113 @@ class SayIt {
       for (const m of muts) {
         for (const n of m.addedNodes) {
           if (n.nodeType !== 1) continue;
-          if (n.matches?.(SEL)) { this._wireVideoObserver(n.parentElement || n); continue; }
-          if (n.querySelector?.(SEL)) this._wireVideoObserver(n);
+          if (n.matches?.(SEL)) this._wireVideoObserver(n.parentElement || n);
+          else if (n.querySelector?.(SEL)) this._wireVideoObserver(n);
+          /* Swap any video-URL avatars in the just-added subtree to <video>.
+             This runs in the observer's microtask (before the browser paints),
+             so an <img src="…​.mp4"> never flashes a broken-image frame. */
+          this._videoizeAvatars(n);
         }
       }
     });
     this._videoAutoWire.observe(document.body, { childList: true, subtree: true });
+    /* Catch avatars already on the page at first paint (observer missed them). */
+    this._videoizeAvatars(document.body);
+  }
+
+  /* ── Animated (video) avatars ─────────────────────────────────────────
+     A profile pic / banner is just a URL; a .mp4/.webm one can't render in an
+     <img> or a CSS background. Every avatar render site keeps emitting <img>;
+     here we swap the video ones to a muted, looping, inline-autoplay <video>.
+     Called from the body MutationObserver (above) so it covers every render
+     path with no per-site edits, and from _setAvatar for dynamic el.src= sites.
+     Everything is gated on utils.isVideoUrl, so image avatars are untouched. */
+  _videoizeAvatars(root) {
+    if (!root || root.nodeType !== 1) return;
+    const SEL =
+      'img.post-avatar, img.prof-page-avatar, img.compose-avatar, img.mn-avatar, ' +
+      'img.cb-avatar, img.ch-pane-avatar, img.ch-hist-avatar, img.notif-avatar, ' +
+      'img.explore-avatar, img[data-fallback-src="image1.jpeg"]';
+    const imgs = [];
+    try {
+      if (root.matches?.(SEL)) imgs.push(root);
+      if (root.querySelectorAll) imgs.push(...root.querySelectorAll(SEL));
+    } catch { return; }
+    for (const img of imgs) {
+      if (img.tagName !== 'IMG') continue;
+      const src = img.getAttribute('src') || '';
+      if (!utils.isVideoUrl(src)) continue;
+      img.replaceWith(this._makeAvatarVideo(utils.safeUrl(src) || 'image1.jpeg', {
+        className: img.className, id: img.id,
+        style: img.getAttribute('style') || '',
+        fallback: img.getAttribute('data-fallback-src') || 'image1.jpeg',
+      }));
+    }
+  }
+
+  /* Build a <video> styled exactly like the avatar <img> it replaces, then
+     register it with an IntersectionObserver so off-screen avatars pause —
+     this bounds video-decode cost when many sit in a scrolling feed. */
+  _makeAvatarVideo(src, opts = {}) {
+    const v = document.createElement('video');
+    if (opts.className) v.className = opts.className;
+    if (opts.id) v.id = opts.id;
+    if (opts.style) v.setAttribute('style', opts.style);
+    v.setAttribute('data-fallback-src', opts.fallback || 'image1.jpeg');
+    v.dataset.avatarVideo = '1';
+    /* Properties AND attributes — some engines require the attributes present
+       for muted inline autoplay to be allowed without a user gesture. */
+    v.muted = true; v.loop = true; v.autoplay = true; v.playsInline = true;
+    v.setAttribute('muted', ''); v.setAttribute('loop', '');
+    v.setAttribute('autoplay', ''); v.setAttribute('playsinline', '');
+    v.setAttribute('disablepictureinpicture', '');
+    v.preload = 'metadata';
+    v.src = src;
+    this._avatarVisObserver().observe(v);
+    return v;
+  }
+
+  _avatarVisObserver() {
+    if (this._avatarIO) return this._avatarIO;
+    this._avatarIO = new IntersectionObserver(ents => {
+      for (const e of ents) {
+        if (e.isIntersecting) e.target.play?.().catch(() => { /* autoplay race */ });
+        else e.target.pause?.();
+      }
+    }, { rootMargin: '300px' });
+    return this._avatarIO;
+  }
+
+  /* Set an avatar element's source, swapping <img>↔<video> when the URL's
+     media type changes (your pic becomes a .mp4, or reverts to image1.jpeg).
+     Used by every dynamic `el.src = picUrl` site so they handle video too. */
+  _setAvatar(ref, url) {
+    const el = typeof ref === 'string' ? this.g(ref) : ref;
+    if (!el) return;
+    const safe = utils.safeUrl(url) || 'image1.jpeg';
+    const wantVideo = utils.isVideoUrl(safe);
+    const isVideo = el.tagName === 'VIDEO';
+    if (wantVideo === isVideo) {            /* no type change — just set src */
+      el.src = safe;
+      if (isVideo) el.play?.().catch(() => {});
+      return;
+    }
+    const fallback = el.getAttribute('data-fallback-src') || 'image1.jpeg';
+    const style = el.getAttribute('style') || '';
+    let nu;
+    if (wantVideo) {
+      nu = this._makeAvatarVideo(safe, { className: el.className, id: el.id, style, fallback });
+    } else {
+      if (this._avatarIO) this._avatarIO.unobserve(el);
+      nu = document.createElement('img');
+      if (el.className) nu.className = el.className;
+      if (el.id) nu.id = el.id;
+      if (style) nu.setAttribute('style', style);
+      nu.setAttribute('data-fallback-src', fallback);
+      nu.alt = '';
+      nu.src = safe;
+    }
+    el.replaceWith(nu);
   }
 
   /* ── Twemoji (Twitter/X color emoji) ──────────────────────────────────
@@ -7605,8 +7714,8 @@ class SayIt {
       /* Patch avatar */
       const avatar = item.querySelector('.post-avatar');
       if (avatar && prof.picUrl && prof.picUrl !== 'image1.jpeg' &&
-          avatar.src.endsWith('image1.jpeg')) {
-        avatar.src = prof.picUrl;
+          (avatar.src || '').endsWith('image1.jpeg')) {
+        this._setAvatar(avatar, prof.picUrl);
       }
       /* Patch display name */
       const nameEl = item.querySelector('.post-name');

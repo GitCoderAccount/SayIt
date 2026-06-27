@@ -30,8 +30,8 @@ const _BANNER = class {
     const auth     = this._tokenAuthCache?.[lc];
     const hasHuman = !!(profile && profile.username);
     const vPic     = verified && utils.safeUrl(verified.picUrl || '');
-    this.g('cb-avatar').src = hasHuman ? (profile.picUrl || 'image1.jpeg')
-      : (vPic || (token && token.logo) || profile?.picUrl || 'image1.jpeg');
+    this._setAvatar('cb-avatar', hasHuman ? (profile.picUrl || 'image1.jpeg')
+      : (vPic || (token && token.logo) || profile?.picUrl || 'image1.jpeg'));
     this.g('cb-name').textContent = hasHuman ? profile.username
       : (verified && verified.username) ? verified.username
       : token ? (token.symbol ? `${token.name} (${token.symbol})` : token.name)
@@ -90,12 +90,16 @@ const _BANNER = class {
     if (coverEl) {
       /* Cover precedence: human cover > dev-verified cover > DexScreener banner. */
       const coverSrc = (profile && profile.coverUrl) || (verified && verified.coverUrl) || (token && token.header) || '';
-      const safeCover = coverSrc ? utils.cssUrlValue(coverSrc) : '';
-      if (safeCover) {
-        coverEl.style.background = `url('${safeCover}') center/cover no-repeat`;
-      } else {
-        /* Reset to default gradient if no cover */
+      coverEl.innerHTML = '';                  /* drop any prior video banner */
+      if (coverSrc && utils.isVideoUrl(coverSrc)) {
+        /* Video banner — layered <video> (a CSS background can't play video). */
+        const vs = utils.safeUrl(coverSrc);
         coverEl.style.background = '';
+        if (vs) coverEl.innerHTML = `<video class="prof-cover-vid" src="${utils.safe(vs)}" autoplay muted loop playsinline disablepictureinpicture preload="metadata"></video>`;
+      } else {
+        const safeCover = coverSrc ? utils.cssUrlValue(coverSrc) : '';
+        /* Reset to default gradient when there's no cover. */
+        coverEl.style.background = safeCover ? `url('${safeCover}') center/cover no-repeat` : '';
       }
     }
   }

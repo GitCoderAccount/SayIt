@@ -221,7 +221,7 @@ const _PROF = class {
       const nameEl = row.querySelector('.follow-list-name');
       const imgEl  = row.querySelector('.follow-list-avatar');
       if (nameEl) nameEl.textContent = prof.username;
-      if (imgEl && prof.picUrl !== 'image1.jpeg') imgEl.src = prof.picUrl;
+      if (imgEl && prof.picUrl !== 'image1.jpeg') this._setAvatar(imgEl, prof.picUrl);
     }).catch(() => {});
   }
 
@@ -616,7 +616,7 @@ const _PROF = class {
         }
         const avatarEl = feed.querySelector('.prof-page-avatar');
         if (avatarEl && this.state.profile.picUrl && this.state.profile.picUrl !== 'image1.jpeg') {
-          avatarEl.src = this.state.profile.picUrl;
+          this._setAvatar(avatarEl, this.state.profile.picUrl);
         }
         const bioEl = feed.querySelector('.prof-bio');
         if (bioEl && this.state.profile.bio) {
@@ -636,7 +636,7 @@ const _PROF = class {
         const titleEl = feed.querySelector('.page-header-title');
         if (titleEl && p.username) titleEl.textContent = p.username;
         const avatarEl = feed.querySelector('.prof-page-avatar');
-        if (avatarEl && p.picUrl && p.picUrl !== 'image1.jpeg') avatarEl.src = p.picUrl;
+        if (avatarEl && p.picUrl && p.picUrl !== 'image1.jpeg') this._setAvatar(avatarEl, p.picUrl);
         const bioEl = feed.querySelector('.prof-bio');
         if (bioEl && p.bio) bioEl.textContent = p.bio;
       }).catch(() => {});
@@ -657,12 +657,18 @@ const _PROF = class {
        in depth never hurts. Falls back to default avatar on invalid URL. */
     const picUrlSafe = utils.safeUrl(prof.picUrl) || 'image1.jpeg';
     const picUrl   = utils.safe(picUrlSafe);
-    /* coverUrl: validate AND CSS-escape for url() context */
-    const coverCss = prof.coverUrl ? utils.cssUrlValue(prof.coverUrl) : '';
+    /* coverUrl: a .mp4/.webm banner renders as a muted looping <video> layered
+       over the cover box (CSS backgrounds can't play video); an image banner
+       stays a CSS background. safeUrl blocks javascript:/data: in both. */
+    const coverVid = (prof.coverUrl && utils.isVideoUrl(prof.coverUrl)) ? (utils.safeUrl(prof.coverUrl) || '') : '';
+    const coverCss = (!coverVid && prof.coverUrl) ? utils.cssUrlValue(prof.coverUrl) : '';
 
     const coverStyle = coverCss
       ? `background:url('${coverCss}') center/cover no-repeat`
       : `background:linear-gradient(135deg,rgba(124,77,255,0.55),rgba(179,136,255,0.25),rgba(43,134,197,0.15))`;
+    const coverInner = coverVid
+      ? `<video class="prof-cover-vid" src="${utils.safe(coverVid)}" autoplay muted loop playsinline disablepictureinpicture preload="metadata"></video>`
+      : '';
 
     const followBtn = isOwn
       ? `<button class="prof-edit-btn" id="prof-dash-btn" title="Creator dashboard" style="margin-right:8px">📊 Dashboard</button>
@@ -687,7 +693,7 @@ const _PROF = class {
 
     return `
     <div class="prof-page">
-      <div class="prof-cover" style="${coverStyle}"></div>
+      <div class="prof-cover" style="${coverStyle}">${coverInner}</div>
       <div class="prof-avatar-row">
         <img src="${picUrl}" class="prof-page-avatar" id="prof-page-avatar"
           alt="" data-fallback-src="image1.jpeg">
@@ -783,12 +789,19 @@ const _PROF = class {
       this._updateTitle(name);
     }
     const avatar = (verified && utils.safeUrl(verified.picUrl || '')) || (token && token.logo);
-    if (avatar) { const av = document.getElementById('prof-page-avatar'); if (av) av.src = avatar; }
+    if (avatar) { const av = document.getElementById('prof-page-avatar'); if (av) this._setAvatar(av, avatar); }
     const coverSrc = (verified && verified.coverUrl) || (token && token.header) || '';
     if (coverSrc) {
-      const css = utils.cssUrlValue(coverSrc);
       const coverEl = page.querySelector('.prof-cover');
-      if (css && coverEl) coverEl.style.background = `url('${css}') center/cover no-repeat`;
+      if (coverEl) {
+        if (utils.isVideoUrl(coverSrc)) {
+          const vs = utils.safeUrl(coverSrc);
+          if (vs) coverEl.innerHTML = `<video class="prof-cover-vid" src="${utils.safe(vs)}" autoplay muted loop playsinline disablepictureinpicture preload="metadata"></video>`;
+        } else {
+          const css = utils.cssUrlValue(coverSrc);
+          if (css) coverEl.style.background = `url('${css}') center/cover no-repeat`;
+        }
+      }
     }
     const bioText = (verified && verified.bio) || (token ? 'Token on PulseChain' : '');
     if (bioText) {
@@ -1180,7 +1193,7 @@ const _PROF = class {
     g('pe-website').value  = p.website   || '';
     g('pe-pic').value      = (p.picUrl && p.picUrl !== 'image1.jpeg') ? p.picUrl : '';
     g('pe-cover').value    = p.coverUrl  || '';
-    g('pe-preview').src    = p.picUrl    || 'image1.jpeg';
+    this._setAvatar('pe-preview', p.picUrl || 'image1.jpeg');
     /* Reset the NFT sub-form fully so a prior session's contract/token-id don't
        linger (only the status line was being cleared). */
     g('nft-contract').value = '';
@@ -1193,7 +1206,13 @@ const _PROF = class {
 
     /* Cover preview */
     const prev = g('pe-cover-preview');
-    if (p.coverUrl) {
+    prev.innerHTML = '';                       /* drop any prior video banner */
+    if (p.coverUrl && utils.isVideoUrl(p.coverUrl)) {
+      const vs = utils.safeUrl(p.coverUrl);
+      if (vs) prev.innerHTML = `<video class="prof-cover-vid" src="${utils.safe(vs)}" autoplay muted loop playsinline preload="metadata"></video>`;
+      prev.style.backgroundImage = '';
+      prev.classList.add('has-cover');
+    } else if (p.coverUrl) {
       prev.style.backgroundImage    = `url('${utils.cssUrlValue(p.coverUrl)}')`;
       prev.style.backgroundSize     = 'cover';
       prev.style.backgroundPosition = 'center';
@@ -1228,7 +1247,12 @@ const _PROF = class {
     if (website && !/^https?:\/\//i.test(website)) {
       utils.toast('Website must start with http:// or https://'); return;
     }
-    if (picUrl) {
+    if (picUrl && utils.isVideoUrl(picUrl)) {
+      /* Video avatar (.mp4/.webm): can't be probed with new Image(), and a
+         byte-size cap isn't possible client-side (a HEAD fetch is blocked by
+         the connect-src CSP). Accept the https URL as-is — it renders in a
+         muted, looping <video>. Keep clips small; large files load slowly. */
+    } else if (picUrl) {
       /* Check image loads AND is not excessively large (> 8MB of pixels) */
       const loadOk = await new Promise(r => {
         const img = new Image(); img.onload = ()=>r(true); img.onerror = ()=>r(false); img.src = picUrl;

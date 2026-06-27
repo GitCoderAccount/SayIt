@@ -152,3 +152,17 @@ test('channelPreviewText: keeps messages, strips replies, nulls every protocol a
     assert.strictEqual(utils.channelPreviewText(a), null, `${a} should be filtered`);
   }
 });
+
+test('isVideoUrl: matches playable video extensions, rejects images/junk', () => {
+  for (const u of ['https://h/clip.mp4', 'https://h/a.webm', 'https://h/a.MP4',
+                   'https://h/a.mov', 'https://h/a.m4v', 'https://h/a.ogg',
+                   'https://h/clip.mp4?token=abc', 'https://h/clip.mp4#t=2',
+                   'https://h/path.with.dots/clip.webm']) {
+    assert.strictEqual(utils.isVideoUrl(u), true, `${u} should be video`);
+  }
+  for (const u of ['https://h/a.png', 'https://h/a.gif', 'https://h/a.jpg',
+                   'https://h/a.webp', 'image1.jpeg', 'https://h/video', 'https://h/mp4',
+                   'https://h/a.mp4.png', '', null, undefined, 42]) {
+    assert.strictEqual(utils.isVideoUrl(u), false, `${String(u)} should NOT be video`);
+  }
+});

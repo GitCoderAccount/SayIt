@@ -3045,6 +3045,18 @@ body.mode-explore .sb-search { display:none; }
   background:linear-gradient(135deg,rgba(124,77,255,0.55),rgba(179,136,255,0.25),rgba(43,134,197,0.15));
   cursor:default;
 }
+/* Animated (video) banner: a muted looping <video> filling the cover box,
+   used when coverUrl is a .mp4/.webm (a CSS background can't play video).
+   pointer-events:none so it never swallows clicks meant for the cover. */
+.prof-cover-vid {
+  position:absolute; inset:0; width:100%; height:100%;
+  object-fit:cover; border:0; background:transparent; pointer-events:none;
+}
+#pe-cover-preview { position:relative; }
+/* Animated (video) avatars: a <video> swapped in for an <img> when the pic
+   URL is a .mp4/.webm. The avatar class already sets size/radius/object-fit
+   (tag-agnostic); this just guarantees cover-fit and a neutral backdrop. */
+video[data-avatar-video] { object-fit:cover; background:var(--bg-mid); display:block; }
 .prof-cover img {
   width:100%; height:100%; object-fit:cover; display:block;
 }
@@ -3704,12 +3716,12 @@ html.ul-links .post-mention { text-decoration:underline; }
       <input type="text" class="form-input" id="pe-website" placeholder="https://…" maxlength="100">
     </div>
     <div class="form-group">
-      <label class="form-lbl" for="pe-pic">Profile picture — https:// URL (PNG, JPG, or animated GIF)</label>
-      <input type="text" class="form-input" id="pe-pic" placeholder="https://… .png .jpg .gif">
+      <label class="form-lbl" for="pe-pic">Profile picture — https:// URL (PNG, JPG, GIF, or MP4 — animated)</label>
+      <input type="text" class="form-input" id="pe-pic" placeholder="https://… .png .jpg .gif .mp4">
     </div>
     <div class="form-group">
-      <label class="form-lbl" for="pe-cover">Cover photo — https:// URL (PNG, JPG, or animated GIF)</label>
-      <input type="text" class="form-input" id="pe-cover" placeholder="https://… .png .jpg .gif">
+      <label class="form-lbl" for="pe-cover">Cover photo — https:// URL (PNG, JPG, GIF, or MP4 — animated)</label>
+      <input type="text" class="form-input" id="pe-cover" placeholder="https://… .png .jpg .gif .mp4">
     </div>
     <details class="nft-section">
       <summary>Use an NFT as profile picture</summary>
