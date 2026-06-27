@@ -6,7 +6,7 @@
    NOT edit by hand. Run `node .ci/derive-sw-ver.js` (or install the pre-commit
    hook: `git config core.hooksPath .ci/hooks`); CI verifies it via
    `derive-sw-ver.js --check`. */
-const SW_CACHE_VER = '20260626-751de318d1';
+const SW_CACHE_VER = '20260627-054fead59f';
 
 /* ── Say It DeFi ────────────────────────────────────────────── */
 class SayIt {
@@ -3052,7 +3052,7 @@ class SayIt {
     const sets = { like: this.state.likes, bm: this.state.bookmarks, follow: this.state.following };
     const seen = new Set();
     for (const e of events) {
-      const id = e.cat + ' ' + e.key;
+      const id = e.cat + '\0' + e.key;
       if (seen.has(id)) continue; /* an older action for this target — ignore */
       seen.add(id);
       if (e.on) sets[e.cat].add(e.key);
@@ -4899,7 +4899,7 @@ class SayIt {
   _mutedWordsRe() {
     const words = (this._getSettings().mutedWords || [])
       .map(w => String(w).trim()).filter(Boolean);
-    const key = words.join('');
+    const key = words.join('\x01');
     if (this._mwCacheKey === key) return this._mwRe;
     this._mwCacheKey = key;
     if (!words.length) { this._mwRe = null; return null; }
